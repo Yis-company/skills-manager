@@ -26,6 +26,9 @@ export interface E2EControl {
   /** Calls to `cmd` wait until `release(cmd)`. */
   hold(cmd: string): void;
   release(cmd: string): void;
+  /** The next successful `cmd` captures its result, then waits before returning it. */
+  holdResponse(cmd: string): void;
+  releaseResponse(cmd: string): void;
   /** Emit a backend event to the app's listeners. */
   emit(event: string, payload: unknown): Promise<void>;
   /** Replace top-level parts of the state, as if the backend changed on its own. */
@@ -51,8 +54,9 @@ const save = () => sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 save();
 
 const calls: RecordedCall[] = [];
-const failures = new Map<string, string>();
+const failures = new Map<string, string[]>();
 const holds = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+const responseHolds = new Map<string, { promise: Promise<void>; resolve: () => void; claimed: boolean }>();
 
 mockWindows("main");
 mockIPC(
@@ -60,9 +64,9 @@ mockIPC(
     calls.push({ cmd, args });
     await holds.get(cmd)?.promise;
 
-    const failure = failures.get(cmd);
+    const failure = failures.get(cmd)?.shift();
     if (failure !== undefined) {
-      failures.delete(cmd);
+      if (failures.get(cmd)?.length === 0) failures.delete(cmd);
       throw failure;
     }
 
@@ -73,7 +77,13 @@ mockIPC(
       console.error(message);
       throw new Error(message);
     }
-    const result = handler(args ?? {}, state);
+    let result = handler(args ?? {}, state);
+    const responseHold = responseHolds.get(cmd);
+    if (responseHold && !responseHold.claimed) {
+      responseHold.claimed = true;
+      result = structuredClone(result);
+      await responseHold.promise;
+    }
     save();
     // A copy, so the app never holds a reference into the fake's state.
     return result === undefined ? null : structuredClone(result);
@@ -83,7 +93,7 @@ mockIPC(
 
 window.__e2e = {
   calls,
-  failNext: (cmd, message) => failures.set(cmd, message),
+  failNext: (cmd, message) => failures.set(cmd, [...(failures.get(cmd) ?? []), message]),
   hold: (cmd) => {
     let resolve = () => {};
     const promise = new Promise<void>((r) => (resolve = r));
@@ -92,6 +102,15 @@ window.__e2e = {
   release: (cmd) => {
     holds.get(cmd)?.resolve();
     holds.delete(cmd);
+  },
+  holdResponse: (cmd) => {
+    let resolve = () => {};
+    const promise = new Promise<void>((r) => (resolve = r));
+    responseHolds.set(cmd, { promise, resolve, claimed: false });
+  },
+  releaseResponse: (cmd) => {
+    responseHolds.get(cmd)?.resolve();
+    responseHolds.delete(cmd);
   },
   emit: (event, payload) => emit(event, payload),
   patch: (partial) => {

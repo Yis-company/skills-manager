@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "@tanstack/react-router";
 import {
   FolderOpen,
@@ -50,6 +51,8 @@ import { cn } from "../utils";
 import * as api from "../lib/tauri";
 import type { ProjectSkill, ManagedSkill } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
+import { invokeHost } from "../lib/hostCall";
+import { projectSkillsQueryOptions, projectsQueryOptions, queryKeys, refreshQuery } from "../lib/appQueries";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 import { ProjectAgentsDialog } from "../components/ProjectAgentsDialog";
 
@@ -57,7 +60,31 @@ export function ProjectDetail() {
   const { id } = useParams({ from: "/project/$id" });
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { projects, presets, managedSkills, refreshManagedSkills, refreshPresets, refreshProjects } = useApp();
+  const { projects, presets, managedSkills, refreshManagedSkills, refreshPresets, refreshProjects, loading: projectsLoading, activeHostId } = useApp();
+  const queryClient = useQueryClient();
+  const projectMetadataLoaded = queryClient.getQueryState(queryKeys.projects(activeHostId))?.status === "success";
+  const deleteProjectSkillMutation = useMutation({
+    mutationFn: ({ hostId, projectId, relativePath, agent }: {
+      hostId: string | null;
+      projectId: string;
+      relativePath: string;
+      agent: string;
+    }) => invokeHost<void>(hostId, "delete_project_skill", {
+      projectId,
+      skillRelativePath: relativePath,
+      agent,
+      wholeSkill: true,
+    }),
+  });
+  const mountedRef = useRef(true);
+  const viewIdentityRef = useRef({ hostId: activeHostId, projectId: id, version: 0 });
+  if (viewIdentityRef.current.hostId !== activeHostId || viewIdentityRef.current.projectId !== id) {
+    viewIdentityRef.current = { hostId: activeHostId, projectId: id, version: viewIdentityRef.current.version + 1 };
+  }
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [filterMode, setFilterMode] = useState<"all" | "enabled" | "disabled">("all");
   const [search, setSearch] = useState("");
@@ -101,7 +128,7 @@ export function ProjectDetail() {
     return skill.id;
   }, []);
 
-  const { skills, loading, loadSkills } = useProjectSkills(id);
+  const { skills, loading, fetching, error: skillsError, loadSkills } = useProjectSkills(id);
 
   useEffect(() => {
     setSearch("");
@@ -115,10 +142,10 @@ export function ProjectDetail() {
   const projectAgentTargets = useProjectAgentTargets(id, project?.agent_keys ?? null);
 
   useEffect(() => {
-    if (!project && !loading) {
+    if (!project && !projectsLoading && projectMetadataLoaded) {
       navigate({ to: "/" });
     }
-  }, [project, loading, navigate]);
+  }, [project, projectsLoading, projectMetadataLoaded, navigate]);
 
   const groupedSkills = useMemo(() => groupProjectSkills(skills), [skills]);
 
@@ -193,6 +220,49 @@ export function ProjectDetail() {
     }
     for (const variant of skill.effectiveVariants) await run(variant);
   };
+
+  const removeConfirmedProjectCopy = useCallback(async (hostId: string | null, projectId: string, removed: ProjectSkill) => {
+    const key = queryKeys.projectSkills(hostId, projectId);
+    await queryClient.cancelQueries({ queryKey: key, exact: true });
+    queryClient.setQueryData<ProjectSkill[]>(key, (current) => current?.filter((skill) => {
+      const sameCopy = skill.relative_path === removed.relative_path && skill.agent === removed.agent;
+      // Only a confirmed vendored deletion also removes the links into it.
+      const removedLink = removed.vendored && skill.alias_of === removed.relative_path;
+      return !sameCopy && !removedLink;
+    }));
+  }, [queryClient]);
+
+  const refreshAfterProjectDelete = useCallback(async (hostId: string | null, projectId: string) => {
+    await Promise.allSettled([
+      refreshQuery(queryClient, projectSkillsQueryOptions(hostId, projectId)),
+      refreshQuery(queryClient, projectsQueryOptions(hostId)),
+    ]);
+  }, [queryClient]);
+
+  const deleteProjectCopies = useCallback(async (skill: ProjectSkillGroup, hostId: string | null, projectId: string) => {
+    let firstError: unknown;
+    const removeCopy = async (variant: ProjectSkill) => {
+      try {
+        await deleteProjectSkillMutation.mutateAsync({
+          hostId,
+          projectId,
+          relativePath: variant.relative_path,
+          agent: variant.agent,
+        });
+        await removeConfirmedProjectCopy(hostId, projectId, variant);
+      } catch (error) {
+        firstError ??= error;
+      }
+    };
+    if (skill.variants.some((variant) => variant.alias_of)) {
+      // Whole-skill deletion removes links from the vendored copy, so keep
+      // these calls ordered and never issue a delete for a link itself.
+      for (const variant of skill.effectiveVariants) await removeCopy(variant);
+    } else {
+      await Promise.all(skill.variants.map(removeCopy));
+    }
+    return { error: firstError };
+  }, [deleteProjectSkillMutation, removeConfirmedProjectCopy]);
 
   const projectSkillDirNamesByAgent = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -527,41 +597,48 @@ export function ProjectDetail() {
 
   const handleDeleteSkill = async () => {
     if (!id || !deleteTarget) return;
+    const hostId = activeHostId;
+    const projectId = id;
+    const viewVersion = viewIdentityRef.current.version;
+    const isCurrentView = () => mountedRef.current && viewIdentityRef.current.version === viewVersion;
     try {
-      await forEachCopy(deleteTarget, (variant) =>
-        api.deleteProjectSkill(id, variant.relative_path, variant.agent, true)
-      );
-      toast.success(t("project.skillDeleted", { name: deleteTarget.name }));
-      await Promise.all([loadSkills(), refreshProjects()]);
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, t("common.error")));
+      const result = await deleteProjectCopies(deleteTarget, hostId, projectId);
+      if (isCurrentView()) setDeleteTarget(null);
+      if (result.error && isCurrentView()) {
+        toast.error(getErrorMessage(result.error, t("common.error")));
+      } else if (!result.error && isCurrentView()) {
+        toast.success(t("project.skillDeleted", { name: deleteTarget.name }));
+      }
+    } finally {
+      if (isCurrentView()) setDeleteTarget(null);
+      void refreshAfterProjectDelete(hostId, projectId);
     }
   };
 
   const handleBatchDeleteProject = async () => {
     if (!id) return;
+    const hostId = activeHostId;
+    const projectId = id;
+    const viewVersion = viewIdentityRef.current.version;
+    const isCurrentView = () => mountedRef.current && viewIdentityRef.current.version === viewVersion;
     let deleted = 0;
     let failed = 0;
     for (const skill of selectedSkills) {
-      try {
-        await forEachCopy(skill, (variant) =>
-          api.deleteProjectSkill(id, variant.relative_path, variant.agent, true)
-        );
-        deleted++;
-      } catch {
-        failed++;
-        // continue deleting remaining
-      }
+      const result = await deleteProjectCopies(skill, hostId, projectId);
+      if (result.error) failed++;
+      else deleted++;
     }
-    if (deleted > 0) {
+    if (deleted > 0 && isCurrentView()) {
       toast.success(t("project.batchDeleted", { count: deleted }));
     }
-    if (failed > 0) {
+    if (failed > 0 && isCurrentView()) {
       toast.error(t("project.batchDeleteFailed", { count: failed }));
     }
-    exitMultiSelect();
-    setBatchDeleteConfirm(false);
-    await Promise.all([loadSkills(), refreshProjects()]);
+    if (isCurrentView()) {
+      exitMultiSelect();
+      setBatchDeleteConfirm(false);
+    }
+    void refreshAfterProjectDelete(hostId, projectId);
   };
 
   const handleBatchToggleProject = async () => {
@@ -791,7 +868,7 @@ export function ProjectDetail() {
                 className="rounded-md p-2 text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary"
                 title={t("common.refresh")}
               >
-                <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+                <RefreshCw className={cn("h-4 w-4", fetching && "animate-spin")} />
               </button>
               <button
                 onClick={() => setViewMode("grid")}
@@ -1016,9 +1093,22 @@ export function ProjectDetail() {
         />
       )}
 
+      {skillsError && skills.length > 0 && (
+        <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-[12px] text-danger">
+          <span>{getErrorMessage(skillsError, t("common.error"))}</span>
+          <button className="shrink-0 underline" onClick={() => void loadSkills()}>{t("common.retry")}</button>
+        </div>
+      )}
       {loading ? (
         <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
           <div className="text-[13px] text-muted">{t("common.loading")}</div>
+        </div>
+      ) : skillsError && skills.length === 0 ? (
+        <div role="alert" className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
+          <p className="mb-3 text-[13px] text-danger">{getErrorMessage(skillsError, t("common.error"))}</p>
+          <button className="app-toolbar-button app-toolbar-button-secondary" onClick={() => void loadSkills()}>
+            {t("common.retry")}
+          </button>
         </div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">

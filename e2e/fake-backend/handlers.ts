@@ -6,7 +6,7 @@ import type {
   Preset,
   ProjectSkill,
 } from "../../src/lib/tauri";
-import type { State } from "./state";
+import { createState, type RemoteSeed, type State } from "./state";
 
 /**
  * A fake command: reads and changes `state`, returns what the real command
@@ -44,7 +44,34 @@ export const handlers: Record<string, Handler<never>> = {
   // ── App shell ──
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
-  remote_hosts_list: () => [],
+  remote_hosts_list: (_args: unknown, state) => state.remoteHosts,
+  remote_host_connect: ({ hostId }: { hostId: string }) => ({
+    host_id: hostId,
+    version: "1.40.0",
+    os: "linux",
+    arch: "x86_64",
+    home: "/home/e2e",
+    base_dir: "/home/e2e/.skills-manager",
+  }),
+  remote_invoke: ({ hostId, command, args }: { hostId: string; command: string; args: unknown }, state) => {
+    const remoteState = createState(state.remoteStates[hostId] ?? {});
+    const handler = handlers[command] as ((args: unknown, state: State) => unknown) | undefined;
+    if (!handler) throw new Error(`fake backend: no remote handler for ${command}`);
+    const result = handler(args ?? {}, remoteState);
+    const remoteSeed: RemoteSeed = {
+      skills: remoteState.skills,
+      presets: remoteState.presets,
+      activePresetId: remoteState.activePresetId,
+      presetSkillOrder: remoteState.presetSkillOrder,
+      projects: remoteState.projects,
+      projectSkills: remoteState.projectSkills,
+      projectAgentTargets: remoteState.projectAgentTargets,
+      tools: remoteState.tools,
+      settings: remoteState.settings,
+    };
+    state.remoteStates[hostId] = remoteSeed;
+    return result;
+  },
   check_app_update: (): AppUpdateInfo => ({
     has_update: false,
     current_version: "1.40.0",
@@ -77,6 +104,17 @@ export const handlers: Record<string, Handler<never>> = {
 
   // ── Skills and tags ──
   get_managed_skills: (_args: unknown, state) => state.skills,
+  delete_managed_skill: ({ skillId }: { skillId: string }, state) => {
+    state.skills = state.skills.filter((skill) => skill.id !== skillId);
+    return null;
+  },
+  delete_managed_skills: ({ skillIds }: { skillIds: string[] }, state) => {
+    const failed = state.deleteFailedIds.filter((id) => skillIds.includes(id));
+    const deletedIds = skillIds.filter((id) => !failed.includes(id));
+    state.skills = state.skills.filter((skill) => !deletedIds.includes(skill.id));
+    if (state.rejectBatchDeleteAfterPartialWrite) throw new Error("fake batch delete failed after partial write");
+    return { deleted: deletedIds.length, failed };
+  },
   check_all_skill_updates: nothing,
   get_all_tags: (_args: unknown, state) => [...new Set(state.skills.flatMap((s) => s.tags))].sort(),
   rename_tag: ({ oldName, newName }: { oldName: string; newName: string }, state) => {
@@ -115,6 +153,17 @@ export const handlers: Record<string, Handler<never>> = {
     return null;
   },
   get_project_skills: ({ projectId }: { projectId: string }, state) => state.projectSkills[projectId] ?? [],
+  delete_project_skill: ({ projectId, skillRelativePath, agent, wholeSkill }: { projectId: string; skillRelativePath: string; agent: string; wholeSkill?: boolean }, state) => {
+    const skills = state.projectSkills[projectId] ?? [];
+    const target = skills.find((skill) => skill.relative_path === skillRelativePath && skill.agent === agent);
+    if (!target) throw new Error(`fake backend: no project skill ${skillRelativePath} for ${agent}`);
+    const remaining = skills.filter((skill) => {
+      if (skill.relative_path === skillRelativePath && skill.agent === agent) return false;
+      return !(wholeSkill && target.vendored && skill.alias_of === skillRelativePath);
+    });
+    state.projectSkills[projectId] = remaining;
+    return null;
+  },
   get_project_agent_targets: ({ projectId }: { projectId: string }, state) =>
     state.projectAgentTargets[projectId] ?? [],
   get_project_skill_document: ({ skillRelativePath }: ProjectSkillArgs) => ({

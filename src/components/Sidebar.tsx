@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../utils";
 import { useApp } from "../context/AppContext";
 import { CreatePresetDialog } from "./CreatePresetDialog";
@@ -48,6 +49,7 @@ import { CODING_WORKSPACE_CONFIG, LOBSTER_WORKSPACE_CONFIG, type WorkspaceConfig
 import type { SyncHealth, ToolCategory, ToolInfo } from "../lib/tauri";
 import { getPresetIconOption } from "../lib/presetIcons";
 import { applyStoredOrder } from "../lib/storedOrder";
+import { queryKeys, type PresetsData } from "../lib/appQueries";
 
 function getSyncHealthIndicator(health: SyncHealth, skillCount: number): { color: string; title: string } | null {
   if (skillCount === 0) return null;
@@ -76,7 +78,8 @@ export function Sidebar() {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  const { presets, viewedPreset, setViewedPresetId, refreshPresets, refreshManagedSkills, projects, refreshProjects, tools, managedSkills, appUpdate } = useApp();
+  const { presets, viewedPreset, setViewedPresetId, refreshPresets, refreshManagedSkills, projects, refreshProjects, tools, managedSkills, appUpdate, activeHostId } = useApp();
+  const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; icon?: string | null } | null>(null);
@@ -131,6 +134,8 @@ export function Sidebar() {
   const handleDragEnd = (event: DragEndEvent) => {
     const reordered = moveDragged(orderedPresets, event, (s) => s.id);
     if (!reordered) return;
+    const previousOrder = orderedPresets;
+    const hostId = activeHostId;
     setOrderedPresets(reordered);
 
     presetReorderQueueRef.current = presetReorderQueueRef.current
@@ -140,6 +145,9 @@ export function Sidebar() {
           await api.reorderPresets(reordered.map((s) => s.id));
         } catch {
           await refreshPresets();
+          setOrderedPresets((current) => current === reordered
+            ? queryClient.getQueryData<PresetsData>(queryKeys.presets(hostId))?.presets ?? previousOrder
+            : current);
           toast.error(t("common.error"));
         }
       });
@@ -148,6 +156,8 @@ export function Sidebar() {
   const handleProjectDragEnd = (event: DragEndEvent) => {
     const reordered = moveDragged(orderedProjects, event, (p) => p.id);
     if (!reordered) return;
+    const previousOrder = orderedProjects;
+    const hostId = activeHostId;
     setOrderedProjects(reordered);
 
     projectReorderQueueRef.current = projectReorderQueueRef.current
@@ -157,6 +167,9 @@ export function Sidebar() {
           await api.reorderProjects(reordered.map((p) => p.id));
         } catch {
           await refreshProjects();
+          setOrderedProjects((current) => current === reordered
+            ? queryClient.getQueryData(queryKeys.projects(hostId)) ?? previousOrder
+            : current);
           toast.error(t("common.error"));
         }
       });

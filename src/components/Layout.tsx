@@ -11,7 +11,7 @@ import { cn } from "../utils";
 
 export function Layout() {
   const { t } = useTranslation();
-  const { appError, refreshAppData, activeHost } = useApp();
+  const { appError, refreshAppData, activeHost, activeHostId } = useApp();
   const onDrag = useDragWindow();
   const navigate = useNavigate();
 
@@ -67,7 +67,7 @@ export function Layout() {
               />
             ) : null}
             {/* Remount the page on a host switch so no view keeps the other machine's state. */}
-            <Outlet key={activeHost?.id ?? "local"} />
+            <Outlet key={activeHostId ?? "local"} />
           </div>
         </div>
       </div>

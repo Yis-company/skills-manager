@@ -11,7 +11,10 @@ import type {
   ScanResult,
   SkillsShSkill,
   ToolInfo,
+  RemoteHost,
 } from "../../src/lib/tauri";
+
+export type RemoteSeed = Omit<Seed, "remoteHosts" | "remoteStates">;
 
 /** What a test starts from. Every field is optional; a missing one is empty. */
 export interface Seed {
@@ -45,6 +48,13 @@ export interface Seed {
     polls: GithubDevicePollResult["status"][];
     result: GithubBackupConnectResult;
   };
+  /** Remote hosts and their isolated fake backend data, keyed by host id. */
+  remoteHosts?: RemoteHost[];
+  remoteStates?: Record<string, RemoteSeed>;
+  /** Simulate a batch command that writes some rows before returning an error. */
+  rejectBatchDeleteAfterPartialWrite?: boolean;
+  /** IDs a fulfilled batch delete reports as failed. */
+  deleteFailedIds?: string[];
 }
 
 /** The fake backend's in-memory data. Handlers read and change it. */
@@ -70,6 +80,10 @@ export function createState({ settings, ...seed }: Seed): State {
     scan: { tools_scanned: 0, skills_found: 0, groups: [] },
     dialogPaths: [],
     batchImport: [],
+    remoteHosts: [],
+    remoteStates: {},
+    rejectBatchDeleteAfterPartialWrite: false,
+    deleteFailedIds: [],
     deviceFlow: {
       start: { device_code: "device-1", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 5 },
       polls: [],

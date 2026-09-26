@@ -66,3 +66,19 @@ test("the agent order survives a reload", async ({ page }) => {
   await page.reload();
   await expect(agents).toHaveText(["Cursor", "Claude Code", "Codex"]);
 });
+
+
+test("queued failed preset saves restore the saved order, not a failed optimistic order", async ({ page, backend }) => {
+  await backend.hold("reorder_presets");
+  await backend.failNext("reorder_presets");
+  await backend.failNext("reorder_presets");
+  await drag(page, "Travel", "Writing");
+  await expect.poll(async () => (await backend.calls("reorder_presets")).length).toBe(1);
+  await drag(page, "Research", "Writing");
+  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText(["Travel", "Research", "Writing"]);
+
+  await backend.release("reorder_presets");
+
+  await expect.poll(async () => (await backend.calls("reorder_presets")).length).toBe(2);
+  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText(["Writing", "Research", "Travel"]);
+});

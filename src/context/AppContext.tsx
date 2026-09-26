@@ -1,9 +1,18 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import type { AppUpdateInfo, HostSessionInfo, ManagedSkill, Project, Preset, RemoteHost, ToolInfo } from "../lib/tauri";
 import * as api from "../lib/tauri";
-import { getActiveHostId, setActiveHostId, trackHost } from "../lib/hostCall";
+import { getActiveHostId, invokeHost, setActiveHostId } from "../lib/hostCall";
+import {
+  managedSkillsQueryOptions,
+  presetsQueryOptions,
+  projectsQueryOptions,
+  refreshQuery,
+  remoteHostsQueryOptions,
+  toolsQueryOptions,
+} from "../lib/appQueries";
 import { listenOnActiveHost } from "../lib/hostEvents";
 import { getErrorMessage } from "../lib/error";
 import i18n from "../i18n";
@@ -32,6 +41,7 @@ interface AppState {
   /** The remote host the app operates on; null is this computer. Never
    *  remembered across launches: the app always starts on this computer. */
   activeHost: RemoteHost | null;
+  activeHostId: string | null;
   hostSession: HostSession | null;
   /** The host a switch is connecting to, while it connects. */
   connectingHostId: string | null;
@@ -58,7 +68,6 @@ interface AppState {
   refreshRemoteHosts: () => Promise<void>;
   setViewedPresetId: (id: string) => void;
   applyPresetToDefault: (id: string) => Promise<void>;
-  clearAppError: () => void;
   openHelp: () => void;
   closeHelp: () => void;
   openSkillDetailById: (skillId: string) => void;
@@ -67,6 +76,11 @@ interface AppState {
 
 const VIEWED_PRESET_LS_KEY = "skills-manager.viewedPresetId";
 const LEGACY_VIEWED_PRESET_LS_KEY = "skills-manager.viewedScenarioId";
+const EMPTY_PRESETS: Preset[] = [];
+const EMPTY_TOOLS: ToolInfo[] = [];
+const EMPTY_SKILLS: ManagedSkill[] = [];
+const EMPTY_PROJECTS: Project[] = [];
+const EMPTY_REMOTE_HOSTS: RemoteHost[] = [];
 
 /** Preset ids belong to one machine's library, so each host keeps its own. */
 function readViewedPresetId(hostId: string | null): string | null {
@@ -93,18 +107,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const SKILL_UPDATE_TOAST_ID = "skill-update-available";
   const APP_UPDATE_TOAST_ID = "app-update-available";
   const navigate = useNavigate();
-  const [presets, setPresets] = useState<Preset[]>([]);
-  const [activePreset, setActivePreset] = useState<Preset | null>(null);
   const [viewedPresetId, setViewedPresetIdState] = useState<string | null>(() => readViewedPresetId(null));
-  const [tools, setTools] = useState<ToolInfo[]>([]);
-  const [managedSkills, setManagedSkills] = useState<ManagedSkill[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [remoteHosts, setRemoteHosts] = useState<RemoteHost[]>([]);
   const [activeHostId, setActiveHostIdState] = useState<string | null>(null);
   const [hostSession, setHostSession] = useState<HostSession | null>(null);
   const [connectingHostId, setConnectingHostId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [appError, setAppError] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [detailSkillId, setDetailSkillId] = useState<string | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
@@ -113,120 +119,120 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const lastUpdateNotificationRef = useRef<string | null>(null);
   const lastActivePresetIdRef = useRef<string | null>(null);
   const switchSeqRef = useRef(0);
+  const queryClient = useQueryClient();
+  const presetsQuery = useQuery(presetsQueryOptions(activeHostId));
+  const toolsQuery = useQuery(toolsQueryOptions(activeHostId));
+  const managedSkillsQuery = useQuery(managedSkillsQueryOptions(activeHostId));
+  const projectsQuery = useQuery(projectsQueryOptions(activeHostId));
+  const remoteHostsQuery = useQuery(remoteHostsQueryOptions());
+  const presets = presetsQuery.data?.presets ?? EMPTY_PRESETS;
+  const activePreset = presetsQuery.data?.activePreset ?? null;
+  const tools = toolsQuery.data ?? EMPTY_TOOLS;
+  const managedSkills = managedSkillsQuery.data ?? EMPTY_SKILLS;
+  const projects = projectsQuery.data ?? EMPTY_PROJECTS;
+  const remoteHosts = remoteHostsQuery.data ?? EMPTY_REMOTE_HOSTS;
+  const loading = [presetsQuery, toolsQuery, managedSkillsQuery, projectsQuery, remoteHostsQuery]
+    .some((query) => query.isPending);
+  const appError =
+    (presetsQuery.error && i18n.t("common.loadFailed", { item: i18n.t("common.presets") })) ||
+    (toolsQuery.error && i18n.t("common.loadFailed", { item: i18n.t("common.agents") })) ||
+    (managedSkillsQuery.error && i18n.t("common.loadFailed", { item: i18n.t("common.skills") })) ||
+    (projectsQuery.error && i18n.t("common.loadFailed", { item: i18n.t("sidebar.projects") })) ||
+    (remoteHostsQuery.error && i18n.t("common.loadFailed", { item: i18n.t("hostSwitcher.label") })) ||
+    null;
 
-  const setTranslatedError = useCallback((key: string) => {
-    setAppError(i18n.t("common.loadFailed", { item: i18n.t(key) }));
-  }, []);
-
-  const refreshPresets = useCallback(async () => {
-    const onSameHost = trackHost();
+  const refreshPresetsForHost = useCallback(async (hostId: string | null) => {
     try {
-      const [s, active] = await Promise.all([
-        api.getPresets(),
-        api.getActivePreset(),
-      ]);
-      if (!onSameHost()) return;
-      setPresets(s);
-      setActivePreset(active);
-      const previousActiveId = lastActivePresetIdRef.current;
-      const nextActiveId = active?.id ?? null;
-      if (previousActiveId !== nextActiveId) {
-        lastActivePresetIdRef.current = nextActiveId;
-        // Carry the sidebar along only when the user was viewing the old
-        // active preset — that way an external switch (e.g. CLI) follows,
-        // but a user who's browsing some other preset isn't yanked away.
-        // Skip the initial load (previousActiveId === null) entirely so a
-        // persisted viewedPreset from localStorage isn't clobbered.
-        if (nextActiveId && previousActiveId !== null) {
-          setViewedPresetIdState((current) => {
-            if (current !== previousActiveId) return current;
-            storeViewedPresetId(nextActiveId);
-            return nextActiveId;
-          });
-        }
-      }
-      setAppError(null);
-    } catch (e) {
-      if (!onSameHost()) return;
-      console.error("Failed to load presets:", e);
-      setTranslatedError("common.presets");
+      await refreshQuery(queryClient, presetsQueryOptions(hostId));
+    } catch (error) {
+      console.error("Failed to load presets:", error);
     }
-  }, [setTranslatedError]);
+  }, [queryClient]);
 
-  const refreshTools = useCallback(async () => {
-    const onSameHost = trackHost();
-    try {
-      const t = await api.getToolStatus();
-      if (!onSameHost()) return;
-      setTools(t);
-      setAppError(null);
-    } catch (e) {
-      if (!onSameHost()) return;
-      console.error("Failed to load tools:", e);
-      setTranslatedError("common.agents");
-    }
-  }, [setTranslatedError]);
+  const refreshPresets = useCallback(() => refreshPresetsForHost(getActiveHostId()), [refreshPresetsForHost]);
 
-  const refreshProjects = useCallback(async () => {
-    const onSameHost = trackHost();
+  const refreshToolsForHost = useCallback(async (hostId: string | null) => {
     try {
-      const p = await api.getProjects();
-      if (!onSameHost()) return;
-      setProjects(p);
-    } catch (e) {
-      if (!onSameHost()) return;
-      console.error("Failed to load projects:", e);
+      await refreshQuery(queryClient, toolsQueryOptions(hostId));
+    } catch (error) {
+      console.error("Failed to load tools:", error);
     }
-  }, []);
+  }, [queryClient]);
+
+  const refreshTools = useCallback(() => refreshToolsForHost(getActiveHostId()), [refreshToolsForHost]);
+
+  const refreshProjectsForHost = useCallback(async (hostId: string | null) => {
+    try {
+      await refreshQuery(queryClient, projectsQueryOptions(hostId));
+    } catch (error) {
+      console.error("Failed to load projects:", error);
+    }
+  }, [queryClient]);
+
+  const refreshProjects = useCallback(() => refreshProjectsForHost(getActiveHostId()), [refreshProjectsForHost]);
 
   const refreshRemoteHosts = useCallback(async () => {
     try {
-      setRemoteHosts(await api.remoteHostsList());
-    } catch (e) {
-      console.error("Failed to load remote hosts:", e);
+      await refreshQuery(queryClient, remoteHostsQueryOptions());
+    } catch (error) {
+      console.error("Failed to load remote hosts:", error);
     }
-  }, []);
+  }, [queryClient]);
 
-  const refreshManagedSkills = useCallback(async () => {
-    const onSameHost = trackHost();
-    try {
-      const skills = await api.getManagedSkills();
-      if (!onSameHost()) return;
-      setManagedSkills(skills);
-      setAppError(null);
-    } catch (e) {
-      if (!onSameHost()) return;
-      console.error("Failed to load managed skills:", e);
-      setTranslatedError("common.skills");
-    }
-    // Managed skill changes affect project sync health badges
-    refreshProjects();
-  }, [setTranslatedError, refreshProjects]);
+  const refreshManagedSkillsForHost = useCallback(async (hostId: string | null) => {
+    await Promise.all([
+      (async () => {
+        try {
+          await refreshQuery(queryClient, managedSkillsQueryOptions(hostId));
+        } catch (error) {
+          console.error("Failed to load managed skills:", error);
+        }
+      })(),
+      // Managed skill changes affect project sync health badges.
+      refreshProjectsForHost(hostId),
+    ]);
+  }, [queryClient, refreshProjectsForHost]);
 
-  const refreshAppData = useCallback(async () => {
-    setLoading(true);
-    await Promise.all([refreshPresets(), refreshTools(), refreshManagedSkills(), refreshProjects(), refreshRemoteHosts()]);
-    setLoading(false);
-  }, [refreshManagedSkills, refreshProjects, refreshPresets, refreshTools, refreshRemoteHosts]);
+  const refreshManagedSkills = useCallback(
+    () => refreshManagedSkillsForHost(getActiveHostId()),
+    [refreshManagedSkillsForHost]
+  );
+
+  const refreshAppDataForHost = useCallback(async (hostId: string | null) => {
+    await Promise.all([
+      refreshPresetsForHost(hostId),
+      refreshToolsForHost(hostId),
+      // refreshAppData owns each resource once; this call must not nest a
+      // second project refresh through refreshManagedSkills.
+      (async () => {
+        try {
+          await refreshQuery(queryClient, managedSkillsQueryOptions(hostId));
+        } catch (error) {
+          console.error("Failed to load managed skills:", error);
+        }
+      })(),
+      refreshProjectsForHost(hostId),
+      refreshRemoteHosts(),
+    ]);
+  }, [queryClient, refreshPresetsForHost, refreshProjectsForHost, refreshRemoteHosts, refreshToolsForHost]);
+
+  const refreshAppData = useCallback(
+    () => refreshAppDataForHost(getActiveHostId()),
+    [refreshAppDataForHost]
+  );
 
   const setViewedPresetId = useCallback((id: string) => {
     setViewedPresetIdState(id);
     storeViewedPresetId(id);
   }, []);
 
-  /** Point every host-scoped call at `hostId` and drop the other machine's data. */
+  /** Point every host-scoped call at `hostId`; query keys keep each host's data separate. */
   const enterHost = useCallback((hostId: string | null) => {
     setActiveHostId(hostId);
     setActiveHostIdState(hostId);
     setViewedPresetIdState(readViewedPresetId(hostId));
     lastActivePresetIdRef.current = null;
-    setPresets([]);
-    setActivePreset(null);
-    setTools([]);
-    setManagedSkills([]);
-    setProjects([]);
     setDetailSkillId(null);
-    setAppError(null);
   }, []);
 
   const switchHost = useCallback(
@@ -243,7 +249,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (previous === null) return true;
         enterHost(null);
         setHostSession(null);
-        await refreshAppData();
+        await refreshAppDataForHost(null);
         return true;
       }
       setConnectingHostId(hostId);
@@ -252,7 +258,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!isLatest()) return false;
         if (previous !== hostId) enterHost(hostId);
         setHostSession({ info, lostMessage: null });
-        await refreshAppData();
+        await refreshAppDataForHost(hostId);
         return true;
       } catch (e) {
         if (!isLatest()) return false;
@@ -265,7 +271,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // Connecting closed the previous host's session.
           enterHost(null);
           setHostSession(null);
-          await refreshAppData();
+          await refreshAppDataForHost(null);
         }
         toast.error(i18n.t("hostSwitcher.connectFailed", { name }), {
           description: message,
@@ -277,7 +283,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (isLatest()) setConnectingHostId(null);
       }
     },
-    [enterHost, refreshAppData, remoteHosts]
+    [enterHost, refreshAppDataForHost, remoteHosts]
   );
 
   const reconnectHost = useCallback(async () => {
@@ -312,6 +318,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   })();
 
   useEffect(() => {
+    const previousActiveId = lastActivePresetIdRef.current;
+    const nextActiveId = activePreset?.id ?? null;
+    if (previousActiveId === nextActiveId) return;
+    lastActivePresetIdRef.current = nextActiveId;
+    // Follow an external active-preset change only when the viewer was on the
+    // former active preset. The initial query result preserves stored choice.
+    if (nextActiveId && previousActiveId !== null) {
+      setViewedPresetIdState((current) => {
+        if (current !== previousActiveId) return current;
+        storeViewedPresetId(nextActiveId);
+        return nextActiveId;
+      });
+    }
+  }, [activeHostId, activePreset?.id]);
+
+  useEffect(() => {
     if (!viewedPreset) return;
     if (viewedPreset.id !== viewedPresetId) {
       // Persist the resolved fallback so subsequent reads are stable.
@@ -327,7 +349,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // identical to the other frontend startup marks avoids ambiguity in
       // the log file (see codex review note on #153).
       api.logStartupEvent("refresh_app_data_start", performance.now()).catch(() => {});
-      await refreshAppData();
+      await Promise.allSettled([
+        queryClient.fetchQuery(presetsQueryOptions(null)),
+        queryClient.fetchQuery(toolsQueryOptions(null)),
+        queryClient.fetchQuery(managedSkillsQueryOptions(null)),
+        queryClient.fetchQuery(projectsQueryOptions(null)),
+        queryClient.fetchQuery(remoteHostsQueryOptions()),
+      ]);
       api.logStartupEvent("refresh_app_data_done", performance.now()).catch(() => {});
       // Apply saved text size on startup
       const savedSize = await api.getSettings("text_size").catch(() => null);
@@ -336,7 +364,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
     init();
-  }, [refreshAppData]);
+  }, [queryClient]);
 
   useEffect(() => {
     const unlistenPromise = listen("tray-open-updates", () => {
@@ -359,11 +387,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     const unlistenPromise = listenOnActiveHost("app-files-changed", () => {
+      const hostId = getActiveHostId();
       if (refreshTimer) {
         clearTimeout(refreshTimer);
       }
       refreshTimer = setTimeout(() => {
-        refreshAppData().catch((error) => {
+        refreshAppDataForHost(hostId).catch((error) => {
           console.error("Failed to refresh after filesystem change:", error);
         });
       }, 500);
@@ -379,7 +408,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           console.error("Failed to unlisten app-files-changed:", error);
         });
     };
-  }, [refreshAppData]);
+  }, [refreshAppDataForHost]);
 
   // The active host's link dropped (say so and offer Reconnect), or a call
   // connected it again.
@@ -447,10 +476,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // and users who cannot reach GitHub would otherwise get an error every time
   // they open the app.
   //
-  // The ref makes it once per process, not once per `loading` edge:
-  // `refreshAppData` flips `loading` on every call, and a file-change event or
-  // a manual reload would otherwise re-hit the GitHub API and re-raise the
-  // toast. An in-flight guard would not be enough — it only blocks overlap.
+  // The ref makes it once per process, not once per initial-loading edge, so
+  // file events and host changes do not re-hit the GitHub API.
   //
   // Set inside the timer, not before it: `loading` flipping back to true within
   // the delay (the file watcher emits a change event as it builds its initial
@@ -498,13 +525,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       autoCheckInFlightRef.current = true;
       (async () => {
         try {
-          await api.checkAllSkillUpdates(false);
-          // Switched to a host meanwhile: the calls below would reach it.
+          await invokeHost(null, "check_all_skill_updates", { force: false });
+          // This updater round belongs to this computer even if the app has
+          // switched hosts while its local operation was running.
           if (getActiveHostId() !== null) return;
-          let skills = await api.getManagedSkills();
+          const skills = await invokeHost<ManagedSkill[]>(null, "get_managed_skills");
 
-          const autoUpdate = await api
-            .getSettings("auto_update_apply")
+          const autoUpdate = await invokeHost<string | null>(null, "get_settings", { key: "auto_update_apply" })
             .catch(() => null);
           if (autoUpdate === "on" && getActiveHostId() === null) {
             const ids = skills
@@ -515,8 +542,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
               )
               .map((s) => s.id);
             if (ids.length > 0) {
-              const result = await api.batchUpdateSkills(ids);
-              skills = await api.getManagedSkills();
+              const result = await invokeHost<Awaited<ReturnType<typeof api.batchUpdateSkills>>>(
+                null,
+                "batch_update_skills",
+                { skillIds: ids }
+              );
               if (result.refreshed > 0) {
                 toast.success(
                   i18n.t("mySkills.autoUpdated", { count: result.refreshed })
@@ -544,9 +574,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
 
           if (getActiveHostId() !== null) return;
-          setManagedSkills(skills);
-          notifyUpdatableSkills(skills);
-          api.setSettings("auto_update_last_run_at", new Date().toISOString())
+          const currentSkills = await refreshQuery(queryClient, managedSkillsQueryOptions(null));
+          if (getActiveHostId() === null) notifyUpdatableSkills(currentSkills);
+          invokeHost(null, "set_settings", {
+            key: "auto_update_last_run_at",
+            value: new Date().toISOString(),
+          })
             .catch(() => {});
         } catch (err) {
           // Startup round is non-blocking and does not toast on failure, but
@@ -565,10 +598,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // tray "check for updates" action finishes.
   useEffect(() => {
     const unlistenPromise = listenOnActiveHost("skills-auto-updated", async () => {
+      const hostId = getActiveHostId();
       try {
-        const skills = await api.getManagedSkills();
-        setManagedSkills(skills);
-        notifyUpdatableSkills(skills);
+        const skills = await refreshQuery(queryClient, managedSkillsQueryOptions(hostId));
+        if (getActiveHostId() === hostId) notifyUpdatableSkills(skills);
       } catch (error) {
         console.error("Failed to refresh after skills-auto-updated:", error);
       }
@@ -580,7 +613,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           console.error("Failed to unlisten skills-auto-updated:", error);
         });
     };
-  }, [notifyUpdatableSkills]);
+  }, [notifyUpdatableSkills, queryClient]);
 
   return (
     <AppContext.Provider
@@ -593,6 +626,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         projects,
         remoteHosts,
         activeHost: remoteHosts.find((host) => host.id === activeHostId) ?? null,
+        activeHostId,
         hostSession,
         connectingHostId,
         switchHost,
@@ -611,7 +645,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         refreshRemoteHosts,
         setViewedPresetId,
         applyPresetToDefault: handleApplyPresetToDefault,
-        clearAppError: () => setAppError(null),
         openHelp: () => setHelpOpen(true),
         closeHelp: () => setHelpOpen(false),
         openSkillDetailById: (skillId: string) => setDetailSkillId(skillId),
