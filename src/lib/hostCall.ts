@@ -23,19 +23,29 @@ export function trackHost(): () => boolean {
 }
 
 /**
+ * Invoke against the host captured by the caller. This is important for
+ * requests that outlive a host switch: the query key and the destination stay
+ * bound to the same machine. Commands outside the host scope still run here.
+ */
+export function invokeHost<T>(
+  hostId: string | null,
+  command: string,
+  args?: InvokeArgs,
+  options?: InvokeOptions
+): Promise<T> {
+  if (hostId !== null && isHostScoped(command, args)) {
+    return tauriInvoke<T>("remote_invoke", { hostId, command, args: args ?? {} }, options);
+  }
+  return tauriInvoke<T>(command, args, options);
+}
+
+/**
  * `invoke` for the whole app: host-scoped commands go to the active host
  * through `remote_invoke`, which returns the same JSON the local command
  * would; everything else runs here.
  */
 export function invoke<T>(command: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> {
-  if (activeHostId !== null && isHostScoped(command, args)) {
-    return tauriInvoke<T>(
-      "remote_invoke",
-      { hostId: activeHostId, command, args: args ?? {} },
-      options
-    );
-  }
-  return tauriInvoke<T>(command, args, options);
+  return invokeHost(activeHostId, command, args, options);
 }
 
 /** `invoke` on this computer whatever host is active, for the few reads that

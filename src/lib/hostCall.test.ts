@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const tauriInvoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriInvoke }));
 
-import { getActiveHostId, invoke, setActiveHostId, trackHost } from "./hostCall";
+import { getActiveHostId, invoke, invokeHost, setActiveHostId, trackHost } from "./hostCall";
 import { getLocalSettings, getSettings } from "./tauri";
 
 beforeEach(() => {
@@ -91,6 +91,30 @@ describe("invoke with a remote host active", () => {
     expect(getActiveHostId()).toBeNull();
     await invoke("get_managed_skills");
     expect(tauriInvoke).toHaveBeenCalledWith("get_managed_skills", undefined, undefined);
+  });
+});
+
+describe("invokeHost", () => {
+  it("uses the captured host even after the active host changes", async () => {
+    setActiveHostId("host-2");
+
+    await invokeHost("host-1", "get_project_skills", { projectId: "project-1" });
+
+    expect(tauriInvoke).toHaveBeenCalledWith(
+      "remote_invoke",
+      {
+        hostId: "host-1",
+        command: "get_project_skills",
+        args: { projectId: "project-1" },
+      },
+      undefined
+    );
+  });
+
+  it("keeps local-only commands on this computer for a remote host", async () => {
+    await invokeHost("host-1", "remote_hosts_list");
+
+    expect(tauriInvoke).toHaveBeenCalledWith("remote_hosts_list", undefined, undefined);
   });
 });
 

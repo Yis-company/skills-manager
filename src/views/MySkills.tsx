@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search,
   LayoutGrid,
@@ -68,8 +69,11 @@ import type {
   ManagedSkill,
   ToolInfo,
   SkillToolToggle,
+  BatchDeleteSkillsResult,
 } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
+import { invokeHost } from "../lib/hostCall";
+import { managedSkillsQueryOptions, presetsQueryOptions, projectsQueryOptions, queryKeys, refreshQuery } from "../lib/appQueries";
 import { gitBackupMode, type GitBackupMode } from "../lib/gitBackupMode";
 import {
   DndContext,
@@ -107,7 +111,24 @@ export function MySkills() {
     projects,
     refreshProjects,
     activeHost,
+    activeHostId,
   } = useApp();
+  const detailSkillIdRef = useRef(detailSkillId);
+  detailSkillIdRef.current = detailSkillId;
+  const queryClient = useQueryClient();
+  const deleteManagedSkill = useMutation({
+    mutationFn: ({ hostId, skillId }: { hostId: string | null; skillId: string }) =>
+      invokeHost<void>(hostId, "delete_managed_skill", { skillId }),
+  });
+  const deleteManagedSkills = useMutation({
+    mutationFn: ({ hostId, skillIds }: { hostId: string | null; skillIds: string[] }) =>
+      invokeHost<BatchDeleteSkillsResult>(hostId, "delete_managed_skills", { skillIds }),
+  });
+  const viewMountedRef = useRef(true);
+  useEffect(() => {
+    viewMountedRef.current = true;
+    return () => { viewMountedRef.current = false; };
+  }, []);
   // Backup is this computer's (it never follows a host), so its status and
   // conflicts don't describe a remote library.
   const onRemote = activeHost !== null;
@@ -127,7 +148,6 @@ export function MySkills() {
   const [tagToDelete, setTagToDelete] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
-  const refreshAfterDeleteRef = useRef<number | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
   const [batchTagDialogOpen, setBatchTagDialogOpen] = useState(false);
   const [batchSyncDialogOpen, setBatchSyncDialogOpen] = useState(false);
@@ -392,72 +412,74 @@ export function MySkills() {
     [togglingTarget, tools, t, refreshManagedSkills]
   );
 
-  const scheduleRefreshAfterDelete = useCallback(() => {
-    if (refreshAfterDeleteRef.current !== null) {
-      window.clearTimeout(refreshAfterDeleteRef.current);
-    }
-    refreshAfterDeleteRef.current = window.setTimeout(() => {
-      refreshAfterDeleteRef.current = null;
-      void Promise.all([refreshManagedSkills(), refreshPresets()]);
-    }, 300);
-  }, [refreshManagedSkills, refreshPresets]);
+  const removeConfirmedManagedSkills = useCallback(async (hostId: string | null, ids: string[]) => {
+    if (ids.length === 0) return;
+    const key = queryKeys.managedSkills(hostId);
+    await queryClient.cancelQueries({ queryKey: key, exact: true });
+    const removed = new Set(ids);
+    queryClient.setQueryData<ManagedSkill[]>(key, (current) => current?.filter((skill) => !removed.has(skill.id)));
+  }, [queryClient]);
 
-  useEffect(() => {
-    return () => {
-      if (refreshAfterDeleteRef.current !== null) {
-        window.clearTimeout(refreshAfterDeleteRef.current);
-      }
-    };
-  }, []);
+  const refreshAfterManagedDelete = useCallback(async (hostId: string | null) => {
+    await Promise.allSettled([
+      refreshQuery(queryClient, managedSkillsQueryOptions(hostId)),
+      refreshQuery(queryClient, presetsQueryOptions(hostId)),
+      refreshQuery(queryClient, projectsQueryOptions(hostId)),
+    ]);
+  }, [queryClient]);
 
   const handleDeleteSkill = useCallback(
-    (skill: ManagedSkill) => {
+    async (skill: ManagedSkill) => {
+      const hostId = activeHostId;
       setDeletingIds((prev) => {
         if (prev.has(skill.id)) return prev;
         const next = new Set(prev);
         next.add(skill.id);
         return next;
       });
-      void (async () => {
-        try {
-          await api.deleteManagedSkill(skill.id);
-          if (selectedSkill?.id === skill.id) closeSkillDetail();
-          toast.success(`${skill.name} ${t("mySkills.deleted")}`);
-        } catch (error: unknown) {
-          toast.error(getErrorMessage(error, t("common.error")));
-        } finally {
-          setDeletingIds((prev) => {
-            if (!prev.has(skill.id)) return prev;
-            const next = new Set(prev);
-            next.delete(skill.id);
-            return next;
-          });
-          scheduleRefreshAfterDelete();
-        }
-      })();
+      try {
+        await deleteManagedSkill.mutateAsync({ hostId, skillId: skill.id });
+        await removeConfirmedManagedSkills(hostId, [skill.id]);
+        if (viewMountedRef.current && detailSkillIdRef.current === skill.id) closeSkillDetail();
+        if (viewMountedRef.current) toast.success(`${skill.name} ${t("mySkills.deleted")}`);
+      } catch (error: unknown) {
+        if (viewMountedRef.current) toast.error(getErrorMessage(error, t("common.error")));
+      } finally {
+        setSkillToDelete(null);
+        setDeletingIds((prev) => {
+          if (!prev.has(skill.id)) return prev;
+          const next = new Set(prev);
+          next.delete(skill.id);
+          return next;
+        });
+        void refreshAfterManagedDelete(hostId);
+      }
     },
-    [selectedSkill, closeSkillDetail, t, scheduleRefreshAfterDelete]
+    [activeHostId, closeSkillDetail, deleteManagedSkill, refreshAfterManagedDelete, removeConfirmedManagedSkills, t]
   );
 
   const handleBatchDelete = async () => {
     const ids = Array.from(selectedIds);
+    const hostId = activeHostId;
     try {
-      const result = await api.deleteManagedSkills(ids);
-      if (selectedSkill && ids.includes(selectedSkill.id) && !result.failed.includes(selectedSkill.id)) {
-        closeSkillDetail();
+      const result = await deleteManagedSkills.mutateAsync({ hostId, skillIds: ids });
+      const confirmed = ids.filter((id) => !result.failed.includes(id));
+      await removeConfirmedManagedSkills(hostId, confirmed);
+      if (ids.includes(detailSkillIdRef.current ?? "") && !result.failed.includes(detailSkillIdRef.current ?? "")) {
+        if (viewMountedRef.current) closeSkillDetail();
       }
-      if (result.deleted > 0) {
+      if (result.deleted > 0 && viewMountedRef.current) {
         toast.success(t("mySkills.batchDeleted", { count: result.deleted }));
       }
-      if (result.failed.length > 0) {
+      if (result.failed.length > 0 && viewMountedRef.current) {
         toast.error(t("mySkills.batchDeleteFailed", { count: result.failed.length }));
       }
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, t("common.error")));
+      if (viewMountedRef.current) toast.error(getErrorMessage(error, t("common.error")));
     } finally {
       exitMultiSelect();
       setBatchDeleteConfirm(false);
-      await Promise.all([refreshManagedSkills(), refreshPresets()]);
+      void refreshAfterManagedDelete(hostId);
     }
   };
 
@@ -1348,7 +1370,7 @@ export function MySkills() {
         message={t("mySkills.deleteConfirm", { name: skillToDelete?.name || "" })}
         onClose={() => setSkillToDelete(null)}
         onConfirm={async () => {
-          if (skillToDelete) handleDeleteSkill(skillToDelete);
+          if (skillToDelete) await handleDeleteSkill(skillToDelete);
         }}
       />
       <ConfirmDialog

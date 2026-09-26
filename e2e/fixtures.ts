@@ -40,6 +40,14 @@ export class FakeBackend {
     return this.page.evaluate((c) => window.__e2e!.release(c), cmd);
   }
 
+  holdResponse(cmd: string) {
+    return this.page.evaluate((c) => window.__e2e!.holdResponse(c), cmd);
+  }
+
+  releaseResponse(cmd: string) {
+    return this.page.evaluate((c) => window.__e2e!.releaseResponse(c), cmd);
+  }
+
   emit(event: string, payload: unknown) {
     return this.page.evaluate(([e, p]) => window.__e2e!.emit(e, p), [event, payload] as const);
   }
@@ -94,4 +102,3 @@ export async function dragOnto(page: Page, item: Locator, handle: Locator, targe
   await page.mouse.move(start.x + dx, start.y + dy, { steps: 20 });
   await page.mouse.up();
 }
-
