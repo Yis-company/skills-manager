@@ -60,6 +60,17 @@ export const handlers: Record<string, Handler<never>> = {
     state.settings[key] = value;
     return null;
   },
+  get_central_repo_path: (_args: unknown, state) => state.centralRepoPath,
+  get_central_repo_path_override: (_args: unknown, state) => state.centralRepoPathOverride,
+  get_central_repo_pending_path: (_args: unknown, state) => state.centralRepoPendingPath,
+  get_central_repo_warnings: () => [],
+  check_last_panic: () => null,
+  set_central_repo_path: ({ path }: { path: string | null }, state) => {
+    const nextPath = path ?? "/home/e2e/.skills-manager";
+    state.centralRepoPathOverride = path;
+    state.centralRepoPendingPath = nextPath === state.centralRepoPath ? null : nextPath;
+    return nextPath;
+  },
 
   // ── Tools ──
   get_tool_status: (_args: unknown, state) => state.tools,

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use app_lib::core::{app_state, central_repo, serve};
 use clap::{Args, Parser, Subcommand};
 
-use crate::args::{GitArgs, PresetArgs, RepoArgs, SkillsArgs, ToolsArgs};
-use crate::output::error_envelope;
+use crate::args::{GitArgs, PresetArgs, RepoArgs, RepoCommand, SkillsArgs, ToolsArgs};
+use crate::output::{error_envelope, print_json};
 use crate::presets::run_presets;
 use crate::repo::{run_git, run_repo};
 use crate::skills::run_skills;
@@ -93,6 +93,26 @@ fn main() {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
+    if let Commands::Repo(RepoArgs {
+        command: command @ (RepoCommand::SetPath { .. } | RepoCommand::ResetPath),
+    }) = &cli.command
+    {
+        if cli.skills_root.is_some() || cli.base_dir.is_some() {
+            anyhow::bail!(
+                "repo set-path / reset-path cannot be combined with --skills-root or --base-dir"
+            );
+        }
+        let path = match command {
+            RepoCommand::SetPath { path } => Some(path.clone()),
+            RepoCommand::ResetPath => None,
+            RepoCommand::Status => unreachable!(),
+        };
+        central_repo::set_base_dir_override(path)?;
+        let store = app_state::initialize_cli_store_moving_repo()?;
+        print_json(&crate::repo::repo_status(&store), cli.json);
+        return Ok(());
+    }
+
     if let Some(skills_root) = &cli.skills_root {
         let base = central_repo::external_base_dir(skills_root);
         central_repo::set_runtime_base_dir_override(Some(base));
@@ -102,7 +122,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         central_repo::set_runtime_base_dir_override(Some(base_dir.clone()));
     }
 
-    let store = app_state::initialize_cli_store()?;
+    let store = if matches!(&cli.command, Commands::Serve(_)) {
+        app_state::initialize_cli_store_moving_repo()?
+    } else {
+        app_state::initialize_cli_store()?
+    };
 
     match cli.command {
         Commands::Repo(args) => run_repo(args, &store, cli.json),

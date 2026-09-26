@@ -422,7 +422,10 @@ pub(crate) fn run_preset_deployment(
     let changed_pairs = changed.len();
 
     let mut preserved: Vec<String> = Vec::new();
-    if !dry_run {
+    if dry_run && deploy {
+        scenario_service::preflight_add_skills_to_tools(store, &skill_ids, &agent_keys)
+            .map_err(map_app_err)?;
+    } else if !dry_run {
         scenario_service::apply_skills_to_tools(
             store,
             &skill_ids,

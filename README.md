@@ -184,8 +184,10 @@ pnpm cli skills adopt ~/.claude/skills --dry-run
 ```
 
 `--help` on any group or subcommand prints the full surface — the groups below
-each carry more than these examples show, and destructive commands take
-`--dry-run` (and `remove` requires `--yes`).
+each carry more than these examples show. `--dry-run` is available on selected
+commands, including `skills deploy/undeploy/sync/remove/adopt` and
+`presets deploy/undeploy/delete`; check each subcommand's help before using it.
+`skills remove` requires `--yes` for actual deletion.
 
 Available command groups:
 - `repo` — inspect or change the configured base directory

@@ -28,6 +28,9 @@ export interface Seed {
   projectAgentTargets?: Record<string, ProjectAgentTarget[]>;
   tools?: ToolInfo[];
   settings?: Record<string, string>;
+  centralRepoPath?: string;
+  centralRepoPathOverride?: string | null;
+  centralRepoPendingPath?: string | null;
   gitStatus?: GitBackupStatus;
   /** The skills.sh catalog: the leaderboard shows all of it, search filters it by name. */
   market?: SkillsShSkill[];
@@ -59,6 +62,9 @@ export function createState({ settings, ...seed }: Seed): State {
     tools: [tool("claude_code", "Claude Code"), tool("codex", "Codex")],
     // Without it an empty library opens the first-run restore dialog.
     settings: { backup_first_run_prompt: "fresh", ...settings },
+    centralRepoPath: "/home/e2e/.skills-manager",
+    centralRepoPathOverride: null,
+    centralRepoPendingPath: null,
     gitStatus: gitStatus({ is_repo: false }),
     market: [],
     scan: { tools_scanned: 0, skills_found: 0, groups: [] },

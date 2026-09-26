@@ -1,8 +1,7 @@
 //! `repo` (the base folder and its status) and `git` (backup of the central library).
 
 use app_lib::core::{
-    app_state, central_repo, git_backup, merge, repo_lock::RepoLock, skill_store::SkillStore,
-    sync_metadata,
+    central_repo, git_backup, merge, repo_lock::RepoLock, skill_store::SkillStore, sync_metadata,
 };
 
 use crate::args::{GitArgs, GitCommand, RepoArgs, RepoCommand};
@@ -12,21 +11,17 @@ use crate::reports::RepoStatus;
 pub(crate) fn run_repo(args: RepoArgs, store: &SkillStore, json: bool) -> anyhow::Result<()> {
     match args.command {
         RepoCommand::Status => print_json(&repo_status(store), json),
-        RepoCommand::SetPath { path } => {
-            central_repo::set_base_dir_override(Some(path))?;
-            let store = app_state::initialize_cli_store()?;
-            print_json(&repo_status(&store), json);
+        RepoCommand::SetPath { .. } => {
+            unreachable!("handled before the CLI store is opened")
         }
         RepoCommand::ResetPath => {
-            central_repo::set_base_dir_override(None)?;
-            let store = app_state::initialize_cli_store()?;
-            print_json(&repo_status(&store), json);
+            unreachable!("handled before the CLI store is opened")
         }
     }
     Ok(())
 }
 
-fn repo_status(store: &SkillStore) -> RepoStatus {
+pub(crate) fn repo_status(store: &SkillStore) -> RepoStatus {
     RepoStatus {
         base_dir: central_repo::base_dir().to_string_lossy().to_string(),
         skills_dir: central_repo::skills_dir().to_string_lossy().to_string(),
@@ -35,6 +30,8 @@ fn repo_status(store: &SkillStore) -> RepoStatus {
         skill_count: store.get_all_skills().unwrap_or_default().len(),
         preset_count: store.get_all_scenarios().unwrap_or_default().len(),
         active_preset_id: store.get_active_scenario_id().unwrap_or(None),
+        pending_base_dir: central_repo::pending_base_dir()
+            .map(|path| path.to_string_lossy().to_string()),
     }
 }
 

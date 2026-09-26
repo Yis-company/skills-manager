@@ -46,6 +46,7 @@ export function LibrarySection() {
   const [openingRepo, setOpeningRepo] = useState(false);
   const [centralRepoPath, setCentralRepoPath] = useState("");
   const [centralRepoPathOverride, setCentralRepoPathOverride] = useState<string | null>(null);
+  const [centralRepoPendingPath, setCentralRepoPendingPath] = useState<string | null>(null);
   const [editingCentralRepoPath, setEditingCentralRepoPath] = useState(false);
   const [centralRepoPathInput, setCentralRepoPathInput] = useState("");
   const [savingCentralRepoPath, setSavingCentralRepoPath] = useState(false);
@@ -61,6 +62,7 @@ export function LibrarySection() {
       setCentralRepoPathInput(path);
     }).catch(() => {});
     api.getCentralRepoPathOverride().then(setCentralRepoPathOverride).catch(() => {});
+    api.getCentralRepoPendingPath().then(setCentralRepoPendingPath).catch(() => {});
     api.getSettings("auto_update_check_interval").then((v) => { if (v) setAutoUpdateInterval(v); });
     api.getSettings("auto_update_apply").then((v) => { if (v) setAutoUpdateApply(v); });
     // The `skills-auto-updated` listener may populate this concurrently, so
@@ -125,11 +127,12 @@ export function LibrarySection() {
     setSavingCentralRepoPath(true);
     try {
       const nextPath = await api.setCentralRepoPath(trimmed);
-      setCentralRepoPath(nextPath);
       setCentralRepoPathOverride(nextPath);
+      const pendingPath = await api.getCentralRepoPendingPath();
+      setCentralRepoPendingPath(pendingPath);
       setEditingCentralRepoPath(false);
       toast.success(t("settings.repoPathSaved"));
-      announceRepoPathChange();
+      if (pendingPath) announceRepoPathChange();
     } catch (error) {
       toast.error(String(error));
     } finally {
@@ -141,12 +144,13 @@ export function LibrarySection() {
     setSavingCentralRepoPath(true);
     try {
       const nextPath = await api.setCentralRepoPath(null);
-      setCentralRepoPath(nextPath);
       setCentralRepoPathOverride(null);
       setCentralRepoPathInput(nextPath);
+      const pendingPath = await api.getCentralRepoPendingPath();
+      setCentralRepoPendingPath(pendingPath);
       setEditingCentralRepoPath(false);
       toast.success(t("settings.repoPathReset"));
-      announceRepoPathChange();
+      if (pendingPath) announceRepoPathChange();
     } catch (error) {
       toast.error(String(error));
     } finally {
@@ -327,9 +331,22 @@ export function LibrarySection() {
             )}
           </div>
           <div className="w-full text-[12px] text-muted">
-            {centralRepoPathOverride
-              ? t("settings.repoPathCustomHint")
-              : t("settings.repoPathDefaultHint")}
+            {centralRepoPendingPath ? (
+              <span className="text-amber-600 dark:text-amber-400">
+                {activeHost
+                  ? t("settings.repoPathReconnectPendingHint", {
+                      name: activeHost.name,
+                      path: compactHomePath(centralRepoPendingPath),
+                    })
+                  : t("settings.repoPathPendingHint", {
+                      path: compactHomePath(centralRepoPendingPath),
+                    })}
+              </span>
+            ) : centralRepoPathOverride ? (
+              t("settings.repoPathCustomHint")
+            ) : (
+              t("settings.repoPathDefaultHint")
+            )}
           </div>
         </div>
 
