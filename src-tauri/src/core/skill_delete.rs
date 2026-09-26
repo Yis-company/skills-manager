@@ -33,9 +33,19 @@ pub fn delete_managed_skills_by_ids(
             };
 
             let targets = store.get_targets_for_skill(skill_id)?;
+            let all_targets = store.get_all_targets()?;
             for target in &targets {
-                let target_path = PathBuf::from(&target.target_path);
-                sync_engine::remove_target(&target_path).ok();
+                // Another skill may still use this physical path. Rows for
+                // this skill all disappear together, so they are not survivors.
+                let still_referenced = all_targets.iter().any(|other| {
+                    other.target_path == target.target_path && other.skill_id != target.skill_id
+                });
+                if !still_referenced {
+                    sync_engine::remove_recorded_target_or_warn(
+                        &PathBuf::from(&target.target_path),
+                        &target.mode,
+                    );
+                }
             }
 
             let central = PathBuf::from(&skill.central_path);
@@ -89,7 +99,7 @@ mod tests {
                 skill_id: "skill-1".to_string(),
                 tool: "cursor".to_string(),
                 target_path: target_dir.to_string_lossy().to_string(),
-                mode: "symlink".to_string(),
+                mode: "copy".to_string(),
                 status: "ok".to_string(),
                 synced_at: Some(1),
                 last_error: None,
@@ -124,5 +134,74 @@ mod tests {
         assert!(sync_metadata::metadata_dir()
             .join("skills/skill-2.json")
             .exists());
+    }
+
+    #[test]
+    fn deleting_a_skill_preserves_user_content_that_replaced_a_recorded_link() {
+        let repo = test_repo();
+        let dir = write_skill_dir("my-skill");
+        repo.store
+            .insert_skill(&sample_skill("s1", "my-skill", &dir))
+            .unwrap();
+
+        let target = repo._tmp.path().join("agent").join("my-skill");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("mine.txt"), "DO_NOT_OVERWRITE").unwrap();
+        repo.store
+            .insert_target(&SkillTargetRecord {
+                id: "t1".to_string(),
+                skill_id: "s1".to_string(),
+                tool: "test_agent".to_string(),
+                target_path: target.to_string_lossy().to_string(),
+                mode: "symlink".to_string(),
+                status: "ok".to_string(),
+                synced_at: Some(1),
+                last_error: None,
+                source_hash: None,
+            })
+            .unwrap();
+
+        let result = delete_managed_skills_by_ids(&repo.store, &["s1".to_string()]).unwrap();
+
+        assert_eq!(result.deleted, 1);
+        assert_eq!(
+            fs::read_to_string(target.join("mine.txt")).unwrap(),
+            "DO_NOT_OVERWRITE"
+        );
+        assert!(repo.store.get_targets_for_skill("s1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_a_skill_removes_a_target_shared_by_its_tool_rows() {
+        let repo = test_repo();
+        let dir = write_skill_dir("my-skill");
+        repo.store
+            .insert_skill(&sample_skill("s1", "my-skill", &dir))
+            .unwrap();
+
+        let target = repo._tmp.path().join("agent").join("my-skill");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("SKILL.md"), "deployed content").unwrap();
+        for (id, tool) in [("t1", "agent_a"), ("t2", "agent_b")] {
+            repo.store
+                .insert_target(&SkillTargetRecord {
+                    id: id.to_string(),
+                    skill_id: "s1".to_string(),
+                    tool: tool.to_string(),
+                    target_path: target.to_string_lossy().to_string(),
+                    mode: "copy".to_string(),
+                    status: "ok".to_string(),
+                    synced_at: Some(1),
+                    last_error: None,
+                    source_hash: None,
+                })
+                .unwrap();
+        }
+
+        let result = delete_managed_skills_by_ids(&repo.store, &["s1".to_string()]).unwrap();
+
+        assert_eq!(result.deleted, 1);
+        assert!(!target.exists());
+        assert!(repo.store.get_targets_for_skill("s1").unwrap().is_empty());
     }
 }

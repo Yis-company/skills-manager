@@ -12,6 +12,9 @@ pub(crate) struct RepoStatus {
     pub(crate) skill_count: usize,
     pub(crate) preset_count: usize,
     pub(crate) active_preset_id: Option<String>,
+    /// Set while a move to another location waits for the app to restart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) pending_base_dir: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -6,7 +6,7 @@
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -67,6 +67,43 @@ fn start() -> Server {
         events,
         tmp,
     }
+}
+
+fn spawn_in_isolated_home(tmp: &TempDir) -> RemoteSession {
+    let home = tmp.path().join("home");
+    let config = tmp.path().join("config");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    let cli = move |_: &RemoteHostRecord, args: &[&str]| {
+        let mut cmd = Command::new(CLI);
+        cmd.args(args)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", &config)
+            .env_remove("XDG_DATA_HOME");
+        cmd
+    };
+    RemoteSession::spawn(&cli, &host("unused", None), Arc::new(Recorded::default())).unwrap()
+}
+
+fn run_in_isolated_home(tmp: &TempDir, args: &[&str]) -> Output {
+    Command::new(CLI)
+        .arg("--json")
+        .args(args)
+        .env("HOME", tmp.path().join("home"))
+        .env("XDG_CONFIG_HOME", tmp.path().join("config"))
+        .env_remove("XDG_DATA_HOME")
+        .output()
+        .unwrap()
+}
+
+fn cli_json(tmp: &TempDir, args: &[&str]) -> Value {
+    let output = run_in_isolated_home(tmp, args);
+    assert!(
+        output.status.success(),
+        "{args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
 }
 
 #[tokio::test]
@@ -157,6 +194,132 @@ async fn progress_events_arrive_tagged_with_the_host() {
         assert_eq!(payload["current"], n as u64 + 1);
         assert_eq!(payload["total"], 2);
     }
+}
+
+#[tokio::test]
+async fn remote_library_move_waits_for_serve_and_reconnect_preserves_data() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let old_base = home.join(".skills-manager");
+    let new_base = tmp.path().join("relocated-library");
+    let source = tmp.path().join("source/demo");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: demo\ndescription: relocation fixture\n---\nbody\n",
+    )
+    .unwrap();
+
+    let session = spawn_in_isolated_home(&tmp);
+    assert_eq!(Path::new(&session.info().base_dir), old_base);
+    let imported = session
+        .call(
+            "batch_import_folder",
+            json!({ "folderPath": source.parent().unwrap().to_string_lossy() }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(imported["imported"], 1);
+
+    let configured = session
+        .call(
+            "set_central_repo_path",
+            json!({ "path": new_base.to_string_lossy() }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(configured, new_base.to_string_lossy().as_ref());
+    let active = session
+        .call("get_central_repo_path", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(active, old_base.to_string_lossy().as_ref());
+    let pending = session
+        .call("get_central_repo_pending_path", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(pending, new_base.to_string_lossy().as_ref());
+    assert!(old_base.join("skills-manager.db").is_file());
+    assert!(!new_base.exists());
+
+    // A normal status command may share the running library but must not
+    // perform a move merely because a pending path exists.
+    let status = cli_json(&tmp, &["repo", "status"]);
+    assert_eq!(status["base_dir"], old_base.to_string_lossy().as_ref());
+    assert!(!new_base.exists());
+
+    // Even the explicit move command must leave a library alone while the
+    // serving process holds its shared lifetime lease.
+    let status = cli_json(&tmp, &["repo", "set-path", new_base.to_str().unwrap()]);
+    assert_eq!(status["base_dir"], old_base.to_string_lossy().as_ref());
+    assert!(!new_base.exists());
+
+    drop(session);
+    // A plain CLI status still must not migrate after the serving lease ends.
+    let status = cli_json(&tmp, &["repo", "status"]);
+    assert_eq!(status["base_dir"], old_base.to_string_lossy().as_ref());
+    assert_eq!(
+        status["pending_base_dir"],
+        new_base.to_string_lossy().as_ref()
+    );
+    assert!(!new_base.exists());
+
+    let reconnected = spawn_in_isolated_home(&tmp);
+    assert_eq!(Path::new(&reconnected.info().base_dir), new_base);
+    let active = reconnected
+        .call("get_central_repo_path", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(active, new_base.to_string_lossy().as_ref());
+    let pending = reconnected
+        .call("get_central_repo_pending_path", json!({}))
+        .await
+        .unwrap();
+    assert!(
+        pending.is_null(),
+        "pending path should clear after reconnect: {pending}"
+    );
+    let skills = reconnected
+        .call("get_managed_skills", json!({}))
+        .await
+        .unwrap();
+    assert!(
+        skills
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|skill| skill["name"] == "demo"),
+        "relocated database lost its imported skill: {skills}"
+    );
+    assert!(new_base.join("skills-manager.db").is_file());
+    assert!(!old_base.exists());
+}
+
+#[test]
+fn explicit_cli_repo_set_path_moves_when_no_serve_process_holds_the_lease() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("home")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("config")).unwrap();
+    let source = tmp.path().join("source/demo");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: demo\ndescription: relocation fixture\n---\nbody\n",
+    )
+    .unwrap();
+    let old_base = tmp.path().join("home/.skills-manager");
+    let new_base = tmp.path().join("relocated-library");
+
+    cli_json(&tmp, &["repo", "status"]);
+    let installed = cli_json(&tmp, &["skills", "install", source.to_str().unwrap()]);
+    // InstallReport serializes `name` at its top level.
+    assert_eq!(installed["name"], "demo");
+
+    let status = cli_json(&tmp, &["repo", "set-path", new_base.to_str().unwrap()]);
+    assert_eq!(status["base_dir"], new_base.to_string_lossy().as_ref());
+    assert_eq!(status["skill_count"], 1);
+    assert!(new_base.join("skills-manager.db").is_file());
+    assert!(!old_base.exists());
 }
 
 #[test]

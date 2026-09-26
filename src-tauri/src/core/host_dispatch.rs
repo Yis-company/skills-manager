@@ -116,6 +116,7 @@ pub const COMMANDS: &[&str] = &[
     "set_settings",
     "get_central_repo_path",
     "get_central_repo_path_override",
+    "get_central_repo_pending_path",
     "get_central_repo_warnings",
     "set_central_repo_path",
 ];
@@ -506,6 +507,7 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
         }
         "get_central_repo_path" => reply(Ok(settings::get_central_repo_path())),
         "get_central_repo_path_override" => reply(Ok(settings::get_central_repo_path_override())),
+        "get_central_repo_pending_path" => reply(Ok(settings::get_central_repo_pending_path())),
         "get_central_repo_warnings" => reply(Ok(settings::get_central_repo_warnings())),
         "set_central_repo_path" => reply(settings::set_central_repo_path_core(a.opt("path")?)),
         _ => Err(AppError::not_found(format!("Unknown command: {command}"))),
