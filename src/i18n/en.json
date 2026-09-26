@@ -675,6 +675,8 @@
     "repoPathEmpty": "Enter a central repository path first",
     "repoPathDefaultHint": "Using the default central repository path",
     "repoPathCustomHint": "Using a custom central repository path",
+    "repoPathPendingHint": "Restart the app to move the library to {{path}}. Until then this session keeps using the current location.",
+    "repoPathReconnectPendingHint": "Reconnect to {{name}} to move the library to {{path}}. Until then this session keeps using the current location.",
     "changeDir": "Change Directory",
     "openInFinder": "Open Folder",
     "copyPath": "Copy Path",

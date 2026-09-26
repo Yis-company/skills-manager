@@ -60,7 +60,10 @@ pub(crate) fn run_skill_deployment(
     let changed_pairs = changed.len();
 
     let mut preserved: Vec<String> = Vec::new();
-    if !dry_run {
+    if dry_run && deploy {
+        scenario_service::preflight_add_skills_to_tools(store, &skill_ids, &agent_keys)
+            .map_err(map_app_err)?;
+    } else if !dry_run {
         scenario_service::apply_skills_to_tools(
             store,
             &skill_ids,
@@ -288,6 +291,13 @@ pub(crate) fn run_sync(
     };
 
     if dry_run {
+        let desired = scenario_service::collect_scenario_sync_targets(store, &preset.id)
+            .map_err(map_app_err)?;
+        let desired: Vec<_> = desired
+            .into_iter()
+            .filter(|target| tool_key.is_none_or(|tool| target.tool == tool))
+            .collect();
+        scenario_service::preflight_scenario_sync_targets(store, &desired).map_err(map_app_err)?;
         return Ok(SyncReport {
             ok: true,
             preset_id: preset.id,
@@ -542,5 +552,120 @@ mod tests {
         assert_eq!(audit.len(), audit_count + 1);
         assert_eq!(audit[0].action, "deploy");
         assert_eq!(audit[0].skill_id.as_deref(), Some("skill-demo"));
+    }
+
+    #[test]
+    fn deployment_dry_runs_refuse_a_foreign_target_without_changes() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("skills.db")).unwrap();
+        let source = tmp.path().join("central/demo");
+        let target_root = tmp.path().join("agent-skills");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target_root).unwrap();
+        fs::write(source.join("SKILL.md"), "# Demo\n").unwrap();
+        tool_service::set_custom_tools(
+            &store,
+            &[CustomToolDef {
+                key: "test_agent".to_string(),
+                display_name: "Test Agent".to_string(),
+                skills_dir: target_root.to_string_lossy().to_string(),
+                project_relative_skills_dir: None,
+                category: ToolCategory::Coding,
+            }],
+        )
+        .unwrap();
+        store
+            .insert_skill(&SkillRecord {
+                id: "skill-demo".to_string(),
+                name: "demo".to_string(),
+                description: None,
+                source_type: "local".to_string(),
+                source_ref: Some(source.to_string_lossy().to_string()),
+                source_ref_resolved: None,
+                source_subpath: None,
+                source_branch: None,
+                source_revision: None,
+                remote_revision: None,
+                central_path: source.to_string_lossy().to_string(),
+                content_hash: None,
+                enabled: true,
+                created_at: 1,
+                updated_at: 1,
+                status: "ok".to_string(),
+                update_status: "local_only".to_string(),
+                last_checked_at: None,
+                last_check_error: None,
+            })
+            .unwrap();
+        store
+            .insert_scenario(&ScenarioRecord {
+                id: "preset-demo".to_string(),
+                name: "Demo".to_string(),
+                description: None,
+                icon: None,
+                sort_order: 0,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        store
+            .add_skill_to_scenario("preset-demo", "skill-demo")
+            .unwrap();
+
+        let target = target_root.join("demo");
+        let foreign = tmp.path().join("foreign");
+        fs::create_dir_all(&foreign).unwrap();
+        fs::write(foreign.join("mine.txt"), "keep").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&foreign, &target).unwrap();
+        #[cfg(not(unix))]
+        {
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("mine.txt"), "keep").unwrap();
+        }
+
+        let skill_err = run_skill_deployment(
+            &store,
+            &["demo".to_string()],
+            &["test_agent".to_string()],
+            true,
+            true,
+        )
+        .unwrap_err();
+        let preset_err =
+            run_preset_deployment(&store, "Demo", &["test_agent".to_string()], true, true)
+                .unwrap_err();
+        let sync_err = run_sync(&store, Some("Demo"), Some("test_agent"), true).unwrap_err();
+        assert_eq!(store.get_active_scenario_id().unwrap(), None);
+        assert!(store.get_all_targets().unwrap().is_empty());
+        let real_skill_err = run_skill_deployment(
+            &store,
+            &["demo".to_string()],
+            &["test_agent".to_string()],
+            true,
+            false,
+        )
+        .unwrap_err();
+        let real_preset_err =
+            run_preset_deployment(&store, "Demo", &["test_agent".to_string()], true, false)
+                .unwrap_err();
+        let real_sync_err = run_sync(&store, Some("Demo"), Some("test_agent"), false).unwrap_err();
+        for error in [
+            skill_err,
+            preset_err,
+            sync_err,
+            real_skill_err,
+            real_preset_err,
+            real_sync_err,
+        ] {
+            let envelope = crate::output::error_envelope(&error);
+            assert_eq!(envelope["code"], "TARGET_CONFLICT");
+            assert_eq!(
+                envelope["details"]["conflicts"][0]["path"],
+                target.to_string_lossy().as_ref()
+            );
+        }
+        assert_eq!(fs::read_to_string(target.join("mine.txt")).unwrap(), "keep");
+        assert!(store.get_all_targets().unwrap().is_empty());
     }
 }

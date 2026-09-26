@@ -4,7 +4,7 @@ const tauriInvoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriInvoke }));
 
 import { getActiveHostId, invoke, setActiveHostId, trackHost } from "./hostCall";
-import { getLocalSettings, getSettings } from "./tauri";
+import { getCentralRepoPendingPath, getLocalSettings, getSettings } from "./tauri";
 
 beforeEach(() => {
   tauriInvoke.mockReset();
@@ -59,6 +59,16 @@ describe("invoke with a remote host active", () => {
       undefined
     );
     expect(tauriInvoke).toHaveBeenNthCalledWith(2, "get_settings", { key: "theme" }, undefined);
+  });
+
+  it("reads the pending library move from the selected host", async () => {
+    tauriInvoke.mockResolvedValueOnce("/srv/new-library");
+    await expect(getCentralRepoPendingPath()).resolves.toBe("/srv/new-library");
+    expect(tauriInvoke).toHaveBeenCalledWith(
+      "remote_invoke",
+      { hostId: "host-1", command: "get_central_repo_pending_path", args: {} },
+      undefined
+    );
   });
 
   it("keeps local commands local", async () => {

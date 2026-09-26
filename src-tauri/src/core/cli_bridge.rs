@@ -47,6 +47,11 @@ pub fn bridge_dir() -> PathBuf {
     central_repo::home_base_dir().join("bin")
 }
 
+/// Whether `name` is one of the files the bridge keeps in [`bridge_dir`].
+pub(crate) fn is_bridge_file(name: &str) -> bool {
+    name == BRIDGE_BIN_NAME || name == ".version" || name == format!(".{BRIDGE_BIN_NAME}.staged")
+}
+
 pub fn bridge_path() -> PathBuf {
     bridge_dir().join(BRIDGE_BIN_NAME)
 }

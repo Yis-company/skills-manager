@@ -105,6 +105,7 @@ export const HOST_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "set_settings",
   "get_central_repo_path",
   "get_central_repo_path_override",
+  "get_central_repo_pending_path",
   "get_central_repo_warnings",
   "set_central_repo_path",
 ]);
