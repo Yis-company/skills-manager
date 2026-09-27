@@ -55,6 +55,7 @@ import { invokeHost } from "../lib/hostCall";
 import { projectSkillsQueryOptions, projectsQueryOptions, queryKeys, refreshQuery } from "../lib/appQueries";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 import { ProjectAgentsDialog } from "../components/ProjectAgentsDialog";
+import { ResourceWorkspace } from "../components/ResourceWorkspace";
 
 export function ProjectDetail() {
   const { id } = useParams({ from: "/project/$id" });
@@ -817,6 +818,10 @@ export function ProjectDetail() {
   if (!project) return null;
 
   return (
+    <ResourceWorkspace
+      scope={{ kind: "project", projectId: id, agentKeys: project.agent_keys }}
+      allowResources={project.workspace_type !== "linked"}
+      skills={
     <div className="app-page">
       <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1263,5 +1268,7 @@ export function ProjectDetail() {
         />
       )}
     </div>
+      }
+    />
   );
 }

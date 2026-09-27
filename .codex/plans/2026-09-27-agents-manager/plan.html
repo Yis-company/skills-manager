@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents Manager · Plan review</title>
+<script>try{const t=localStorage.getItem('agents-plan-theme');document.documentElement.classList.toggle('dark',t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches)}catch(e){}</script>
+<style>
+:root{--bg:#f5f4ef;--panel:#fff;--ink:#202d2d;--muted:#546563;--line:#d5ded8;--accent:#126b59;--soft:#e6f1e9;--warning:#85570f;--warnbg:#fff2d8;color-scheme:light}
+html.dark{--bg:#121b1b;--panel:#1b2727;--ink:#e7efeb;--muted:#abbfb8;--line:#3b514a;--accent:#8adeba;--soft:#263e33;--warning:#f1c67a;--warnbg:#3d3220;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,sans-serif}a{color:var(--accent);overflow-wrap:anywhere}button{font:inherit;cursor:pointer}button:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}header{padding:54px max(24px,calc((100vw - 1180px)/2));border-bottom:1px solid var(--line);background:var(--panel)}header .eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:700}header h1{font:600 clamp(30px,5vw,54px)/1.12 system-ui;margin:15px 0}header p{max-width:800px;color:var(--muted)}#theme{float:right;border:1px solid var(--line);background:var(--bg);color:var(--ink);padding:7px 13px;border-radius:9px}.wrap{max-width:1230px;margin:auto;padding:32px 24px 100px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.summary div,.mock{border:1px solid var(--line);background:var(--panel);border-radius:12px}.summary div{padding:17px}.summary small{display:block;color:var(--muted)}.summary strong{display:block;font-size:19px}.mock{margin-top:28px;overflow:hidden}.mock-title{padding:12px 18px;background:var(--soft);font-size:13px;font-weight:650}.shell{display:grid;grid-template-columns:190px 1fr}.sidebar{padding:20px;border-right:1px solid var(--line);color:var(--muted)}.sidebar div{padding:7px 9px}.selected{background:var(--soft);border-radius:6px;color:var(--accent)}.screen{padding:24px;min-width:0}.crumb{font-size:13px;color:var(--muted)}.screen h3{margin:9px 0 18px;font-size:24px}.tabs{display:flex;gap:24px;border-bottom:1px solid var(--line);padding-bottom:9px;margin-bottom:18px}.active{color:var(--accent);font-weight:700;border-bottom:3px solid var(--accent)}.columns{display:grid;grid-template-columns:1fr 1.4fr;gap:20px}.tree{font:13px/2 ui-monospace,monospace;overflow-wrap:anywhere}.editor{border:1px solid var(--line);border-radius:8px;padding:16px;font-size:14px}.editor p{margin:6px 0}.label{font-size:12px;color:var(--muted)}.chip{display:inline-block;border:1px solid var(--line);border-radius:20px;padding:2px 10px;font-size:12px;margin:4px}.action{display:inline-block;background:var(--accent);color:var(--bg);padding:7px 12px;border-radius:7px;font-size:13px;font-weight:650}.notice{background:var(--warnbg);color:var(--warning);padding:12px;border-radius:7px;font-size:13px;margin-top:14px}.mock-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}.mock-grid .mock{margin-top:22px}.row{padding:9px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px;font-size:14px}.status{color:var(--accent)}.content{display:grid;grid-template-columns:220px minmax(0,1fr);gap:35px;margin-top:46px}.contents{position:sticky;top:18px;align-self:start;max-height:85vh;overflow:auto;font-size:13px}.contents ul{padding-left:17px}.contents li{margin:8px 0}.contents ul ul{display:none}article{min-width:0}article>h1{font-size:30px}article h2{font-size:24px;margin-top:46px;padding-top:18px;border-top:1px solid var(--line);scroll-margin-top:20px}article h3{font-size:19px;margin-top:28px}article p,article li{max-width:85ch}article li{margin:7px 0}table{display:block;overflow-x:auto;width:100%;border-collapse:collapse;font-size:13px;background:var(--panel)}th,td{border:1px solid var(--line);padding:12px;vertical-align:top;min-width:120px}th{text-align:left;background:var(--soft)}pre{overflow:auto;padding:18px;background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:13px}code{font-size:.88em;overflow-wrap:anywhere}blockquote{margin:20px 0;padding:10px 20px;border-left:4px solid var(--accent);background:var(--soft)}footer{margin-top:50px;color:var(--muted);font-size:13px}@media(max-width:850px){.summary{grid-template-columns:1fr 1fr}.content{display:block}.contents{position:static;max-height:none}.mock-grid{grid-template-columns:1fr}.shell{grid-template-columns:1fr}.sidebar{display:none}.columns{grid-template-columns:1fr}.tabs{gap:14px}}@media print{#theme,.contents{display:none}.content{display:block}body{background:white;color:black}}
+</style></head><body><header><button id="theme" type="button" aria-label="Toggle light and dark theme">Change theme</button><div class="eyebrow">Design review · 27 September 2026 · Awaiting approval</div><h1>One workspace for your agents.</h1><p>Expand Skills Manager into Agents Manager: keep the familiar projects and remote hosts, then add instruction bundles and MCP configuration alongside skills.</p></header>
+<main class="wrap"><div class="summary"><div><small>Resource types</small><strong>Skills · Instructions · MCPs</strong></div><div><small>Launch adapters</small><strong>Five agents</strong></div><div><small>Where it works</small><strong>Local + SSH hosts</strong></div><div><small>Update model</small><strong>Preview, then apply</strong></div></div>
+<section aria-label="Illustrative workspace mockups"><div class="mock"><div class="mock-title">A · Existing project workspace, new resource tabs — illustrative layout</div><div class="shell"><aside class="sidebar"><div><strong>Agents Manager</strong></div><div>Host: dev-server</div><div>Library</div><div>Global Workspace</div><div>Projects</div><div class="selected">my-app</div><div>Backup</div><div>Settings</div></aside><div class="screen"><div class="crumb">dev-server / Projects / my-app</div><h3>Project instructions</h3><div class="tabs"><span>Skills</span><span class="active">Instructions</span><span>MCPs</span></div><div class="columns"><div class="tree"><strong>Directory scope</strong><br>AGENTS.md<br>backend/AGENTS.md<br>frontend/CLAUDE.md<br><br><strong>Referenced documents</strong><br>docs/agents/testing.md<br>docs/agents/typescript.md</div><div class="editor"><div class="label">AGENTS.md · Shared project file</div><p><strong># Project conventions</strong></p><p>Use pnpm for this workspace.</p><p>For testing, see docs/agents/testing.md.</p><hr><span class="chip">Linked to: Team conventions</span><span class="chip">Local edits</span><p class="label">Library update available. Review before applying.</p><span class="action">Review update</span></div></div><div class="notice">Loading rules differ by agent. The app shows supported scopes and known exclusions; it does not claim a running agent has loaded a file.</div></div></div></div>
+<div class="mock-grid"><div class="mock"><div class="mock-title">B · Add an MCP to this host's library</div><div class="screen"><div class="tabs"><span class="active">Catalog</span><span>Manual</span><span>Import</span></div><h3>Configure a connection</h3><p class="label">Choose a server and transport, then supply settings and external credential references.</p><div class="row"><span>Credential reference</span><code>GITHUB_TOKEN</code></div><div class="row"><span>Optional target</span><span>☐ Codex · my-app</span></div><div class="row"><span>Optional target</span><span>☐ Claude Code · Global</span></div><p class="label">No targets selected by default. No server is started.</p><span class="action">Review configuration</span></div></div><div class="mock"><div class="mock-title">C · Review a library update</div><div class="screen"><h3>Keep local changes visible</h3><div class="row"><span>testing.md</span><span class="status">Library change</span></div><div class="row"><span>AGENTS.md</span><span>Local edits preserved</span></div><div class="row"><span>MCP endpoint</span><span>Deployment override retained</span></div><div class="notice">If the same content changed locally and in the library, resolve the difference before applying. Recheck target files at save time.</div><p class="label">A same-name MCP conflict offers Keep existing, Replace, or Rename.</p><span class="action">Apply reviewed changes</span></div></div></div></section>
+<div class="content"><nav class="contents" aria-label="Plan contents"><div class="toc">
+<ul>
+<li><a href="#1-product-outcome">1. Product outcome</a></li>
+<li><a href="#2-navigation-and-concrete-screens">2. Navigation and concrete screens</a></li>
+<li><a href="#3-agent-capability-contract">3. Agent capability contract</a></li>
+<li><a href="#4-architecture-and-storage">4. Architecture and storage</a></li>
+<li><a href="#5-instructions-discovery-editing-and-reuse">5. Instructions: discovery, editing, and reuse</a></li>
+<li><a href="#6-deployment-and-update-behavior">6. Deployment and update behavior</a></li>
+<li><a href="#7-mcp-creation-import-and-catalog">7. MCP creation, import, and catalog</a></li>
+<li><a href="#8-cli-ssh-and-backup">8. CLI, SSH, and backup</a></li>
+<li><a href="#9-ordered-delivery-slices">9. Ordered delivery slices</a></li>
+<li><a href="#10-acceptance-and-validation">10. Acceptance and validation</a></li>
+<li><a href="#11-risks-and-rollback">11. Risks and rollback</a></li>
+<li><a href="#sources-and-evidence">Sources and evidence</a></li>
+</ul>
+</div>
+</nav><article><h1 id="agents-manager-skills-instructions-and-mcp-configuration">Agents Manager: skills, instructions, and MCP configuration</h1>
+<p><strong>Status:</strong> Proposed; implementation requires approval of this plan.<br />
+<strong>Planning baseline:</strong> <code>origin/main</code> at <code>081eed8</code>, including the existing SSH remote CLI updater.<br />
+<strong>Working branch:</strong> <code>t3code/agents-manager-expansion</code>; no merge or implementation has been performed.<br />
+<strong>Authorship:</strong> Astra planning agent; integrated against repository and official-documentation findings by the parent agent.</p>
+<h2 id="1-product-outcome">1. Product outcome</h2>
+<p>Expand Skills Manager into <strong>Agents Manager</strong>, retaining the existing Library, Global Workspace, Project Workspace, and host selector. Each workspace gains <strong>Skills / Instructions / MCPs</strong> tabs.</p>
+<p>Users maintain reusable instruction bundles and MCP definitions, edit supported agent files, and explicitly deploy reviewed changes to global or project targets. Skills and skills-only presets retain their current behavior.</p>
+<p>Visible branding changes; application identifiers, executable and CLI names, existing data locations, and compatibility paths remain unchanged. CLI parity and SSH support for all three resource types are launch requirements.</p>
+<p>Launch adapters cover Claude Code, Codex, Antigravity, Hermes, and Cursor according to their real capabilities. Unsupported scopes are labeled and unavailable rather than represented by invented files.</p>
+<h3 id="scope-boundaries">Scope boundaries</h3>
+<ul>
+<li>Instructions are whole files or bundles with referenced Markdown documents. No composable sections, AI calls, automatic rewrites, or content generation.</li>
+<li>MCP management configures local stdio and remote connections. It does not install dependencies, launch servers, manage processes, implement OAuth, or store credentials.</li>
+<li>Linked deployments update only after explicit review. Saving a library item never updates projects automatically.</li>
+<li>Each SSH host owns its library. No cross-host transfer is added.</li>
+<li>Backup and multi-device sync include reusable definitions, not deployed project files, machine-specific deployment records, or secrets.</li>
+</ul>
+<h2 id="2-navigation-and-concrete-screens">2. Navigation and concrete screens</h2>
+<p>Preserve current project registration and navigation. Add resource tabs within <code>/my-skills</code>, <code>/global-workspace/{-$agentKey}</code>, and <code>/project/$id</code>. Persist the active resource in route search state so reload and back navigation work, defaulting existing links to Skills. The selected host remains prominent. Existing linked skill workspaces remain skill-only in this release.</p>
+<h3 id="a-project-instructions">A. Project Instructions</h3>
+<p>The existing sidebar and host selector frame a project page with Skills / Instructions / MCPs tabs. The Instructions tab has a directory tree on the left and editor on the right. The selected file shows its actual path, applicable agents, loading caveats, symlink destination if any, and unsaved edits. A separate reference panel lists local document links and missing targets.</p>
+<p>Example: <code>AGENTS.md</code>, <code>backend/AGENTS.md</code>, and <code>frontend/CLAUDE.md</code> are directory-scoped files; <code>docs/agents/testing.md</code> is a referenced document. These relationships stay separate. Linking a document does not imply automatic loading.</p>
+<p>A linked file shows its library source, revision, local edits, and available updates. “Shared” and “Agent-specific” are project choices. A layout change previews every file operation and preserves existing files until explicitly resolved. Scan exclusions and incomplete results are visible.</p>
+<h3 id="b-add-mcp-to-library">B. Add MCP to Library</h3>
+<p>Manual, Import existing, and Online catalog lead to one typed definition editor: name, connection/transport, command or URL, settings, and external credential references. Optional global/project agent targets are all unchecked initially.</p>
+<p>Review separates the library save from selected deployments, shows actual destination paths and scoped diffs, and requires explicit apply. A library save can succeed while a deployment fails; report each result accurately. Unsupported choices, such as Hermes project MCP, explain the limitation.</p>
+<h3 id="c-review-linked-updates">C. Review linked updates</h3>
+<p>Show previous deployment, current target, new library content, and proposed result. Distinguish library-only changes, preserved project edits, and conflicts. Let the user keep the target version or edit a conflict result; apply remains unavailable until required conflicts are resolved.</p>
+<p>MCP updates use structured fields and show deployment overrides retaining precedence. Same-name collisions offer <strong>Keep existing / Replace / Rename</strong>. Illustrative mockups in the HTML represent these three screens, not implemented functionality.</p>
+<h2 id="3-agent-capability-contract">3. Agent capability contract</h2>
+<p>Use an explicit capability table and focused agent adapters. Do not infer one agent's scopes or syntax from another.</p>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Instructions</th>
+<th>MCP configuration</th>
+<th>Important behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code</td>
+<td>Global <code>~/.claude/CLAUDE.md</code>; project/nested <code>CLAUDE.md</code>, supported <code>CLAUDE.local.md</code>, native <code>AGENTS.md</code> fallback</td>
+<td>Global <code>~/.claude.json</code>; project <code>.mcp.json</code></td>
+<td>Native AGENTS support begins at v2.1.277; ancestor CLAUDE files can suppress fallback. Preserve private project MCP entries in <code>.claude.json</code>; do not silently change global loading settings.</td>
+</tr>
+<tr>
+<td>Codex</td>
+<td>Global <code>$CODEX_HOME/AGENTS.override.md</code> then <code>AGENTS.md</code>; project per-directory override then AGENTS/configured fallback</td>
+<td>Global <code>$CODEX_HOME/config.toml</code>; trusted project <code>.codex/config.toml</code></td>
+<td>At most one instruction file per directory. Respect existing trust. Use <code>env_vars</code>, <code>bearer_token_env_var</code>, and <code>env_http_headers</code> for supported references.</td>
+</tr>
+<tr>
+<td>Antigravity</td>
+<td>Global <code>~/.gemini/AGENTS.md</code>/<code>GEMINI.md</code>; project/nested counterparts and supported rule files</td>
+<td>Global <code>~/.gemini/config/mcp_config.json</code>; project <code>.agents/mcp_config.json</code></td>
+<td>Remote key is <code>serverUrl</code>. Secret interpolation was not verified: public connections work; reference-dependent deployment stays unavailable until supported syntax is proven.</td>
+</tr>
+<tr>
+<td>Hermes</td>
+<td>Global <code>~/.hermes/SOUL.md</code> identity; project <code>.hermes.md</code>, recognized alternate context files and recursive <code>AGENTS.md</code></td>
+<td>Global <code>~/.hermes/config.yaml</code> only</td>
+<td>SOUL is identity, not generic global AGENTS. Respect <code>HERMES_HOME</code> and native context priority. Project MCP is unsupported. <code>${VAR}</code>/<code>${env:VAR}</code> references are documented.</td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td>Global User Rules through native UI; project <code>.cursor/rules/*.mdc</code> and root/nested <code>AGENTS.md</code></td>
+<td>Global <code>~/.cursor/mcp.json</code>; project <code>.cursor/mcp.json</code></td>
+<td>No documented global rules file: show native-UI guidance. MCP supports <code>${env:NAME}</code>; <code>envFile</code> is stdio-only.</td>
+</tr>
+</tbody>
+</table>
+<p>Nested instruction files are supported where documented; nested MCP deployment is not offered. Preserve rule-file frontmatter and agent metadata. Include Antigravity native rule paths <code>~/.gemini/config/rules/*.md</code> and project <code>.agents/rules/*.md</code> in adapter fixtures rather than treating them as ordinary AGENTS files.</p>
+<p>Capability fixtures cover scope, path, format, transport, reference handling, loading precedence, and unsupported cases. Installed-version gaps produce explanations and compatible alternatives. File presence and expected loading are distinct from proof that a running agent loaded a file; no AI session is launched to test this.</p>
+<h2 id="4-architecture-and-storage">4. Architecture and storage</h2>
+<p>Reuse the Rust core, database, command layer, CLI, and host dispatch. Add focused Instructions and MCP modules rather than replacing skills with a general resource framework.</p>
+<p>The existing Git library is <code>&lt;base&gt;/skills</code>; SQLite is its sibling <code>&lt;base&gt;/skills-manager.db</code>. Keep skills in their current layout. Proposed portable storage:</p>
+<pre><code class="language-text">&lt;base&gt;/skills/.agents-manager/
+  schema.json
+  instructions/&lt;stable-id&gt;/
+    definition.json
+    files/AGENTS.md
+    files/docs/testing.md
+  mcps/&lt;stable-id&gt;.json
+</code></pre>
+<p>Use random IDs and explicit revision identifiers, never new content hashes. Revision ancestry supports reconciliation; a display sequence is not a cross-device ordering guarantee. Instruction metadata records entry points, relative files, applicability, and revision. MCP metadata is a typed connection definition with non-secret defaults, external references, and catalog provenance, never a complete raw agent configuration.</p>
+<p>Explicitly exclude the reserved namespace from <strong>every</strong> skill scan, including backup reconciliation. Existing reconciliation can detect a <code>SKILL.md</code> under hidden directories: merely hiding new files is insufficient. Extend backup, typed merge snapshots, validation, restore, and reindex to recognize the new resources.</p>
+<p>Add host-local database records for deployment links, destinations, last-applied revision, safe scoped baselines, and overrides. They remain outside Git. Reuse the existing migration framework (baseline schema v11) for additive tables; retain skills and presets unchanged.</p>
+<pre><code class="language-text">Workspace + host
+  → existing hostCall / hostScope
+  → local core or remote CLI dispatch
+  → that host's library, database and agent files
+  → preview → explicit apply with fresh preconditions
+</code></pre>
+<p>Queries, previews, and mutations carry host/workspace identity. Host switching invalidates previews and prevents late responses or writes from targeting the newly selected host.</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Existing integration seams</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Views/navigation</td>
+<td><code>src/router.tsx</code>, <code>src/components/Sidebar.tsx</code>, <code>src/views/MySkills.tsx</code>, project detail and workspace views</td>
+</tr>
+<tr>
+<td>Host calls</td>
+<td><code>src/lib/hostCall.ts</code>, <code>src/lib/hostScope.ts</code>, host-qualified query keys</td>
+</tr>
+<tr>
+<td>Persistence</td>
+<td><code>core/central_repo.rs</code>, <code>core/skill_store.rs</code>, <code>core/migrations.rs</code></td>
+</tr>
+<tr>
+<td>Projects/agents</td>
+<td><code>commands/projects/</code>, <code>core/project_scanner.rs</code>, <code>core/tool_adapters.rs</code></td>
+</tr>
+<tr>
+<td>SSH</td>
+<td><code>core/host_dispatch.rs</code>, <code>remote_host.rs</code>, <code>remote_session.rs</code>, <code>remote_install.rs</code></td>
+</tr>
+<tr>
+<td>CLI</td>
+<td><code>src-tauri/src/bin/skills-manager-cli/main.rs</code>, <code>args.rs</code> and command handlers</td>
+</tr>
+<tr>
+<td>Backup</td>
+<td><code>core/git_backup.rs</code>, <code>git_backup_store.rs</code>, <code>sync_metadata.rs</code>, <code>merge/</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-instructions-discovery-editing-and-reuse">5. Instructions: discovery, editing, and reuse</h2>
+<p>Discover supported global, project, and nested files. Use bounded traversal with default exclusions for <code>.git</code>, dependencies, builds, and caches. Show exclusions, allow specific inclusions, and report depth/count/size limits as partial results rather than silently claiming completeness.</p>
+<p>Maintain separate directory-scope and local-reference views. Resolve relative links against their source file; handle Markdown links and supported native references. Detect missing files and cycles, stop at visited files, and identify unsupported syntax. Do not fetch external links automatically. Imports that eagerly load content and links followed on demand have different labels.</p>
+<p>Each reusable item is a whole file or relative-path bundle. References outside its root require explicit inclusion/remapping; reject traversal and unsafe destinations. Missing included bundle files block deployment; unrelated informational links do not force arbitrary file adoption.</p>
+<p>Files can be edited in place or imported into the library. Editing does not silently adopt/link them. Show existing symlink targets; outside-boundary targets need a separately selected supported location. Do not create instruction deployment symlinks because library updates must remain reviewed snapshots.</p>
+<p>Shared layouts use a common file only where loading rules support it. Agent-specific layouts preserve distinct native files. For Claude fallback precedence, preview a supported native import/file arrangement or explain the limitation; never silently change global settings to make a project layout work.</p>
+<h2 id="6-deployment-and-update-behavior">6. Deployment and update behavior</h2>
+<p>Instruction and MCP links mean <strong>reviewed snapshots with a remembered base</strong>. Compare last-applied content, current target, and new library revision. Reconcile instruction files/text with three-way comparison. Compare MCP typed fields and then apply explicit deployment overrides.</p>
+<ul>
+<li>Library-only changes become proposed updates; target-only changes remain intact.</li>
+<li>Non-overlapping changes can produce a proposed merged result; conflicts require an explicit resolution.</li>
+<li>Review deletions and their reference consequences.</li>
+<li>Deduplicate agent selections resolving to the same physical file; incompatible content for one target blocks apply.</li>
+</ul>
+<p>Re-read targets and compare bytes against preview preconditions before writing; recheck path and symlink boundaries. Use manager locks and same-directory temporary replacements with preserved, restrictive permissions. External editors do not share locks, so do not claim transaction isolation from all other software.</p>
+<p>Bundles are not atomic across files. Preflight, journal scoped reversible changes, apply per file, and advance deployment state only when complete. Recovery reports completed/pending operations; rollback touches only output that still matches this operation, preserving subsequent edits.</p>
+<p>Do not persist entire MCP configuration preimages: unrelated secrets may be present. Full bytes exist only transiently for safe patching/precondition checks. Durable recovery contains safe managed-entry changes only. Replacing an existing secret-bearing entry is blocked until externalized through a supported mechanism; keep or rename remains available.</p>
+<p>Library deletion never deletes deployed files. Show affected links and explicitly detach when deleting. Undeploy is separate and removes only unchanged managed content; edited targets remain for review.</p>
+<h2 id="7-mcp-creation-import-and-catalog">7. MCP creation, import, and catalog</h2>
+<p>The portable model supports stdio commands/arguments and remote transports supported by each agent, defaults, and deployment overrides. Emit cwd, headers, environment fields and transports only where the adapter supports them; no implicit transport proxies or shell wrappers.</p>
+<p>Import parses on the selected host and sanitizes before IPC, persistence, logs, previews, exports, or backups. Redact literal credential fields and require external references; preserve the original file. Never resolve a secret for serialization. Arbitrary shell fragments and ambiguous token-bearing URLs/arguments require manual reconstruction rather than blind copying into the library. Secret-detection heuristics are not a guarantee: use typed allowlisted import fields and reject unclassified sensitive values.</p>
+<p>Use format-aware edits for JSON/JSONC, TOML, and YAML, preserving unrelated fields and comments. Block constructs that cannot safely round-trip rather than rewriting a complete configuration. Keep external agent authentication/trust settings unchanged.</p>
+<p>Manual/import/catalog flows share validation and review. Collision options are Keep / Replace / Rename. Shared-default updates retain explicit deployment overrides and report unsupported overrides instead of dropping them.</p>
+<p>The proposed first catalog is the official MCP Registry. Use unauthenticated <code>/v0.1/servers</code>, substring search, <code>version=latest</code>, cursor pagination and version details. Cache metadata, throttle requests, and keep manual/import usable during outages. Persist the chosen concrete version/provenance; do not make runtime commands silently follow catalog updates.</p>
+<p>Registry metadata is not runnable configuration. Ask the user to select a transport/package and fill required inputs. Initially translate verified npm/stdio, PyPI/stdio, and remote endpoint metadata through tested mappings; unsupported package formats remain visible with documentation/manual setup. Preview exact commands and never execute them during catalog browsing or import. The agent may later run the configured launcher under its own policies; Agents Manager does not install the runtime.</p>
+<p>Catalog requests execute on the active host through the existing host-call model; offline remote hosts still support manual/import. This preserves the agreed host-owned-library boundary without adding implicit desktop-to-remote transfers.</p>
+<h2 id="8-cli-ssh-and-backup">8. CLI, SSH, and backup</h2>
+<p>Keep <code>skills-manager-cli</code> and existing commands. Add <code>instructions</code> and <code>mcps</code> families for list/show, create/import/edit, validate, deploy/update preview and apply, detach/remove, and undeploy. Target flags identify an existing project or global agent scope. Add only the project lookup/selection support needed for parity; reuse current project records.</p>
+<p><code>--json</code> returns structured outcomes; <code>--dry-run</code> never writes. Noninteractive callers must supply conflict choices. Apply accepts a host-local preview identifier with stored safe proposed operations; sensitive full-config byte preconditions stay transient or must be freshly recomputed with scoped comparisons. Revalidate scope, target entry, unrelated-field preservation and library revision at apply; expired/stale previews require review again. Do not persist secret-bearing preview files for convenience.</p>
+<p>Extend current remote allowlists and protocol handlers, retaining the exact-version handshake. Reuse system SSH authentication, installed remote CLI, and existing updater. Test disconnects without reporting uncertain writes as success. Remote macOS/Linux x64/arm64 remain supported; remote Windows remains unsupported.</p>
+<p>Extend backup/export/import and two-device reconciliation to definitions and instruction payloads. Exclude machine deployments, overrides, project files, caches, journals and credentials. Restore library content only; never redeploy as a side effect. Keep skills-only presets unchanged.</p>
+<p>Existing desktop backup orchestration is local-only: selecting an SSH host must not retarget local backup settings. Remote reusable definitions participate when backup runs on that machine through the existing CLI/installed app; the desktop should explain this boundary.</p>
+<p>Version the resource schema and make new clients refuse unsupported future writes. <strong>A new marker does not force old clients to comply.</strong> Current schema validation parses markers but does not reliably enforce future schema/app versions. Test a pinned previous writer against a disposable expanded repo before shared sync ships. If old writers cannot safely preserve the new namespace, require coordinated upgrades of devices sharing the backup before enabling expanded sync; do not imply the new client can remotely enforce that upgrade. Document mixed-version sync as unsupported and stop new-client sync on detected incompatible writes. A compatibility release may be needed before feature release if tests establish that requirement.</p>
+<h2 id="9-ordered-delivery-slices">9. Ordered delivery slices</h2>
+<p>All slices are release requirements, not reductions to the agreed scope.</p>
+<table>
+<thead>
+<tr>
+<th>Slice</th>
+<th>Deliverable and completion condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. Contracts/compatibility</td>
+<td>Five capability fixtures, schemas, additive deployment records, reserved namespace exclusions, and tested backup compatibility strategy.</td>
+</tr>
+<tr>
+<td>2. Instructions end to end</td>
+<td>Bounded discovery, separate trees, editing, bundles, reviewed updates/recovery, CLI and SSH dispatch.</td>
+</tr>
+<tr>
+<td>3. MCPs end to end</td>
+<td>Typed definitions, sanitized import, five adapters, overrides, official catalog, conflict flow, CLI and SSH.</td>
+</tr>
+<tr>
+<td>4. Product integration</td>
+<td>Visible rebrand, tabs in existing workspaces, host-safe state and failure handling; skills/presets preserved.</td>
+</tr>
+<tr>
+<td>5. Backup/release verification</td>
+<td>Portable round trips, two-device conflicts, compatibility safeguards, recovery, docs, changeset and required checks.</td>
+</tr>
+</tbody>
+</table>
+<p>Before implementation, incorporate latest main in this branch without replacing unrelated work. If conflicts occur, stop and raise them. Preserve <code>.serena/</code>. Use Luna for bounded implementation work, with explicit owned files and behavior checks; parent integrates. Escalate repeated unresolved issues to Sol Ultra, and use Astra for difficult planning decisions as requested.</p>
+<h2 id="10-acceptance-and-validation">10. Acceptance and validation</h2>
+<ul>
+<li>Existing skills, projects, presets, host switching, and CLI workflows remain usable.</li>
+<li>All three workspace contexts expose resource tabs with correct host/scope identity.</li>
+<li>Instruction scopes/references, nested exclusions, missing links, cycles and symlinks are accurately represented.</li>
+<li>Saving library content leaves deployments untouched. Reviewed updates preserve local edits, overrides, unrelated config and comments.</li>
+<li>Concurrent edits invalidate previews; shared targets are written once; interrupted bundles expose recovery.</li>
+<li>Credential fixtures never appear in IPC, portable files, database baselines, logs, previews, exports or backups.</li>
+<li>Every supported adapter scope/format has fixtures; unsupported scopes and secret syntax are visibly unavailable.</li>
+<li>Catalog outages preserve manual/import; discovery executes no server commands.</li>
+<li>Dry runs are read-only; GUI/CLI/SSH resource results agree.</li>
+<li>Backup/restore and two-device conflicts retain resources without syncing deployments or dropping unknown supported data.</li>
+</ul>
+<p>Use focused Rust temporary-directory fixtures, fault injection and CLI integration tests. Frontend tests exercise host-qualified state and decisions. E2E covers library → review → apply → reload, conflicts, adapter limitations and host switching. Use disposable SSH fixtures for live verification; report mocks and live results separately. Do not change real user projects or credentials for tests.</p>
+<p>Required checks verified from the current manifest and CI:</p>
+<pre><code class="language-sh">pnpm lint
+pnpm build
+pnpm test
+pnpm e2e
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+</code></pre>
+<p>Use the pinned package manager and frozen install when dependencies are absent. Report baseline failures, untested environments and remote CI separately from local passes. Native Windows and Linux checks require their corresponding CI/platform environments; local macOS alone does not establish all-platform success.</p>
+<h2 id="11-risks-and-rollback">11. Risks and rollback</h2>
+<p>Primary risks: destructive config rewrites, credentials entering portable definitions, stale-host writes, agent loading differences, and old backup writers mishandling new types. Tests and explicit capability limits above target these risks.</p>
+<p>Revert code without renaming existing data or moving skills. Preserve additive files/records; do not let older binaries write incompatible expanded backups. A reviewed deployment inverse only restores output still matching that operation. Keep later edits and unresolved recovery state. Never roll back by broad Git reset or project directory replacement.</p>
+<p>Approval authorizes the design and ordered implementation. It does not authorize publishing, modifying real credentials, enabling incompatible backup writers, or inventing agent support. Record the structured Plannotator decision in <code>review.json</code>; do not begin implementation before approval.</p>
+<h2 id="sources-and-evidence">Sources and evidence</h2>
+<p>Repository baseline: <code>origin/main</code> <code>081eed8</code>, inspected read-only on 2026-09-27. Code evidence includes the integration paths above, <code>core/merge/protocol.rs</code>, <code>core/merge/validate.rs</code>, and <code>.github/workflows/{frontend,test}.yml</code>. No implementation tests were run for this planning task.</p>
+<ul>
+<li><a href="https://www.aihero.dev/a-complete-guide-to-agents-md">Progressive instruction organization</a></li>
+<li><a href="https://code.claude.com/docs/en/memory#agentsmd">Claude instructions</a> and <a href="https://code.claude.com/docs/en/mcp">MCP</a></li>
+<li><a href="https://learn.chatgpt.com/docs/agent-configuration/agents-md">Codex instructions</a> and <a href="https://learn.chatgpt.com/docs/extend/mcp?surface=cli">MCP</a></li>
+<li><a href="https://antigravity.google/docs/rules/">Antigravity rules</a> and <a href="https://antigravity.google/docs/mcp">MCP</a></li>
+<li><a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files">Hermes context</a>, <a href="https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference">MCP reference</a>, and <a href="https://hermes-agent.nousresearch.com/docs/user-guide/configuration">configuration</a></li>
+<li><a href="https://cursor.com/docs/rules">Cursor rules</a> and <a href="https://cursor.com/docs/mcp">MCP</a></li>
+<li><a href="https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/official-registry-api.md">Official Registry API</a> and <a href="https://modelcontextprotocol.io/registry/registry-aggregators">consumer guidance</a></li>
+</ul></article></div><footer>Canonical source: plan.md · Source baseline: origin/main 081eed8 · Mockups illustrate the decisions in the plan and are not implemented screens.</footer></main>
+<script>document.getElementById('theme').addEventListener('click',()=>{const d=document.documentElement.classList.toggle('dark');try{localStorage.setItem('agents-plan-theme',d?'dark':'light')}catch(e){}})</script></body></html>

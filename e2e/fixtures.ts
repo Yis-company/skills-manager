@@ -13,6 +13,10 @@ export class FakeBackend {
     this.page = page;
   }
 
+  private async ready() {
+    await this.page.waitForFunction(() => window.__e2e !== undefined);
+  }
+
   /** The data the backend starts with. Call before the first `page.goto`. */
   async seed(seed: Seed) {
     await this.page.addInitScript((s) => {
@@ -21,38 +25,46 @@ export class FakeBackend {
   }
 
   /** The args of every call to `cmd` since the page last loaded. */
-  calls(cmd: string): Promise<unknown[]> {
+  async calls(cmd: string): Promise<unknown[]> {
+    await this.ready();
     return this.page.evaluate(
       (c) => window.__e2e!.calls.filter((call) => call.cmd === c).map((call) => call.args),
       cmd,
     );
   }
 
-  failNext(cmd: string, message = "fake failure") {
+  async failNext(cmd: string, message = "fake failure") {
+    await this.ready();
     return this.page.evaluate(([c, m]) => window.__e2e!.failNext(c, m), [cmd, message] as const);
   }
 
-  hold(cmd: string) {
+  async hold(cmd: string) {
+    await this.ready();
     return this.page.evaluate((c) => window.__e2e!.hold(c), cmd);
   }
 
-  release(cmd: string) {
+  async release(cmd: string) {
+    await this.ready();
     return this.page.evaluate((c) => window.__e2e!.release(c), cmd);
   }
 
-  holdResponse(cmd: string) {
+  async holdResponse(cmd: string) {
+    await this.ready();
     return this.page.evaluate((c) => window.__e2e!.holdResponse(c), cmd);
   }
 
-  releaseResponse(cmd: string) {
+  async releaseResponse(cmd: string) {
+    await this.ready();
     return this.page.evaluate((c) => window.__e2e!.releaseResponse(c), cmd);
   }
 
-  emit(event: string, payload: unknown) {
+  async emit(event: string, payload: unknown) {
+    await this.ready();
     return this.page.evaluate(([e, p]) => window.__e2e!.emit(e, p), [event, payload] as const);
   }
 
-  patch(partial: Partial<State>) {
+  async patch(partial: Partial<State>) {
+    await this.ready();
     return this.page.evaluate((p) => window.__e2e!.patch(p), partial);
   }
 }

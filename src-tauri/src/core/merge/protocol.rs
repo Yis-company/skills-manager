@@ -77,10 +77,11 @@ pub fn ensure_protocol_file(skills_dir: &Path) -> Result<()> {
 /// conflict resolution — goes through this.
 pub fn app_commit_message(message: &str) -> String {
     format!(
-        "{}\n\n{}: {}",
+        "{}\n\n{}: {}\n{}",
         message.trim_end(),
         TRAILER_PROTOCOL,
-        MERGE_PROTOCOL_VERSION
+        MERGE_PROTOCOL_VERSION,
+        crate::core::resource_sync::TRAILER
     )
 }
 
@@ -166,7 +167,10 @@ mod tests {
     #[test]
     fn app_commit_message_appends_trailer_once() {
         let msg = app_commit_message("backup");
-        assert_eq!(msg, "backup\n\nSkills-Manager-Protocol: 2");
+        assert_eq!(
+            msg,
+            "backup\n\nSkills-Manager-Protocol: 2\nAgents-Manager-Resources: 1"
+        );
         assert!(has_protocol_trailer(&msg));
         assert!(!has_protocol_trailer("backup"));
     }

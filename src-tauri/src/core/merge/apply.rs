@@ -57,7 +57,9 @@ struct TouchInfo {
 /// the device identity; this function performs P1/P2, fetch, merge and the
 /// atomic apply. Returns the merge summary.
 pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Result<MergeSummary> {
+    crate::core::resource_store::check_library_transactions()?;
     git_backup::ensure_no_interrupted_git_operation(skills_dir)?;
+    crate::core::resource_sync::check_current_writer(&Repository::open(skills_dir)?)?;
 
     // P1: project the DB to metadata files, then commit anything dirty.
     sync_metadata::write_all_from_db_unlocked(store)?;
@@ -83,6 +85,8 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         .refname_to_id(&format!("refs/remotes/origin/{branch}"))
         .with_context(|| format!("origin/{branch} not found after fetch"))?;
 
+    crate::core::resource_sync::reconcile_completed(&repo, store)?;
+
     if theirs == ours {
         return Ok(up_to_date_summary(&repo, store));
     }
@@ -96,10 +100,22 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     // §6 legacy: a remote written only by pre-protocol clients keeps the
     // current line-merge behavior.
     let theirs_tree = repo.find_commit(theirs)?.tree()?;
+    crate::core::resource_sync::validate_tree(&repo, &theirs_tree)?;
+    crate::core::resource_sync::check_writers(&repo, base, ours)?;
+    crate::core::resource_sync::check_writers(&repo, base, theirs)?;
     if theirs_tree
         .get_path(Path::new(protocol::PROTOCOL_FILE_REL))
         .is_err()
     {
+        if repo
+            .find_commit(ours)?
+            .tree()?
+            .get_name(".agents-manager")
+            .is_some()
+            || theirs_tree.get_name(".agents-manager").is_some()
+        {
+            bail!("Expanded resource libraries require the compatible object merge engine; upgrade the other backup clients first");
+        }
         log::info!("object merge: remote is pre-protocol (legacy), falling back to git merge");
         git_backup::merge_branch_system(skills_dir, &branch)?;
         let pending_total = rebuild_pending_projection(&repo, store).unwrap_or(0);
@@ -116,12 +132,22 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
 
     let base_tree = repo.find_commit(base)?.tree()?;
     let ours_tree = repo.find_commit(ours)?.tree()?;
+    crate::core::resource_sync::validate_tree(&repo, &ours_tree)?;
     let base_snap =
         snapshot::read_snapshot(&repo, &base_tree).context("failed to read base snapshot")?;
     let ours_snap =
         snapshot::read_snapshot(&repo, &ours_tree).context("failed to read local snapshot")?;
     let theirs_snap =
         snapshot::read_snapshot(&repo, &theirs_tree).context("failed to read remote snapshot")?;
+    let resources = crate::core::resource_sync::merge(
+        &repo,
+        store,
+        &base_snap,
+        &ours_snap,
+        &theirs_snap,
+        ours,
+        theirs,
+    )?;
 
     // §4/§11-4: declared-pending set from trailers.
     let pinned = match pending::effective_pending(
@@ -171,7 +197,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         .iter()
         .map(|(p, t)| (p.clone(), (t.time, t.commit.clone())))
         .collect();
-    let plan = decision::decide(&DecisionInput {
+    let mut plan = decision::decide(&DecisionInput {
         base: &base_snap,
         ours: &ours_snap,
         theirs: &theirs_snap,
@@ -179,6 +205,12 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         ours_touch: &ours_touch_simple,
         theirs_touch: &theirs_touch_simple,
     })?;
+    // Replace residual newest-wins decisions for whole instruction bundles/MCPs.
+    plan.residual.retain(|path, _| {
+        !path.starts_with(".agents-manager/instructions/")
+            && !path.starts_with(".agents-manager/mcps/")
+    });
+    plan.residual.extend(resources);
 
     // §5 steps 4–5: build + validate the merged tree. Skill dirs that were
     // already unclaimed in either input tip (legacy dirt from old versions)
@@ -191,6 +223,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     tolerated.extend(validate::unclaimed_skill_dirs(&repo, &theirs_tree)?);
     validate_merged_tree(&repo, &merged_tree, &tolerated)
         .context("object merge aborted (zero changes)")?;
+    crate::core::resource_sync::validate_tree(&repo, &merged_tree)?;
 
     // §5 忽略文件注: paths the checkout would create must not be shadowed by
     // untracked/ignored files on disk — explicit error, never a silent FORCE.
@@ -273,6 +306,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     }
 
     let pending_total = rebuild_pending_projection(&repo, store)?;
+    crate::core::resource_sync::clear_resolved(&repo, store)?;
     let summary = build_summary(
         &plan,
         &theirs_snap,

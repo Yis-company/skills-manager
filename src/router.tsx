@@ -32,17 +32,24 @@ const rootRoute = createRootRoute({
 // literal paths, and every `to`, `from` and `params` then type-checks as any string.
 const dashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: Dashboard });
 
-const mySkillsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/my-skills", component: MySkills });
+const parseResourceSearch = (search: Record<string, unknown>) => {
+  const { resource, ...other } = search;
+  return resource === "instructions" || resource === "mcps" ? { ...other, resource } : other;
+};
+
+const mySkillsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/my-skills", validateSearch: parseResourceSearch, component: MySkills });
 
 const globalWorkspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/global-workspace/{-$agentKey}",
+  validateSearch: parseResourceSearch,
   component: () => <WorkspaceView config={CODING_WORKSPACE_CONFIG} />,
 });
 
 const lobsterWorkspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/lobster-workspace/{-$agentKey}",
+  validateSearch: parseResourceSearch,
   component: () => <WorkspaceView config={LOBSTER_WORKSPACE_CONFIG} />,
 });
 
@@ -55,7 +62,7 @@ const installRoute = createRoute({
 
 const backupRoute = createRoute({ getParentRoute: () => rootRoute, path: "/backup", component: Backup });
 
-const projectRoute = createRoute({ getParentRoute: () => rootRoute, path: "/project/$id", component: ProjectDetail });
+const projectRoute = createRoute({ getParentRoute: () => rootRoute, path: "/project/$id", validateSearch: parseResourceSearch, component: ProjectDetail });
 
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,

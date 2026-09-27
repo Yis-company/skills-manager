@@ -46,7 +46,9 @@ const STORAGE_KEY = "e2e:fake-backend-state";
 
 function loadState(): State {
   const saved = sessionStorage.getItem(STORAGE_KEY);
-  return saved ? (JSON.parse(saved) as State) : createState(window.__E2E_SEED__ ?? {});
+  return saved
+    ? createState(JSON.parse(saved) as Seed)
+    : createState(window.__E2E_SEED__ ?? {});
 }
 
 const state = loadState();
@@ -55,8 +57,14 @@ save();
 
 const calls: RecordedCall[] = [];
 const failures = new Map<string, string[]>();
-const holds = new Map<string, { promise: Promise<void>; resolve: () => void }>();
-const responseHolds = new Map<string, { promise: Promise<void>; resolve: () => void; claimed: boolean }>();
+const holds = new Map<
+  string,
+  { promise: Promise<void>; resolve: () => void }
+>();
+const responseHolds = new Map<
+  string,
+  { promise: Promise<void>; resolve: () => void; claimed: boolean }
+>();
 
 mockWindows("main");
 mockIPC(
@@ -70,7 +78,8 @@ mockIPC(
       throw failure;
     }
 
-    const handler = handlers[cmd] as ((args: unknown, state: State) => unknown) | undefined;
+    const handler = handlers[cmd] as
+      ((args: unknown, state: State) => unknown) | undefined;
     if (!handler) {
       const message = `fake backend: no handler for ${cmd}`;
       // The fixture fails the test on this line, even when the app swallows the error.
@@ -93,7 +102,8 @@ mockIPC(
 
 window.__e2e = {
   calls,
-  failNext: (cmd, message) => failures.set(cmd, [...(failures.get(cmd) ?? []), message]),
+  failNext: (cmd, message) =>
+    failures.set(cmd, [...(failures.get(cmd) ?? []), message]),
   hold: (cmd) => {
     let resolve = () => {};
     const promise = new Promise<void>((r) => (resolve = r));

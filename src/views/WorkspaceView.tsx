@@ -39,6 +39,7 @@ import { AddSkillsSheet } from "../components/AddSkillsSheet";
 import { useMultiSelect } from "../hooks/useMultiSelect";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import { CODING_WORKSPACE_CONFIG, LOBSTER_WORKSPACE_CONFIG, type WorkspaceConfig } from "./workspaceConfigs";
+import { ResourceWorkspace } from "../components/ResourceWorkspace";
 
 function compactHomePath(path: string) {
   return path.replace(/^\/Users\/[^/]+/, "~");
@@ -828,6 +829,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
 
   if (installedTools.length === 0) {
     return (
+      <ResourceWorkspace scope={{ kind: "global", category: config.category }} skills={
       <div className="app-page">
         <div className="app-panel flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-surface-hover">
@@ -839,11 +841,13 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           </p>
         </div>
       </div>
+      } />
     );
   }
 
   if (!currentTool) {
     return (
+      <ResourceWorkspace scope={{ kind: "global", category: config.category }} skills={
       <div className="app-page">
         <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -893,10 +897,12 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           })}
         </div>
       </div>
+      } />
     );
   }
 
   return (
+    <ResourceWorkspace scope={{ kind: "global", agentKey: currentTool.key, category: config.category }} skills={
     <div className="app-page">
       {/* Header */}
       <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
@@ -1314,6 +1320,6 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         onConfirm={() => deleteLocalConfirmSkill ? handleDeleteLocalSkill(deleteLocalConfirmSkill) : Promise.resolve()}
       />
     </div>
+    } />
   );
 }
-

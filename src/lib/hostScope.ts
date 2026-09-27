@@ -6,6 +6,9 @@
 
 /** Commands a host runs. Must equal `host_dispatch::COMMANDS` in Rust. */
 export const HOST_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
+  "instructions_request",
+  "mcps_request",
+  "resource_sync_request",
   // Tools
   "get_tool_status",
   "set_tool_enabled",

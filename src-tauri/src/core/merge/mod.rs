@@ -42,10 +42,25 @@ pub fn gated_pull_unlocked(
     store: &crate::core::skill_store::SkillStore,
     skills_dir: &std::path::Path,
 ) -> anyhow::Result<MergeSummary> {
+    crate::core::resource_store::check_library_transactions()?;
+    if skills_dir.join(".agents-manager").exists() {
+        // The legacy text merge cannot preserve bundle identity or secret rules.
+        return object_merge_pull_unlocked(store, skills_dir);
+    }
     if object_merge_enabled(store) {
         object_merge_pull_unlocked(store, skills_dir)
     } else {
-        crate::core::git_backup::pull_unlocked(skills_dir)?;
+        crate::core::git_backup::ensure_no_interrupted_git_operation(skills_dir)?;
+        let branch = crate::core::git_backup::current_branch(skills_dir);
+        crate::core::git_backup::fetch_branch(skills_dir, &branch)?;
+        let repo = git2::Repository::open(skills_dir)?;
+        let remote = repo
+            .find_reference(&format!("refs/remotes/origin/{branch}"))?
+            .peel_to_tree()?;
+        if remote.get_name(".agents-manager").is_some() {
+            return object_merge_pull_unlocked(store, skills_dir);
+        }
+        crate::core::git_backup::merge_branch_system(skills_dir, &branch)?;
         Ok(MergeSummary {
             engine: "system".to_string(),
             ..Default::default()

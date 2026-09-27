@@ -468,7 +468,7 @@ fn central_repo_has_valid_skill_dirs() -> Result<bool> {
         .into_iter()
         .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
-            name != ".git" && name != ".skills-manager"
+            name != ".git" && name != ".skills-manager" && name != ".agents-manager"
         })
     {
         let entry = entry?;

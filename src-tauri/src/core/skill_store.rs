@@ -15,6 +15,14 @@ pub struct SkillStore {
     secret_key: [u8; 32],
 }
 
+fn resource_state_exists(conn: &Connection) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resource_state')",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillRecord {
     pub id: String,
@@ -130,6 +138,85 @@ pub struct ScenarioSkillToolToggleRecord {
 }
 
 impl SkillStore {
+    /// Resource dry runs do not initialize, migrate or mutate an installation.
+    pub fn open_resource_read_only(db_path: &std::path::Path) -> Result<Self> {
+        let conn = if db_path.exists() {
+            Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?
+        } else {
+            // A fresh installation can still validate against an empty host
+            // state without creating its database or data directory.
+            let conn = Connection::open_in_memory()?;
+            super::migrations::run_migrations(&conn)?;
+            conn.pragma_update(None, "query_only", true)?;
+            conn
+        };
+        let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if version > super::migrations::LATEST_VERSION {
+            anyhow::bail!(
+                "Database schema is newer than this app supports; upgrade Agents Manager"
+            );
+        }
+        Ok(Self {
+            conn: Mutex::new(conn),
+            secret_key: [0; 32],
+        })
+    }
+    /// Host-local resource links, previews and recovery data. Portable resource
+    /// content belongs in the Git library, never in this table.
+    pub fn resource_state_get(&self, kind: &str, id: &str) -> Result<Option<serde_json::Value>> {
+        use rusqlite::OptionalExtension;
+        let conn = self.conn.lock().unwrap();
+        if !resource_state_exists(&conn)? {
+            return Ok(None);
+        }
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT value FROM resource_state WHERE kind = ?1 AND id = ?2",
+                params![kind, id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        raw.map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    }
+
+    pub fn resource_state_list(&self, kind: &str) -> Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        if !resource_state_exists(&conn)? {
+            return Ok(Vec::new());
+        }
+        let mut stmt =
+            conn.prepare("SELECT value FROM resource_state WHERE kind = ?1 ORDER BY id")?;
+        let rows = stmt.query_map([kind], |row| row.get::<_, String>(0))?;
+        rows.map(|raw| Ok(serde_json::from_str(&raw?)?)).collect()
+    }
+
+    pub fn resource_state_put(
+        &self,
+        kind: &str,
+        id: &str,
+        value: &serde_json::Value,
+    ) -> Result<()> {
+        let raw = serde_json::to_string(value)?;
+        if raw.len() > 16 * 1024 * 1024 {
+            anyhow::bail!("Resource operation exceeds the state size limit");
+        }
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO resource_state (kind, id, value) VALUES (?1, ?2, ?3)
+             ON CONFLICT(kind, id) DO UPDATE SET value = excluded.value",
+            params![kind, id, raw],
+        )?;
+        Ok(())
+    }
+
+    pub fn resource_state_delete(&self, kind: &str, id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "DELETE FROM resource_state WHERE kind = ?1 AND id = ?2",
+            params![kind, id],
+        )?;
+        Ok(())
+    }
+
     pub fn new(db_path: &PathBuf) -> Result<Self> {
         let conn = Connection::open(db_path)?;
         // busy_timeout makes concurrent CLI + GUI writers wait briefly instead

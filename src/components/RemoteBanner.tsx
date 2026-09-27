@@ -13,7 +13,7 @@ export function RemoteBanner() {
   const info = hostSession?.info;
   const detail = lost
     ? hostSession?.lostMessage || undefined
-    : info && `Skills Manager ${info.version} · ${info.os}/${info.arch} · ${info.base_dir}`;
+    : info && `Agents Manager ${info.version} · ${info.os}/${info.arch} · ${info.base_dir}`;
   const reconnecting = connectingHostId === activeHost.id;
   // Nothing else may start while a switch is connecting.
   const busy = connectingHostId !== null;

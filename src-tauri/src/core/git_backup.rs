@@ -281,6 +281,7 @@ pub fn init_repo(skills_dir: &Path, device_name: &str) -> Result<()> {
 }
 
 pub(crate) fn init_repo_unlocked(skills_dir: &Path, device_name: &str) -> Result<()> {
+    crate::core::resource_store::check_library_transactions()?;
     if skills_dir.join(".git").exists() {
         anyhow::bail!("Already a git repository");
     }
@@ -307,6 +308,9 @@ pub(crate) fn init_repo_unlocked(skills_dir: &Path, device_name: &str) -> Result
 
     // Initial commit
     run_git_checked(skills_dir, &["add", "-A"])?;
+    let repo = git2::Repository::open(skills_dir)?;
+    let tree_id = repo.index()?.write_tree()?;
+    crate::core::resource_sync::validate_tree(&repo, &repo.find_tree(tree_id)?)?;
     run_git_checked(
         skills_dir,
         &[
@@ -448,7 +452,9 @@ pub fn commit_all(skills_dir: &Path, message: &str) -> Result<()> {
 }
 
 pub(crate) fn commit_all_unlocked(skills_dir: &Path, message: &str) -> Result<()> {
+    crate::core::resource_store::check_library_transactions()?;
     ensure_repo(skills_dir)?;
+    crate::core::resource_sync::check_current_writer(&git2::Repository::open(skills_dir)?)?;
     ensure_gitignore(skills_dir)?;
     // Cleanup, not a precondition: a failure here means the backup carries a few
     // stale `.pyc` entries, which is not a reason to refuse to back up at all.
@@ -469,6 +475,12 @@ pub(crate) fn commit_all_unlocked(skills_dir: &Path, message: &str) -> Result<()
     protocol::ensure_protocol_file(skills_dir)?;
 
     run_git_checked(skills_dir, &["add", "-A"])?;
+
+    // Validate portable definitions before a commit can carry them to backup.
+    // Invalid MCP values must not enter history through a manual file edit.
+    let repo = git2::Repository::open(skills_dir)?;
+    let tree_id = repo.index()?.write_tree()?;
+    crate::core::resource_sync::validate_tree(&repo, &repo.find_tree(tree_id)?)?;
 
     // Check if there's anything to commit
     let status = run_git(skills_dir, &["status", "--porcelain"])?;
@@ -565,7 +577,13 @@ pub fn push(skills_dir: &Path) -> Result<()> {
 }
 
 pub(crate) fn push_unlocked(skills_dir: &Path) -> Result<()> {
+    crate::core::resource_store::check_library_transactions()?;
     ensure_repo(skills_dir)?;
+    let repo = git2::Repository::open(skills_dir)?;
+    crate::core::resource_sync::check_current_writer(&repo)?;
+    if let Ok(head) = repo.head().and_then(|head| head.peel_to_tree()) {
+        crate::core::resource_sync::validate_tree(&repo, &head)?;
+    }
 
     let branch = run_git(skills_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
         .unwrap_or_else(|_| "main".to_string());
@@ -857,6 +875,7 @@ pub fn restore_snapshot_version(skills_dir: &Path, tag: &str) -> Result<String> 
 }
 
 pub(crate) fn restore_snapshot_version_unlocked(skills_dir: &Path, tag: &str) -> Result<String> {
+    crate::core::resource_store::check_library_transactions()?;
     ensure_repo(skills_dir)?;
 
     if !tag.starts_with("sm-v-") {
@@ -868,6 +887,11 @@ pub(crate) fn restore_snapshot_version_unlocked(skills_dir: &Path, tag: &str) ->
     )?;
 
     log::info!("git restore: switching skills library to {tag}");
+    let repo = git2::Repository::open(skills_dir)?;
+    let snapshot = repo
+        .revparse_single(&format!("refs/tags/{tag}"))?
+        .peel_to_tree()?;
+    crate::core::resource_sync::validate_tree(&repo, &snapshot)?;
 
     // Safety point first (§3.5): the pre-restore state — including any
     // uncommitted edits — becomes a user-visible snapshot the user can return
@@ -1199,7 +1223,13 @@ fn oversized_skill_dirs(skills_dir: &Path, limit: u64) -> (Vec<(String, u64)>, u
                 total_bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
                 continue;
             }
-            if entry.file_type().is_dir() && super::skill_metadata::is_valid_skill_dir(path) {
+            if entry.file_type().is_dir()
+                && !path
+                    .strip_prefix(skills_dir)
+                    .ok()
+                    .is_some_and(|p| p.starts_with(".agents-manager"))
+                && super::skill_metadata::is_valid_skill_dir(path)
+            {
                 let bytes = dir_size(path);
                 total_bytes += bytes;
                 if bytes > limit {

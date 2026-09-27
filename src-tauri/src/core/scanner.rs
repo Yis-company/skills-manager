@@ -31,7 +31,7 @@ pub struct DiscoveredLocation {
 }
 
 /// Directories to skip during recursive scans (internal/tool-specific metadata).
-const RECURSIVE_SCAN_SKIP_DIRS: &[&str] = &[".hub", ".git", "node_modules"];
+const RECURSIVE_SCAN_SKIP_DIRS: &[&str] = &[".hub", ".git", "node_modules", ".agents-manager"];
 
 fn is_symlink_to_central(path: &Path) -> bool {
     if let Ok(target) = std::fs::read_link(path) {
