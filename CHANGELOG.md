@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.41.2
+
+### Patch Changes
+
+- Fix release creation races by sharing one draft release across platform builds and verifying all updater targets before publication.
+
 ## 1.41.1
 
 ### Patch Changes
