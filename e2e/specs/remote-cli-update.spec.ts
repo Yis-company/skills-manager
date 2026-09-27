@@ -9,6 +9,61 @@ const host: RemoteHost = {
   created_at: 1,
 };
 
+test("opening and cancelling Update CLI while checking makes no changes", async ({ page, backend }) => {
+  await backend.seed({ remoteHosts: [host], remoteCliNeedsUpdate: true });
+  await page.goto("/settings/remote");
+  await backend.hold("remote_host_probe");
+  await page.getByRole("button", { name: "Update CLI", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("status")).toContainText("Checking host");
+  await expect(dialog.getByRole("button", { name: "Install matching version and reconnect" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).last().click();
+  await backend.release("remote_host_probe");
+  await expect(dialog).toHaveCount(0);
+  expect(await backend.calls("remote_host_install_cli")).toEqual([]);
+  expect(await backend.calls("remote_host_connect")).toEqual([]);
+});
+
+test("matching CLI is up to date without reinstalling or reconnecting", async ({ page, backend }) => {
+  await backend.seed({ remoteHosts: [host] });
+  await page.goto("/settings/remote");
+  await page.getByRole("button", { name: "Update CLI", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("status")).toContainText("CLI is up to date");
+  await expect(dialog.getByRole("status")).toContainText("1.40.0");
+  await expect(dialog.getByRole("button", { name: "Install matching version and reconnect" })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
+  await expect(dialog).toHaveCount(0);
+  expect(await backend.calls("remote_host_install_cli")).toEqual([]);
+  expect(await backend.calls("remote_host_connect")).toEqual([]);
+});
+
+test("a failed update probe retries checking without installing", async ({ page, backend }) => {
+  await backend.seed({ remoteHosts: [host] });
+  await page.goto("/settings/remote");
+  await backend.failNext("remote_host_probe", "SSH temporarily unavailable");
+  await page.getByRole("button", { name: "Update CLI", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("alert")).toContainText("SSH temporarily unavailable");
+  await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("CLI is up to date");
+  expect(await backend.calls("remote_host_probe")).toHaveLength(2);
+  expect(await backend.calls("remote_host_install_cli")).toEqual([]);
+  expect(await backend.calls("remote_host_connect")).toEqual([]);
+});
+
+test("Update CLI remains reachable at the minimum desktop window size", async ({ page, backend }) => {
+  await page.setViewportSize({ width: 1100, height: 640 });
+  await backend.seed({ remoteHosts: [host], remoteCliNeedsUpdate: true });
+  await page.goto("/settings/remote");
+  const update = page.getByRole("button", { name: "Update CLI", exact: true });
+  await expect(update).toBeInViewport();
+  await update.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("button", { name: "Install matching version and reconnect" })).toBeEnabled();
+  await expect(dialog).toBeInViewport({ ratio: 1 });
+});
+
 test("version mismatch offers update review, and cancelling performs no install", async ({ page, backend }) => {
   await backend.seed({ remoteHosts: [host], remoteCliNeedsUpdate: true });
   await page.goto("/settings/remote");
@@ -22,11 +77,11 @@ test("version mismatch offers update review, and cancelling performs no install"
   expect(await backend.calls("remote_host_install_cli")).toEqual([]);
 });
 
-test("Settings probe opens the update flow and installs locally before reconnecting", async ({ page, backend }) => {
+test("Settings Update CLI opens without a prior check and installs locally before reconnecting", async ({ page, backend }) => {
   await backend.seed({ remoteHosts: [host], remoteCliNeedsUpdate: true });
   await page.goto("/settings/remote");
-  await page.getByRole("button", { name: "Check" }).click();
-  await page.getByRole("button", { name: "Review update" }).click();
+  expect(await backend.calls("remote_host_probe")).toEqual([]);
+  await page.getByRole("button", { name: "Update CLI", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("button", { name: "Install matching version and reconnect" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -39,7 +94,7 @@ test("a failed reconnect after install can be retried from Local", async ({ page
   await backend.seed({ remoteHosts: [host], remoteCliNeedsUpdate: true });
   await page.goto("/settings/remote");
   await page.getByRole("button", { name: "Check" }).click();
-  await page.getByRole("button", { name: "Review update" }).click();
+  await page.getByRole("button", { name: "Update CLI", exact: true }).click();
   await backend.failNext("remote_host_connect", "SSH temporarily unavailable");
   await page.getByRole("button", { name: "Install matching version and reconnect" }).click();
 
@@ -63,7 +118,7 @@ test("update action disables repeated installation while the command is pending"
   await backend.seed({ remoteHosts: [host], remoteCliNeedsUpdate: true });
   await page.goto("/settings/remote");
   await page.getByRole("button", { name: "Check" }).click();
-  await page.getByRole("button", { name: "Review update" }).click();
+  await page.getByRole("button", { name: "Update CLI", exact: true }).click();
   await backend.hold("remote_host_install_cli");
   const update = page.getByRole("button", { name: "Install matching version and reconnect" });
   await update.click();

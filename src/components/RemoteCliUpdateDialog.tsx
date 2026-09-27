@@ -95,7 +95,7 @@ export function RemoteCliUpdateDialog({ hostId, onClose, onBusyChange }: Props) 
     }
   };
   const run = async () => {
-    if (!hostId || runRef.current || !probe) return;
+    if (!hostId || runRef.current || !probe || probe.compatible || probeLoading) return;
     const selectedHostId = getActiveHostId();
     const switchToken = getHostSwitchToken();
     selectedHostRef.current = selectedHostId;
@@ -140,6 +140,7 @@ export function RemoteCliUpdateDialog({ hostId, onClose, onBusyChange }: Props) 
   };
 
   if (!hostId) return null;
+  const upToDate = Boolean(probe?.compatible);
   const actionLabel = installed ? t("remoteHosts.reconnect") : t("remoteHosts.installMatchingReconnect");
   const retry = async () => {
     if (!hostId || runRef.current) return;
@@ -173,6 +174,7 @@ export function RemoteCliUpdateDialog({ hostId, onClose, onBusyChange }: Props) 
       finally { runRef.current = false; setStage(null); onBusyChange(null); }
       return;
     }
+    if (probe?.compatible) return;
     if (probe) { void run(); return; }
     const generation = generationRef.current;
     await loadProbe(hostId, generation);
@@ -187,7 +189,9 @@ export function RemoteCliUpdateDialog({ hostId, onClose, onBusyChange }: Props) 
             <h2 id="remote-cli-update-title" className="flex items-center gap-2 text-[14px] font-semibold text-primary">
               <AlertTriangle className="h-4 w-4 text-amber-500" />{t("remoteHosts.updateTitle")}
             </h2>
-            <p className="mt-1 text-[12px] leading-relaxed text-muted">{t("remoteHosts.updateDescription")}</p>
+            <p role={upToDate ? "status" : undefined} className="mt-1 text-[12px] leading-relaxed text-muted">
+              {probeLoading ? t("remoteHosts.checkingDescription") : upToDate ? t("remoteHosts.upToDate", { version: probe?.version }) : t("remoteHosts.updateDescription")}
+            </p>
           </div>
           <button onClick={close} disabled={busy} aria-label={t("common.cancel")} className="rounded p-1 text-muted hover:text-secondary disabled:opacity-50"><X className="h-4 w-4" /></button>
         </header>
@@ -202,11 +206,11 @@ export function RemoteCliUpdateDialog({ hostId, onClose, onBusyChange }: Props) 
         {(stage || probeLoading) && <p role="status" className="mb-3 flex items-center gap-2 text-[12px] text-accent"><Loader2 className="h-3.5 w-3.5 animate-spin" />{t(`remoteHosts.stage.${stage ?? "checking"}`)}</p>}
         {error && <p role="alert" className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-[12px] text-red-500">{installed ? `${t("remoteHosts.installedLabel")} ${error}` : error}</p>}
         <footer className="flex justify-end gap-2">
-          <button onClick={close} disabled={busy} className="app-button-secondary">{t("common.cancel")}</button>
-          <button onClick={() => void retry()} disabled={busy || (!probe && !error)} className="app-button-secondary gap-1.5 border-accent bg-accent text-white disabled:opacity-50">
+          <button onClick={close} disabled={busy} className="app-button-secondary">{upToDate ? t("remoteHosts.close") : t("common.cancel")}</button>
+          {!upToDate && <button onClick={() => void retry()} disabled={busy || probeLoading || (!probe && !error)} className="app-button-secondary gap-1.5 border-accent bg-accent text-white disabled:opacity-50">
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
             {busy ? t(`remoteHosts.stage.${stage}`) : error ? t("common.retry") : actionLabel}
-          </button>
+          </button>}
         </footer>
       </section>
     </div>

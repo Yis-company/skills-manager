@@ -95,15 +95,13 @@ export function RemoteHostsSection() {
   };
 
   const renderUpdateAction = (host: api.RemoteHost) => {
-    const probe = probes[host.id];
-    if (probe?.state !== "ok" || probe.result.compatible) return null;
     return (
       <button
         onClick={() => openRemoteCliUpdate(host.id)}
-        disabled={updatingRemoteCliHostId !== null || connectingHostId !== null}
-        className={`${actionButtonClass} border-amber-500/40 bg-amber-500/10 text-amber-600`}
+        disabled={probes[host.id]?.state === "checking" || updatingRemoteCliHostId !== null || connectingHostId !== null}
+        className={actionButtonClass}
       >
-        {t("remoteHosts.reviewUpdate")}
+        {t("remoteHosts.updateCli")}
       </button>
     );
   };
