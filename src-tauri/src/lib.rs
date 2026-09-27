@@ -1165,6 +1165,7 @@ pub fn run() {
             commands::remote_hosts::remote_host_update,
             commands::remote_hosts::remote_host_remove,
             commands::remote_hosts::remote_host_probe,
+            commands::remote_hosts::remote_host_install_cli,
             commands::remote_hosts::remote_host_connect,
             commands::remote_hosts::remote_host_disconnect,
             commands::remote_hosts::remote_invoke,

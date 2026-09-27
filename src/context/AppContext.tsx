@@ -14,12 +14,13 @@ import {
   toolsQueryOptions,
 } from "../lib/appQueries";
 import { listenOnActiveHost } from "../lib/hostEvents";
-import { getErrorMessage } from "../lib/error";
+import { getErrorKind, getErrorMessage } from "../lib/error";
 import i18n from "../i18n";
 import { applyTextSize } from "../lib/textScale";
 import { useNavigate } from "@tanstack/react-router";
 import { settingsLink } from "../views/settings/categories";
 import { toast } from "sonner";
+import { RemoteCliUpdateDialog } from "../components/RemoteCliUpdateDialog";
 
 /** The live link to the active remote host. */
 export interface HostSession {
@@ -45,10 +46,13 @@ interface AppState {
   hostSession: HostSession | null;
   /** The host a switch is connecting to, while it connects. */
   connectingHostId: string | null;
+  updatingRemoteCliHostId: string | null;
+  openRemoteCliUpdate: (hostId: string) => void;
+  getHostSwitchToken: () => number;
   /** Operate on `hostId`, or on this computer for null. Resolves false when
    *  the host could not be reached; the app is then on this computer, or
    *  still on the host with its link marked lost when reconnecting. */
-  switchHost: (hostId: string | null) => Promise<boolean>;
+  switchHost: (hostId: string | null, allowDuringRemoteUpdate?: boolean) => Promise<boolean>;
   /** Start the active host's session again, e.g. so it picks up a new
    *  library path. Resolves like `switchHost`. */
   reconnectHost: () => Promise<boolean>;
@@ -111,6 +115,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeHostId, setActiveHostIdState] = useState<string | null>(null);
   const [hostSession, setHostSession] = useState<HostSession | null>(null);
   const [connectingHostId, setConnectingHostId] = useState<string | null>(null);
+  const [remoteCliUpdateHostId, setRemoteCliUpdateHostId] = useState<string | null>(null);
+  const [updatingRemoteCliHostId, setUpdatingRemoteCliHostId] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [detailSkillId, setDetailSkillId] = useState<string | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
@@ -236,7 +242,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const switchHost = useCallback(
-    async (hostId: string | null): Promise<boolean> => {
+    async (hostId: string | null, allowDuringRemoteUpdate = false): Promise<boolean> => {
+      if (updatingRemoteCliHostId !== null && !allowDuringRemoteUpdate) return false;
       // Only the latest switch decides where the app ends up.
       const seq = ++switchSeqRef.current;
       const isLatest = () => switchSeqRef.current === seq;
@@ -273,17 +280,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setHostSession(null);
           await refreshAppDataForHost(null);
         }
+        const versionMismatch = getErrorKind(e) === "remote_version_mismatch";
         toast.error(i18n.t("hostSwitcher.connectFailed", { name }), {
           description: message,
           duration: 10000,
-          action: { label: i18n.t("common.retry"), onClick: () => void switchHost(hostId) },
+          action: versionMismatch
+            ? { label: i18n.t("remoteHosts.reviewUpdate"), onClick: () => setRemoteCliUpdateHostId(hostId) }
+            : { label: i18n.t("common.retry"), onClick: () => void switchHost(hostId) },
         });
         return false;
       } finally {
         if (isLatest()) setConnectingHostId(null);
       }
     },
-    [enterHost, refreshAppDataForHost, remoteHosts]
+    [enterHost, refreshAppDataForHost, remoteHosts, updatingRemoteCliHostId]
   );
 
   const reconnectHost = useCallback(async () => {
@@ -629,6 +639,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         activeHostId,
         hostSession,
         connectingHostId,
+        updatingRemoteCliHostId,
+        openRemoteCliUpdate: (hostId: string) => setRemoteCliUpdateHostId(hostId),
+        getHostSwitchToken: () => switchSeqRef.current,
         switchHost,
         reconnectHost,
         loading,
@@ -652,6 +665,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
+      <RemoteCliUpdateDialog
+        hostId={remoteCliUpdateHostId}
+        onClose={() => setRemoteCliUpdateHostId(null)}
+        onBusyChange={(hostId) => setUpdatingRemoteCliHostId(hostId)}
+      />
     </AppContext.Provider>
   );
 }

@@ -57,7 +57,7 @@ pub fn cli_command(host: &RemoteHostRecord, cli_args: &[&str]) -> Command {
 /// `sh -c` so the resolver runs under POSIX `sh` whatever the login shell is;
 /// on a non-POSIX remote `sh` itself is missing, which [`classify_failure`]
 /// turns into an explicit "unsupported" error.
-fn remote_command(host: &RemoteHostRecord, cli_args: &[&str]) -> String {
+pub(crate) fn remote_command(host: &RemoteHostRecord, cli_args: &[&str]) -> String {
     // `sh -c SCRIPT NAME ARGS…` binds NAME to `$0` and ARGS to `$@`.
     let (script, program) = match host.cli_path.as_deref() {
         Some(path) => (r#"exec "$0" "$@""#, path),
@@ -69,7 +69,7 @@ fn remote_command(host: &RemoteHostRecord, cli_args: &[&str]) -> String {
     parts.join(" ")
 }
 
-fn shell_quote(value: &str) -> String {
+pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r#"'\''"#))
 }
 

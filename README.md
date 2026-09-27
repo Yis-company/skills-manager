@@ -224,6 +224,14 @@ Official releases also publish standalone CLI binaries for macOS arm64/x64, Wind
 
 The CLI and desktop app share the same SQLite database and repository lock. The app's filesystem watcher normally refreshes after CLI metadata or deployment changes. If the app was suspended while a command ran, trigger one manual refresh.
 
+#### Updating a remote connection
+
+Remote connections require the CLI version to match the local desktop app. When a connection reports a different version, choose **Review update**, or use the update action after checking the host in Settings. Review the host and versions, then install the matching version and reconnect.
+
+The app downloads the matching macOS or Linux CLI from `Yis-company/skills-manager`, transfers it using your existing SSH access, and selects a separate versioned CLI for that connection. It keeps the remote desktop app, its published CLI, and your skill library in place. No remote internet access or `sudo` is needed. An unpublished version or unsupported platform produces an error without changing the selected CLI.
+
+Desktop update checks and installation also use `Yis-company/skills-manager`. Older installed builds contain `A-and-Brian/skills-manager` URLs, which currently redirect to this fork. They can receive the correction through a normal app update while those redirects remain available. If a redirect stops working, install a corrected build from the [fork's releases](https://github.com/Yis-company/skills-manager/releases). Editing a checkout does not change an already installed app.
+
 ### Build
 
 ```bash

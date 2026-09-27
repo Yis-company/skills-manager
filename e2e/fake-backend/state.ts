@@ -51,6 +51,7 @@ export interface Seed {
   /** Remote hosts and their isolated fake backend data, keyed by host id. */
   remoteHosts?: RemoteHost[];
   remoteStates?: Record<string, RemoteSeed>;
+  remoteCliNeedsUpdate?: boolean;
   /** Simulate a batch command that writes some rows before returning an error. */
   rejectBatchDeleteAfterPartialWrite?: boolean;
   /** IDs a fulfilled batch delete reports as failed. */
@@ -82,6 +83,7 @@ export function createState({ settings, ...seed }: Seed): State {
     batchImport: [],
     remoteHosts: [],
     remoteStates: {},
+    remoteCliNeedsUpdate: false,
     rejectBatchDeleteAfterPartialWrite: false,
     deleteFailedIds: [],
     deviceFlow: {

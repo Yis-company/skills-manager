@@ -45,14 +45,28 @@ export const handlers: Record<string, Handler<never>> = {
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
   remote_hosts_list: (_args: unknown, state) => state.remoteHosts,
-  remote_host_connect: ({ hostId }: { hostId: string }) => ({
-    host_id: hostId,
-    version: "1.40.0",
-    os: "linux",
-    arch: "x86_64",
-    home: "/home/e2e",
-    base_dir: "/home/e2e/.skills-manager",
+  remote_host_connect: ({ hostId }: { hostId: string }, state) => {
+    if (state.remoteCliNeedsUpdate) {
+      throw { kind: "remote_version_mismatch", message: "Remote CLI version does not match" };
+    }
+    return {
+      host_id: hostId,
+      version: "1.40.0",
+      os: "linux",
+      arch: "x86_64",
+      home: "/home/e2e",
+      base_dir: "/home/e2e/.skills-manager",
+    };
+  },
+  remote_host_probe: (_args: unknown, state) => ({
+    version: state.remoteCliNeedsUpdate ? "1.39.0" : "1.40.0",
+    compatible: !state.remoteCliNeedsUpdate,
+    app_version: "1.40.0",
   }),
+  remote_host_install_cli: ({ hostId }: { hostId: string }, state) => {
+    state.remoteCliNeedsUpdate = false;
+    return state.remoteHosts.find((host) => host.id === hostId) ?? null;
+  },
   remote_invoke: ({ hostId, command, args }: { hostId: string; command: string; args: unknown }, state) => {
     const remoteState = createState(state.remoteStates[hostId] ?? {});
     const handler = handlers[command] as ((args: unknown, state: State) => unknown) | undefined;

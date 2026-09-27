@@ -283,7 +283,7 @@ fn lost(host_name: &str) -> AppError {
 }
 
 /// Both sides must run the same build: identical code means identical data.
-fn check_hello(hello: &Hello, host_name: &str) -> Result<(), AppError> {
+pub(crate) fn check_hello(hello: &Hello, host_name: &str) -> Result<(), AppError> {
     if hello.version != env!("CARGO_PKG_VERSION") {
         return Err(version_mismatch(host_name, &hello.version));
     }
@@ -297,10 +297,14 @@ fn check_hello(hello: &Hello, host_name: &str) -> Result<(), AppError> {
 }
 
 fn version_mismatch(host_name: &str, remote: &str) -> AppError {
-    AppError::invalid_input(format!(
-        "Skills Manager on {host_name} is {remote}; this app is {}. Both must run the same version.",
-        env!("CARGO_PKG_VERSION")
-    ))
+    AppError {
+        kind: super::error::ErrorKind::RemoteVersionMismatch,
+        message: format!(
+            "Skills Manager on {host_name} is {remote}; this app is {}. Both must run the same version.",
+            env!("CARGO_PKG_VERSION")
+        ),
+        details: None,
+    }
 }
 
 /// What the CLI says it is: `skills-manager-cli 1.39.0` gives `1.39.0`.
@@ -686,7 +690,7 @@ mod tests {
         let err = RemoteSession::spawn(&cli, &host(), Arc::new(NoopEvents))
             .err()
             .expect("a mismatch must refuse");
-        assert_eq!(err.kind, ErrorKind::InvalidInput);
+        assert_eq!(err.kind, ErrorKind::RemoteVersionMismatch);
         assert_eq!(
             err.message,
             format!(
@@ -785,7 +789,7 @@ mod tests {
         let err = RemoteSession::spawn(&older_cli, &host(), Arc::new(NoopEvents))
             .err()
             .expect("an older CLI must refuse");
-        assert_eq!(err.kind, ErrorKind::InvalidInput);
+        assert_eq!(err.kind, ErrorKind::RemoteVersionMismatch);
         assert_eq!(
             err.message,
             format!(

@@ -4,14 +4,15 @@
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::core::error::AppError;
 use crate::core::remote_host;
+use crate::core::remote_install;
 use crate::core::remote_session::{HostSessionInfo, RemoteSession, RemoteSessions};
 use crate::core::skill_store::{RemoteHostRecord, SkillStore};
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct RemoteProbe {
     pub version: String,
     pub compatible: bool,
@@ -118,6 +119,35 @@ pub async fn remote_host_probe(
         let host = load_host(&store, &host_id)?;
         let version = RemoteSession::handshake(&remote_host::cli_command, &host)?;
         Ok(probe_result(version))
+    })
+    .await?
+}
+
+#[derive(Clone, Serialize)]
+struct RemoteCliInstallProgress {
+    host_id: String,
+    stage: String,
+}
+
+/// Install the exact CLI build bundled with this app on the selected host.
+#[tauri::command]
+pub async fn remote_host_install_cli(
+    host_id: String,
+    app: tauri::AppHandle,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<RemoteHostRecord, AppError> {
+    let store = store.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let host = load_host(&store, &host_id)?;
+        remote_install::install_cli(&store, host, |stage| {
+            let _ = app.emit(
+                "remote-cli-install-progress",
+                RemoteCliInstallProgress {
+                    host_id: host_id.clone(),
+                    stage: stage.to_owned(),
+                },
+            );
+        })
     })
     .await?
 }
