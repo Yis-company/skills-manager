@@ -5,6 +5,7 @@ pub mod git_backup;
 pub mod presets;
 pub mod projects;
 pub mod remote_hosts;
+pub mod resources;
 pub mod scan;
 pub mod settings;
 pub mod skills;

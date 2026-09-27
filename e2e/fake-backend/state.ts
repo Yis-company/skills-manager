@@ -56,6 +56,49 @@ export interface Seed {
   rejectBatchDeleteAfterPartialWrite?: boolean;
   /** IDs a fulfilled batch delete reports as failed. */
   deleteFailedIds?: string[];
+  instructionBundles?: {
+    id: string;
+    name: string;
+    description?: string;
+    revision: string;
+    updated_at: string;
+    files: Record<string, string>;
+  }[];
+  instructionFiles?: Record<
+    string,
+    {
+      content: string;
+      revision: string;
+      managed: boolean;
+      kind: "root" | "nested" | "override" | "native";
+    }
+  >;
+  mcpDefinitions?: {
+    id: string;
+    name: string;
+    transport: "stdio" | "http" | "sse";
+    server: Record<string, unknown>;
+    auth?: Record<string, unknown>;
+    revision: string;
+    updatedAt: string;
+  }[];
+  mcpTargets?: Record<
+    string,
+    {
+      name: string;
+      managedId: string;
+      status: "managed" | "unmanaged" | "conflict";
+      definition?: {
+        name: string;
+        transport: "stdio" | "http" | "sse";
+        server: Record<string, unknown>;
+      };
+    }[]
+  >;
+  resourcePreviews?: Record<
+    string,
+    { kind: "instructions" | "mcps"; payload: unknown }
+  >;
 }
 
 /** The fake backend's in-memory data. Handlers read and change it. */
@@ -86,10 +129,27 @@ export function createState({ settings, ...seed }: Seed): State {
     remoteCliNeedsUpdate: false,
     rejectBatchDeleteAfterPartialWrite: false,
     deleteFailedIds: [],
+    instructionBundles: [],
+    instructionFiles: {},
+    mcpDefinitions: [],
+    mcpTargets: {},
+    resourcePreviews: {},
     deviceFlow: {
-      start: { device_code: "device-1", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 5 },
+      start: {
+        device_code: "device-1",
+        user_code: "ABCD-1234",
+        verification_uri: "https://github.com/login/device",
+        expires_in: 900,
+        interval: 5,
+      },
       polls: [],
-      result: { url: "https://github.com/octo/skills-manager-backup.git", login: "octo", repo_created: false, repo_private: true, remote_has_content: true },
+      result: {
+        url: "https://github.com/octo/skills-manager-backup.git",
+        login: "octo",
+        repo_created: false,
+        repo_private: true,
+        remote_has_content: true,
+      },
     },
     ...seed,
   });
@@ -97,7 +157,11 @@ export function createState({ settings, ...seed }: Seed): State {
 
 // ── Factories for seeds: required fields only, sensible defaults for the rest ──
 
-export function tool(key: string, display_name: string, extra: Partial<ToolInfo> = {}): ToolInfo {
+export function tool(
+  key: string,
+  display_name: string,
+  extra: Partial<ToolInfo> = {},
+): ToolInfo {
   return {
     key,
     display_name,
@@ -113,7 +177,11 @@ export function tool(key: string, display_name: string, extra: Partial<ToolInfo>
   };
 }
 
-export function skill(id: string, name: string, extra: Partial<ManagedSkill> = {}): ManagedSkill {
+export function skill(
+  id: string,
+  name: string,
+  extra: Partial<ManagedSkill> = {},
+): ManagedSkill {
   return {
     id,
     name,
@@ -141,7 +209,12 @@ export function skill(id: string, name: string, extra: Partial<ManagedSkill> = {
   };
 }
 
-export function preset(id: string, name: string, sort_order: number, extra: Partial<Preset> = {}): Preset {
+export function preset(
+  id: string,
+  name: string,
+  sort_order: number,
+  extra: Partial<Preset> = {},
+): Preset {
   return {
     id,
     name,
@@ -155,7 +228,12 @@ export function preset(id: string, name: string, sort_order: number, extra: Part
   };
 }
 
-export function project(id: string, name: string, sort_order: number, extra: Partial<Project> = {}): Project {
+export function project(
+  id: string,
+  name: string,
+  sort_order: number,
+  extra: Partial<Project> = {},
+): Project {
   return {
     id,
     name,
@@ -165,7 +243,13 @@ export function project(id: string, name: string, sort_order: number, extra: Par
     supports_skill_toggle: false,
     sort_order,
     skill_count: 0,
-    sync_health: { in_sync: 0, project_newer: 0, center_newer: 0, diverged: 0, project_only: 0 },
+    sync_health: {
+      in_sync: 0,
+      project_newer: 0,
+      center_newer: 0,
+      diverged: 0,
+      project_only: 0,
+    },
     created_at: 1_700_000_000,
     updated_at: 1_700_000_000,
     agent_keys: null,
@@ -174,7 +258,11 @@ export function project(id: string, name: string, sort_order: number, extra: Par
   };
 }
 
-export function projectSkill(name: string, agent: string, extra: Partial<ProjectSkill> = {}): ProjectSkill {
+export function projectSkill(
+  name: string,
+  agent: string,
+  extra: Partial<ProjectSkill> = {},
+): ProjectSkill {
   return {
     name,
     dir_name: name,
@@ -197,7 +285,11 @@ export function projectSkill(name: string, agent: string, extra: Partial<Project
   };
 }
 
-export function agentTarget(key: string, display_name: string, extra: Partial<ProjectAgentTarget> = {}): ProjectAgentTarget {
+export function agentTarget(
+  key: string,
+  display_name: string,
+  extra: Partial<ProjectAgentTarget> = {},
+): ProjectAgentTarget {
   return {
     key,
     display_name,
@@ -210,7 +302,9 @@ export function agentTarget(key: string, display_name: string, extra: Partial<Pr
   };
 }
 
-export function gitStatus(extra: Partial<GitBackupStatus> = {}): GitBackupStatus {
+export function gitStatus(
+  extra: Partial<GitBackupStatus> = {},
+): GitBackupStatus {
   return {
     is_repo: true,
     remote_url: "https://github.com/octo/skills-manager-backup.git",

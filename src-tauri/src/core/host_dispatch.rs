@@ -17,6 +17,9 @@ use crate::core::host::HostCtx;
 
 /// Every command [`dispatch`] accepts.
 pub const COMMANDS: &[&str] = &[
+    "instructions_request",
+    "mcps_request",
+    "resource_sync_request",
     // Tools
     "get_tool_status",
     "set_tool_enabled",
@@ -167,6 +170,9 @@ fn reply<T: Serialize>(result: Result<T, AppError>) -> Result<Value, AppError> {
 pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, AppError> {
     let a = Args(args);
     match command {
+        "instructions_request" => crate::core::instructions::dispatch(ctx, a.req("request")?),
+        "mcps_request" => crate::core::mcps::dispatch(ctx, a.req("request")?),
+        "resource_sync_request" => crate::core::resource_sync::dispatch(ctx, a.req("request")?),
         // Tools
         "get_tool_status" => reply(tools::get_tool_status_core(ctx)),
         "set_tool_enabled" => reply(tools::set_tool_enabled_core(

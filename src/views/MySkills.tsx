@@ -34,6 +34,7 @@ import { TagRenameDialog } from "../components/TagRenameDialog";
 import { TagContextMenu, type TagMenuState } from "../components/TagContextMenu";
 import { SkillDetailPanel } from "../components/SkillDetailPanel";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
+import { ResourceWorkspace } from "../components/ResourceWorkspace";
 import { BatchTagDialog } from "../components/BatchTagDialog";
 import { LibrarySkillCard } from "../components/LibrarySkillCard";
 import { LibrarySkillRow } from "../components/LibrarySkillRow";
@@ -995,6 +996,7 @@ export function MySkills() {
   ];
 
   return (
+    <ResourceWorkspace scope={{ kind: "library" }} skills={
     <div className="app-page">
       <div className="app-page-header pr-2 pb-1 flex items-center justify-between gap-3">
         <h1 className="app-page-title flex items-center gap-2">
@@ -1410,5 +1412,6 @@ export function MySkills() {
         onApply={handleBatchSyncAgents}
       />
     </div>
+    } />
   );
 }

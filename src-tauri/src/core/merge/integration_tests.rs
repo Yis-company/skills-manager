@@ -242,6 +242,108 @@ fn seeded_pair(env: &Env) -> (Device, Device) {
     (a, b)
 }
 
+#[test]
+fn instruction_bundle_conflict_preserves_both_versions_and_converges_after_review() {
+    let env = setup();
+    let a = env.device_a();
+    let id = "00000000-0000-0000-0000-000000000001";
+    let relative = format!(".agents-manager/instructions/{id}");
+    let write_bundle = |device: &Device, content: &str| {
+        let root = device.skills.join(&relative);
+        std::fs::create_dir_all(root.join("files/docs")).unwrap();
+        std::fs::write(
+            device.skills.join(".agents-manager/schema.json"),
+            r#"{"version":1}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("definition.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "id":id,"name":"Team","revision":uuid::Uuid::new_v4().to_string(),"updated_at":1
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(root.join("files/AGENTS.md"), content).unwrap();
+        // A bundled SKILL.md is a document, not a library skill.
+        std::fs::write(root.join("files/docs/SKILL.md"), "Supporting document").unwrap();
+    };
+    write_bundle(&a, "Base");
+    a.commit("seed resources");
+    a.push();
+    let b = env.device_b();
+    write_bundle(&a, "Device A edit");
+    a.commit("edit resource A");
+    write_bundle(&b, "Device B edit");
+    b.commit("edit resource B");
+    b.push();
+    let resource_tree = format!("HEAD:{relative}");
+    let original_bundle = git(&a.skills, &["rev-parse", &resource_tree]);
+    assert!(a.pull_err().to_string().contains("need review"));
+    // Pull may first commit local metadata, but may not apply either side's
+    // merged resource payload until this conflict has been reviewed.
+    assert_eq!(
+        git(&a.skills, &["rev-parse", &resource_tree]),
+        original_bundle
+    );
+    assert_eq!(
+        std::fs::read_to_string(a.skills.join(&relative).join("files/AGENTS.md")).unwrap(),
+        "Device A edit"
+    );
+    let mut conflict = a
+        .store
+        .resource_state_list("resource_sync_conflict")
+        .unwrap()
+        .pop()
+        .unwrap();
+    let conflict_id = conflict["id"].as_str().unwrap().to_owned();
+    let repo = git2::Repository::open(&a.skills).unwrap();
+    for side in ["local", "remote"] {
+        assert!(repo
+            .find_reference(&format!(
+                "refs/skills-manager/resource-conflicts/{conflict_id}/{side}"
+            ))
+            .is_ok());
+    }
+    conflict["choice"] = serde_json::json!("remote");
+    a.store
+        .resource_state_put("resource_sync_conflict", &conflict_id, &conflict)
+        .unwrap();
+    a.pull();
+    assert_eq!(
+        std::fs::read_to_string(a.skills.join(&relative).join("files/AGENTS.md")).unwrap(),
+        "Device B edit"
+    );
+    assert!(a
+        .store
+        .resource_state_list("resource_sync_conflict")
+        .unwrap()
+        .is_empty());
+    // Simulate a crash after Git committed the decision but before SQLite
+    // cleanup. An otherwise up-to-date pull must reconcile that exact decision.
+    a.store
+        .resource_state_put("resource_sync_conflict", &conflict_id, &conflict)
+        .unwrap();
+    a.pull();
+    assert!(a
+        .store
+        .resource_state_list("resource_sync_conflict")
+        .unwrap()
+        .is_empty());
+    a.push();
+    b.pull();
+    assert_eq!(a.tree_oid(), b.tree_oid());
+    let snapshot = crate::core::merge::snapshot::read_snapshot(
+        &repo,
+        &repo.head().unwrap().peel_to_tree().unwrap(),
+    )
+    .unwrap();
+    assert!(
+        snapshot.skills.is_empty(),
+        "bundled documents became skills"
+    );
+}
+
 // ── compose + convergence (§2.1 / §10 收敛性) ──
 
 #[test]

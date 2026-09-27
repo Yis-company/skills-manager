@@ -2,10 +2,10 @@
   <img src="assets/icon.png" width="80" />
 </p>
 
-<h1 align="center">Skills Manager</h1>
+<h1 align="center">Agents Manager</h1>
 
 <p align="center">
-  One app to manage AI agent skills across all your coding tools.
+  Manage skills, instruction files, and MCP connections across your coding tools and SSH hosts.
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo/library.png" width="800" alt="Skills Manager Library" />
+  <img src="assets/demo/library.png" width="800" alt="Agents Manager Library" />
 </p>
 
 <p align="center"><strong>Install Skills — Marketplace</strong></p>
@@ -36,15 +36,17 @@
 
 ## Features
 
+Instructions and MCP connections use the existing library, project and SSH workspaces. See [Agents Manager workflows and CLI](AGENTS-MANAGER.md) for reviewed updates, credential references and backup compatibility.
+
 <p align="center">
   <img src="assets/diagram-concept-map.png" width="640" alt="Concept map: Library, Preset, Global Workspace, Project Workspace, Agent" />
 </p>
 
 - **Unified skill library** — Install skills from Git repos, local folders, `.zip` / `.skill` archives, or the [skills.sh](https://skills.sh) marketplace. Everything goes into one central repo, which defaults to `~/.skills-manager` and can be customized in **Settings**.
 - **Marketplace** — Browse popular skills from the marketplace and find them with keyword search.
-- **Your agents can manage skills** — Claude Code, Codex, Cursor and the rest can install a skill, deploy it to another agent, or report what is where, by driving Skills Manager instead of writing into an agent's folder behind its back — so sources, presets, update tracking and per-agent state stay intact. The Dashboard sets this up in one click; see [Let your agents manage skills](#let-your-agents-manage-skills).
+- **Your agents can manage skills** — Claude Code, Codex, Cursor and the rest can install a skill, deploy it to another agent, or report what is where, by driving Agents Manager instead of writing into an agent's folder behind its back — so sources, presets, update tracking and per-agent state stay intact. The Dashboard sets this up in one click; see [Let your agents manage skills](#let-your-agents-manage-skills).
 - **Presets** — Group skills into named presets. In any workspace, click a preset pill to instantly activate or deactivate all its skills for the current agent scope. Applying a preset is a one-time copy, not a live sync. The sidebar lists all presets for quick access.
-- **Global Workspace** — Each agent gets its own page listing every skill in its global folder — including ones installed outside Skills Manager — so the view always reflects what the agent actually sees. Add or remove skills per agent, or use the All Agents overview to manage every installed agent at once.
+- **Global Workspace** — Each agent gets its own page listing every skill in its global folder — including ones installed outside Agents Manager — so the view always reflects what the agent actually sees. Add or remove skills per agent, or use the All Agents overview to manage every installed agent at once.
 - **Project Workspaces** — View and manage project-local skill folders for supported agents, compare them with your central library, and sync changes in either direction. Supports nested skill directories and per-agent assignment when exporting.
 - **Linked Workspaces** — Point to any directory as a skills root — useful for skills that live outside the default agent paths. Managed as a standalone workspace without participating in global preset sync.
 - **Multi-tool sync** — Sync skills to any supported tool via symlink or copy with a single click. Every skill card shows an agent icon badge per enabled agent — click a badge to install or remove that skill for that agent right from the card, with the badge reflecting live sync state.
@@ -54,7 +56,7 @@
 - **Update tracking** — Check for upstream updates on Git-based skills; re-import local ones.
 - **Skill preview and source inspection** — Read `SKILL.md` / `README.md`, inspect source metadata, and compare local content with the upstream version inside the app.
 - **Custom tools** — Add your own agents/tools with custom skills directories, or override the default path for any built-in tool.
-- **Backup & multi-device sync** — Connect a private GitHub repository with one sign-in (or any Git remote), and the app backs your library up automatically and keeps all connected devices in sync. Merges are skill-aware — a rename on one machine combines cleanly with an edit on another — and true conflicts never block: your local version stays put until you choose keep mine / use remote / keep both. Snapshot versions are restorable at any time.
+- **Backup & multi-device sync** — Connect a private GitHub repository with one sign-in (or any Git remote), and the app backs your library up automatically and keeps all connected devices in sync. Merges are skill-aware — a rename on one machine combines cleanly with an edit on another — and skill conflicts keep your local version in place until you choose keep mine / use remote / keep both. Instruction and MCP library conflicts pause the merge until reviewed. Snapshot versions are restorable at any time.
 - **Activity log & Export Logs** — Install / remove / update / sync operations are recorded locally. Use **Settings → Export Logs** to bundle recent logs and activity history into a single zip for easier issue reports.
 - **Flexible app settings** — Configure repo path, sync mode, theme, text size, language, tray behavior, proxy, Git remote, update checks, and the order agents appear throughout the app — all in one place.
 - **In-app updates** — The app tells you when a new version is out and installs it for you on macOS and Windows. Nothing downloads or installs on its own: checking only notifies, and installing and restarting each take a click.
@@ -90,7 +92,7 @@ Every installer ships the CLI inside the app — see [Where the binary lives](#w
 
 ## Let your agents manage skills
 
-Claude Code, Codex, Cursor and the rest can install a skill, deploy it to another agent, or report what is where — by driving Skills Manager rather than writing into an agent's folder behind its back. That is what keeps source metadata, preset membership, update tracking and cross-agent deployment state intact.
+Claude Code, Codex, Cursor and the rest can install a skill, deploy it to another agent, or report what is where — by driving Agents Manager rather than writing into an agent's folder behind its back. That is what keeps source metadata, preset membership, update tracking and cross-agent deployment state intact.
 
 The Dashboard offers a one-time setup: pick the agents that should be able to do it, and the app installs the [`manage-skills`](skills/manage-skills/SKILL.md) skill and deploys it to exactly those. Afterwards it is an ordinary library skill — adding or removing an agent is the agent badge row on its own card. No PATH setup is involved: the app publishes a copy of its CLI where agents look for it.
 
@@ -271,11 +273,11 @@ If the fix needs a code change, merge it with a changeset and release the next v
 
 ## Support
 
-Skills Manager is free and open source. If it saves you time, you can support this fork through [GitHub Sponsors](https://github.com/sponsors/A-and-Brian) or [buycoffee.to](https://buycoffee.to/yibtam), once a month or as a one-off. Support goes to the work done here since the fork: new features, fixes and releases. It doesn't go to the original project. To support the original author, see [xingkongliang/skills-manager](https://github.com/xingkongliang/skills-manager).
+Agents Manager is free and open source. If it saves you time, you can support this fork through [GitHub Sponsors](https://github.com/sponsors/A-and-Brian) or [buycoffee.to](https://buycoffee.to/yibtam), once a month or as a one-off. Support goes to the work done here since the fork: new features, fixes and releases. It doesn't go to the original project. To support the original author, see [xingkongliang/skills-manager](https://github.com/xingkongliang/skills-manager).
 
 ## Credits
 
-Skills Manager began as a fork of [xingkongliang/skills-manager](https://github.com/xingkongliang/skills-manager). Most of the app — and the history in [CHANGELOG.md](CHANGELOG.md) up to 1.40.0 — is their work.
+Agents Manager began as a fork of [xingkongliang/skills-manager](https://github.com/xingkongliang/skills-manager). Most of the app — and the history in [CHANGELOG.md](CHANGELOG.md) up to 1.40.0 — is their work.
 
 ## License
 

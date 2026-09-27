@@ -15,12 +15,16 @@ mod output;
 mod presets;
 mod repo;
 mod reports;
+mod resources;
 mod skills;
 mod tools;
 
 #[derive(Parser, Debug)]
 #[command(name = "skills-manager-cli")]
-#[command(about = "Shared-core CLI for skills-manager", version)]
+#[command(
+    about = "Agents Manager CLI for skills, instructions and MCP configuration",
+    version
+)]
 struct Cli {
     #[arg(long, global = true)]
     json: bool,
@@ -40,6 +44,10 @@ enum Commands {
     #[command(name = "agents", visible_alias = "tools")]
     Tools(ToolsArgs),
     Skills(SkillsArgs),
+    /// Manage instruction files, bundles and reviewed deployments.
+    Instructions(resources::ResourceArgs),
+    /// Manage MCP definitions and agent configurations.
+    Mcps(resources::ResourceArgs),
     #[command(alias = "scenarios")]
     Presets(PresetArgs),
     Git(GitArgs),
@@ -122,7 +130,15 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         central_repo::set_runtime_base_dir_override(Some(base_dir.clone()));
     }
 
-    let store = if matches!(&cli.command, Commands::Serve(_)) {
+    let resource_dry_run = matches!(&cli.command,
+        Commands::Instructions(args) | Commands::Mcps(args) if args.dry_run);
+    let store = if resource_dry_run {
+        std::sync::Arc::new(
+            app_lib::core::skill_store::SkillStore::open_resource_read_only(
+                &central_repo::db_path(),
+            )?,
+        )
+    } else if matches!(&cli.command, Commands::Serve(_)) {
         app_state::initialize_cli_store_moving_repo()?
     } else {
         app_state::initialize_cli_store()?
@@ -132,6 +148,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Repo(args) => run_repo(args, &store, cli.json),
         Commands::Tools(args) => run_tools(args, &store, cli.json),
         Commands::Skills(args) => run_skills(args, &store, cli.json),
+        Commands::Instructions(args) => resources::run("instructions", args, store, cli.json),
+        Commands::Mcps(args) => resources::run("mcps", args, store, cli.json),
         Commands::Presets(args) => run_presets(args, &store, cli.json),
         Commands::Git(args) => run_git(args, &store, cli.skills_root.is_some(), cli.json),
         // stdout carries the protocol; nothing else may print there.

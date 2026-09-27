@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version. Bump this when adding a new migration.
-const LATEST_VERSION: u32 = 11;
+pub(crate) const LATEST_VERSION: u32 = 12;
 
 /// Run all pending migrations on the database.
 ///
@@ -58,6 +58,16 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
         8 => migrate_v8_to_v9(conn),
         9 => migrate_v9_to_v10(conn),
         10 => migrate_v10_to_v11(conn),
+        11 => conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS resource_state (
+                kind TEXT NOT NULL,
+                id TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (kind, id)
+            );",
+            )
+            .map_err(Into::into),
         _ => bail!("unknown migration version: {from_version}"),
     }
 }
@@ -682,8 +692,7 @@ mod tests {
              INSERT INTO projects (id, name, path) VALUES ('p1', 'P', '/tmp/p');",
         )
         .unwrap();
-        conn.pragma_update(None, "user_version", LATEST_VERSION - 1)
-            .unwrap();
+        conn.pragma_update(None, "user_version", 10).unwrap();
 
         run_migrations(&conn).unwrap();
 

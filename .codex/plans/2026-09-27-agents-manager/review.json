@@ -1,0 +1,7 @@
+{
+  "decision": "approved",
+  "source": "direct-user-message",
+  "feedback": "approved",
+  "date": "2026-09-27",
+  "note": "User explicitly approved in the conversation after the Plannotator gate was opened. No Plannotator result was returned; this records the direct approval, not a tool-generated decision."
+}
