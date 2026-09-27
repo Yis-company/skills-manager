@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.41.1
+
+### Patch Changes
+
+- Fix macOS ad-hoc release packaging.
+
 ## 1.41.0
 
 ### Minor Changes
