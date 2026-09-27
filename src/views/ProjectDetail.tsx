@@ -39,10 +39,11 @@ import { getTagActiveColor, getTagColor, pruneStaleTagFilters, UNTAGGED_FILTER }
 import { enabledInstalledAgentKeys, getDefaultExportAgents } from "../lib/exportAgents";
 import {
   filterProjectSkillGroups,
+  getProjectUpdateCandidates,
+  getProjectUpdateReviewCount,
   getAssignedAgents,
   groupProjectSkills,
   isCenterUpdatable,
-  isProjectUpdatable,
   pickInitialAgents,
   type ProjectSkillGroup,
 } from "../lib/projectSkillGroups";
@@ -99,6 +100,7 @@ export function ProjectDetail() {
   const [updatingProjectSkill, setUpdatingProjectSkill] = useState<string | null>(null);
   const [batchUpdatingCenter, setBatchUpdatingCenter] = useState(false);
   const [batchUpdatingProject, setBatchUpdatingProject] = useState(false);
+  const projectUpdateInFlightRef = useRef(false);
   const [togglingSkill, setTogglingSkill] = useState<string | null>(null);
   const [togglingAgentTarget, setTogglingAgentTarget] = useState<{ skillKey: string; agent: string } | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
@@ -382,8 +384,12 @@ export function ProjectDetail() {
     [selectedSkills]
   );
   const updatableProjectCount = useMemo(
-    () => selectedSkills.filter((skill) => isProjectUpdatable(skill.status)).length,
+    () => selectedSkills.filter((skill) => getProjectUpdateCandidates(skill).length > 0).length,
     [selectedSkills]
+  );
+  const updatableProjectVariantCount = useMemo(
+    () => groupedSkills.reduce((count, skill) => count + getProjectUpdateCandidates(skill).length, 0),
+    [groupedSkills]
   );
   const togglableSelectedCount = useMemo(
     () => selectedSkills.filter((skill) => (
@@ -497,22 +503,56 @@ export function ProjectDetail() {
     }
   };
 
+  const runProjectUpdates = async (
+    groups: ProjectSkillGroup[],
+    hostId: string | null,
+    projectId: string,
+    singleName?: string
+  ) => {
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+    let firstError: unknown;
+    for (const group of groups) {
+      skipped += getProjectUpdateReviewCount(group);
+      for (const variant of getProjectUpdateCandidates(group)) {
+        try {
+          await invokeHost<void>(hostId, "update_project_skill_from_center", {
+            projectId,
+            skillRelativePath: variant.relative_path,
+            agent: variant.agent,
+          });
+          updated++;
+        } catch (error) {
+          failed++;
+          firstError ??= error;
+        }
+      }
+    }
+    const refreshResults = await Promise.allSettled([
+      refreshQuery(queryClient, projectSkillsQueryOptions(hostId, projectId)),
+      refreshQuery(queryClient, projectsQueryOptions(hostId)),
+    ]);
+    const refreshFailed = refreshResults.filter((result) => result.status === "rejected").length;
+    if (singleName && updated > 0 && skipped === 0 && failed === 0) {
+      toast.success(t("project.updateProjectSuccess", { name: singleName }));
+    } else {
+      toast.message(t("project.updateProjectOutcome", { updated, skipped, failed }));
+    }
+    if (firstError) toast.error(getErrorMessage(firstError, t("common.error")));
+    if (refreshFailed > 0) toast.error(t("project.updateProjectRefreshFailed", { count: refreshFailed }));
+  };
+
   const handleUpdateProject = async (skill: ProjectSkillGroup) => {
-    if (!id) return;
+    if (!id || projectUpdateInFlightRef.current) return;
+    projectUpdateInFlightRef.current = true;
+    const hostId = activeHostId;
+    const projectId = id;
     setUpdatingProjectSkill(getSkillKey(skill));
     try {
-      await forEachCopy(skill, (variant) =>
-        api.updateProjectSkillFromCenter(id, variant.relative_path, variant.agent)
-      );
-      if (skill.status === "project_newer") {
-        toast.success(t("project.resetFromCenterSuccess", { name: skill.name }));
-      } else {
-        toast.success(t("project.updateProjectSuccess", { name: skill.name }));
-      }
-      await Promise.all([loadSkills(), refreshProjects()]);
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, t("common.error")));
+      await runProjectUpdates([skill], hostId, projectId, skill.name);
     } finally {
+      projectUpdateInFlightRef.current = false;
       setUpdatingProjectSkill(null);
     }
   };
@@ -725,31 +765,29 @@ export function ProjectDetail() {
   };
 
   const handleBatchUpdateProject = async () => {
-    if (!id) return;
+    if (!id || projectUpdateInFlightRef.current) return;
+    projectUpdateInFlightRef.current = true;
+    const hostId = activeHostId;
+    const projectId = id;
     setBatchUpdatingProject(true);
     try {
-      let updated = 0;
-      let failed = 0;
-      for (const skill of selectedSkills) {
-        const canUpdateProject = isProjectUpdatable(skill.status);
-        if (!canUpdateProject) continue;
-        try {
-          await forEachCopy(skill, (variant) =>
-            api.updateProjectSkillFromCenter(id, variant.relative_path, variant.agent)
-          );
-          updated++;
-        } catch {
-          failed++;
-        }
-      }
-      if (updated > 0) {
-        toast.success(t("project.batchUpdatedProject", { count: updated }));
-      }
-      if (failed > 0) {
-        toast.error(t("project.batchUpdateProjectFailed", { count: failed }));
-      }
-      await Promise.all([loadSkills(), refreshProjects()]);
+      await runProjectUpdates(selectedSkills, hostId, projectId);
     } finally {
+      projectUpdateInFlightRef.current = false;
+      setBatchUpdatingProject(false);
+    }
+  };
+
+  const handleUpdateAllProjectSkills = async () => {
+    if (!id || projectUpdateInFlightRef.current || updatableProjectVariantCount === 0) return;
+    projectUpdateInFlightRef.current = true;
+    const hostId = activeHostId;
+    const projectId = id;
+    setBatchUpdatingProject(true);
+    try {
+      await runProjectUpdates(groupedSkills, hostId, projectId);
+    } finally {
+      projectUpdateInFlightRef.current = false;
       setBatchUpdatingProject(false);
     }
   };
@@ -923,6 +961,16 @@ export function ProjectDetail() {
                 {t("project.agentsButton")}
               </button>
             )}
+
+            <button
+              onClick={handleUpdateAllProjectSkills}
+              disabled={updatableProjectVariantCount === 0 || batchUpdatingProject || updatingProjectSkill !== null}
+              className="app-toolbar-button app-toolbar-button-secondary"
+              title={t("project.updateAllFromLibraryHint")}
+            >
+              {batchUpdatingProject ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              {t("project.updateAllFromLibrary", { count: updatableProjectVariantCount })}
+            </button>
 
             <div className="relative shrink-0">
               <button
@@ -1157,7 +1205,7 @@ export function ProjectDetail() {
               isMultiSelect,
               isSelected: selectedIds.has(skillKey),
               isUpdatingCenter: updatingCenterSkill === skillKey,
-              isUpdatingProject: updatingProjectSkill === skillKey,
+              isUpdatingProject: batchUpdatingProject || updatingProjectSkill !== null,
               isToggling: togglingSkill === skillKey,
               pendingAgent:
                 togglingAgentTarget?.skillKey === skillKey

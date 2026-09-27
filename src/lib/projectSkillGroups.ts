@@ -100,7 +100,21 @@ export function isCenterUpdatable(status: ProjectSkill["sync_status"]): boolean 
 
 /** The library has a version the project copy can be updated from. */
 export function isProjectUpdatable(status: ProjectSkill["sync_status"]): boolean {
-  return status === "project_newer" || status === "center_newer" || status === "diverged";
+  return status === "center_newer";
+}
+
+/** Library updates are safe only for deployed copies where the library is newer. */
+export function getProjectUpdateCandidates(skill: ProjectSkillGroup): ProjectSkill[] {
+  return skill.effectiveVariants.filter(
+    (variant) => variant.in_center && isProjectUpdatable(variant.sync_status)
+  );
+}
+
+/** Deployed copies with local changes are skipped until the user reviews them. */
+export function getProjectUpdateReviewCount(skill: ProjectSkillGroup): number {
+  return skill.effectiveVariants.filter(
+    (variant) => variant.in_center && (variant.sync_status === "project_newer" || variant.sync_status === "diverged")
+  ).length;
 }
 
 export function getAssignedAgents(variants: ProjectSkill[]) {

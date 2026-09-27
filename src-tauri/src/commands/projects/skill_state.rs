@@ -269,6 +269,12 @@ mod tests {
 
         let library_md = tmp.path().join("library/x/SKILL.md");
         fs::write(&library_md, "---\nname: x\n---\nnew\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&library_md)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3))
+            .unwrap();
         update_vendored_x(&store, &record).unwrap();
 
         let vendored = project.join(".agents/skills/x");
