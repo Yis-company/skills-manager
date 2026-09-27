@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.42.0
+
+### Minor Changes
+
+- [#46](https://github.com/Yis-company/skills-manager/pull/46) [`57949ce`](https://github.com/Yis-company/skills-manager/commit/57949ce1d5ec2b261b5138f7cfc440f5b82d566a) Thanks [@ybtam](https://github.com/ybtam)! - Install a matching remote connection CLI over SSH when its version differs from the desktop app, then reconnect. Desktop update checks and downloads now use the Yis-company fork.
+
 ## 1.41.0
 
 ### Minor Changes
