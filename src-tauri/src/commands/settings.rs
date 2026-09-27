@@ -4,8 +4,8 @@ use std::sync::Arc;
 use tauri::{Manager, State};
 
 use crate::core::{
-    central_repo, error::AppError, host::HostCtx, log_sanitize, skill_store::SkillStore,
-    skillssh_api,
+    app_release, central_repo, error::AppError, host::HostCtx, log_sanitize,
+    skill_store::SkillStore, skillssh_api,
 };
 
 #[derive(serde::Serialize)]
@@ -174,7 +174,7 @@ pub async fn check_app_update(
         let client = skillssh_api::build_http_client(proxy_url.as_deref(), 15);
 
         let resp: serde_json::Value = client
-            .get("https://api.github.com/repos/A-and-Brian/skills-manager/releases/latest")
+            .get(app_release::latest_release_api_url())
             .send()
             .map_err(|e| AppError::network(format!("Network error: {e}")))?
             .json()
@@ -184,9 +184,10 @@ pub async fn check_app_update(
             .as_str()
             .ok_or_else(|| AppError::network("No tag_name in response"))?;
         let latest_version = tag.strip_prefix('v').unwrap_or(tag).to_string();
+        let fallback_url = app_release::releases_url();
         let release_url = resp["html_url"]
             .as_str()
-            .unwrap_or("https://github.com/A-and-Brian/skills-manager/releases")
+            .unwrap_or(&fallback_url)
             .to_string();
 
         let has_update = version_gt(&latest_version, &current_version);

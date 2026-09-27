@@ -9,6 +9,7 @@ export const ERROR_KINDS = [
   "cancelled",
   "internal",
   "target_conflict",
+  "remote_version_mismatch",
 ] as const;
 
 export type ErrorKind = (typeof ERROR_KINDS)[number];

@@ -1364,6 +1364,25 @@ impl SkillStore {
         Ok(())
     }
 
+    /// Update only the installed CLI path when the connection fields still
+    /// match the row used by the installer. Name edits are intentionally
+    /// ignored so a concurrent rename is preserved.
+    pub fn set_remote_host_cli_path_if_unchanged(
+        &self,
+        id: &str,
+        ssh_target: &str,
+        previous_cli_path: Option<&str>,
+        cli_path: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE remote_hosts SET cli_path = ?4
+             WHERE id = ?1 AND ssh_target = ?2 AND cli_path IS ?3",
+            params![id, ssh_target, previous_cli_path, cli_path],
+        )?;
+        Ok(changed == 1)
+    }
+
     pub fn delete_remote_host(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM remote_hosts WHERE id = ?1", params![id])?;

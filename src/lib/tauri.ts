@@ -991,6 +991,12 @@ export interface RemoteProbe {
   app_version: string;
 }
 
+export type RemoteCliInstallStage = "checking" | "downloading" | "installing";
+export interface RemoteCliInstallProgress {
+  host_id: string;
+  stage: RemoteCliInstallStage;
+}
+
 export const remoteHostsList = () => invoke<RemoteHost[]>("remote_hosts_list");
 
 export const remoteHostAdd = (name: string, sshTarget: string, cliPath?: string) =>
@@ -1005,6 +1011,10 @@ export const remoteHostRemove = (hostId: string) =>
 /** Rejects with the reason the host cannot be used (unreachable, no CLI, not POSIX). */
 export const remoteHostProbe = (hostId: string) =>
   invoke<RemoteProbe>("remote_host_probe", { hostId });
+
+/** Install this app's matching CLI on a host; always runs on this computer. */
+export const remoteHostInstallCli = (hostId: string) =>
+  invokeLocal<RemoteHost>("remote_host_install_cli", { hostId });
 
 // ── Remote session (one live `serve --stdio` connection) ──
 

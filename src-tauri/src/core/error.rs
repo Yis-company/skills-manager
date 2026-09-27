@@ -47,6 +47,8 @@ pub enum ErrorKind {
     /// A write was refused because the target is not ours to replace. Always
     /// carries `ErrorDetails::TargetConflict`.
     TargetConflict,
+    /// The remote CLI answers, but is not the version required by this app.
+    RemoteVersionMismatch,
 }
 
 impl fmt::Display for AppError {

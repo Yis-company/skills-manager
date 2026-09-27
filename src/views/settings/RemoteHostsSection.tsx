@@ -23,7 +23,7 @@ type RemoteProbeState =
 
 export function RemoteHostsSection() {
   const { t } = useTranslation();
-  const { remoteHosts, refreshRemoteHosts, activeHost, connectingHostId, switchHost } = useApp();
+  const { remoteHosts, refreshRemoteHosts, activeHost, connectingHostId, updatingRemoteCliHostId, openRemoteCliUpdate, switchHost } = useApp();
   const [form, setForm] = useState<RemoteHostForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [probes, setProbes] = useState<Record<string, RemoteProbeState>>({});
@@ -94,12 +94,27 @@ export function RemoteHostsSection() {
     );
   };
 
+  const renderUpdateAction = (host: api.RemoteHost) => {
+    const probe = probes[host.id];
+    if (probe?.state !== "ok" || probe.result.compatible) return null;
+    return (
+      <button
+        onClick={() => openRemoteCliUpdate(host.id)}
+        disabled={updatingRemoteCliHostId !== null || connectingHostId !== null}
+        className={`${actionButtonClass} border-amber-500/40 bg-amber-500/10 text-amber-600`}
+      >
+        {t("remoteHosts.reviewUpdate")}
+      </button>
+    );
+  };
+
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="app-section-title">{t("remoteHosts.title")}</h2>
         <button
           onClick={() => setForm(EMPTY_HOST_FORM)}
+          disabled={updatingRemoteCliHostId !== null}
           className="flex items-center gap-1 text-[13px] text-accent hover:text-accent-light transition-colors font-medium outline-none"
         >
           <Plus className="w-3.5 h-3.5" />
@@ -124,6 +139,7 @@ export function RemoteHostsSection() {
               type="text"
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              disabled={updatingRemoteCliHostId !== null}
               placeholder={t("remoteHosts.form.namePlaceholder")}
               className={`${fieldClass} w-full`}
             />
@@ -134,6 +150,7 @@ export function RemoteHostsSection() {
               type="text"
               value={form.sshTarget}
               onChange={(e) => setForm({ ...form, sshTarget: e.target.value })}
+              disabled={updatingRemoteCliHostId !== null}
               placeholder={t("remoteHosts.form.sshTargetPlaceholder")}
               className={`${fieldClass} w-full font-mono`}
             />
@@ -144,6 +161,7 @@ export function RemoteHostsSection() {
               type="text"
               value={form.cliPath}
               onChange={(e) => setForm({ ...form, cliPath: e.target.value })}
+              disabled={updatingRemoteCliHostId !== null}
               placeholder={t("remoteHosts.form.cliPathPlaceholder")}
               className={`${fieldClass} w-full font-mono`}
             />
@@ -151,7 +169,7 @@ export function RemoteHostsSection() {
           <div className="flex justify-end">
             <button
               onClick={handleSave}
-              disabled={saving || !form.name.trim() || !form.sshTarget.trim()}
+              disabled={saving || updatingRemoteCliHostId !== null || !form.name.trim() || !form.sshTarget.trim()}
               className={`${actionButtonClass} bg-accent text-white border-accent hover:opacity-90 disabled:opacity-50`}
             >
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
@@ -183,7 +201,7 @@ export function RemoteHostsSection() {
               {activeHost?.id === host.id ? (
                 <button
                   onClick={() => void switchHost(null)}
-                  disabled={connectingHostId !== null}
+                  disabled={connectingHostId !== null || updatingRemoteCliHostId !== null}
                   className={`${actionButtonClass} border-accent-border bg-accent-bg text-accent`}
                 >
                   <Unplug className="w-3 h-3" />
@@ -192,7 +210,7 @@ export function RemoteHostsSection() {
               ) : (
                 <button
                   onClick={() => void switchHost(host.id)}
-                  disabled={connectingHostId !== null}
+                  disabled={connectingHostId !== null || updatingRemoteCliHostId !== null}
                   className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
                 >
                   {connectingHostId === host.id ? (
@@ -205,16 +223,18 @@ export function RemoteHostsSection() {
               )}
               <button
                 onClick={() => handleProbe(host)}
-                disabled={probes[host.id]?.state === "checking"}
+                disabled={probes[host.id]?.state === "checking" || updatingRemoteCliHostId !== null || connectingHostId !== null}
                 className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
               >
                 <RefreshCw className="w-3 h-3" />
                 {t("remoteHosts.probe")}
               </button>
+              {renderUpdateAction(host)}
               <button
                 onClick={() =>
                   setForm({ id: host.id, name: host.name, sshTarget: host.ssh_target, cliPath: host.cli_path ?? "" })
                 }
+                disabled={updatingRemoteCliHostId !== null || connectingHostId !== null}
                 className="shrink-0 p-1 text-muted hover:text-accent outline-none"
                 title={t("remoteHosts.edit")}
               >
@@ -222,6 +242,7 @@ export function RemoteHostsSection() {
               </button>
               <button
                 onClick={() => handleRemove(host)}
+                disabled={updatingRemoteCliHostId !== null}
                 className="shrink-0 p-1 text-muted hover:text-red-400 outline-none"
                 title={t("remoteHosts.remove")}
               >

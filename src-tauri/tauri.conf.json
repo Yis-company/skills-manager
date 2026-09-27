@@ -32,7 +32,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU4MTJEMDAxNzk2NkU5NzIKUldSeTZXWjVBZEFTNkJSR084a2dibHdKQlRPcVZDb1F3Yk1ZTkpzTDhyUXlXdVlCaFFWakxJRFkK",
       "endpoints": [
-        "https://github.com/A-and-Brian/skills-manager/releases/latest/download/latest.json"
+        "https://github.com/Yis-company/skills-manager/releases/latest/download/latest.json"
       ]
     }
   },

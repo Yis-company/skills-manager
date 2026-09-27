@@ -4,7 +4,7 @@ const tauriInvoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriInvoke }));
 
 import { getActiveHostId, invoke, invokeHost, setActiveHostId, trackHost } from "./hostCall";
-import { getCentralRepoPendingPath, getLocalSettings, getSettings } from "./tauri";
+import { getCentralRepoPendingPath, getLocalSettings, getSettings, remoteHostInstallCli } from "./tauri";
 
 beforeEach(() => {
   tauriInvoke.mockReset();
@@ -101,6 +101,11 @@ describe("invoke with a remote host active", () => {
     expect(getActiveHostId()).toBeNull();
     await invoke("get_managed_skills");
     expect(tauriInvoke).toHaveBeenCalledWith("get_managed_skills", undefined, undefined);
+  });
+
+  it("installs a remote host CLI on this computer even while a remote host is active", async () => {
+    await remoteHostInstallCli("host-2");
+    expect(tauriInvoke).toHaveBeenCalledWith("remote_host_install_cli", { hostId: "host-2" }, undefined);
   });
 });
 

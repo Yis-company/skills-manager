@@ -1,3 +1,4 @@
+pub mod app_release;
 pub mod app_state;
 pub mod audit_log;
 pub mod auto_backup;
@@ -27,6 +28,7 @@ pub mod project_deploy;
 pub mod project_scanner;
 pub mod project_skill_match;
 pub mod remote_host;
+pub mod remote_install;
 pub mod remote_session;
 pub mod removals;
 pub mod repo_lock;
