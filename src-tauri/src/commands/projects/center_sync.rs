@@ -332,9 +332,12 @@ fn ensure_not_project_newer(
     skill: &project_scanner::ProjectSkillInfo,
     managed: &SkillRecord,
 ) -> Result<(), AppError> {
-    if classify_sync_status(skill, Some(managed)) == "project_newer" {
+    if matches!(
+        classify_sync_status(skill, Some(managed)).as_str(),
+        "project_newer" | "diverged"
+    ) {
         return Err(AppError::invalid_input(
-            "Project skill is newer than the Skills Center version",
+            "Project skill has local changes that require review before updating",
         ));
     }
     Ok(())
@@ -391,6 +394,12 @@ mod tests {
         let vendored_md = project.join(".agents/skills/x/SKILL.md");
 
         fs::write(&library_md, "---\nname: x\n---\nnew\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&library_md)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3))
+            .unwrap();
         update_vendored_x(&store, &record).unwrap();
 
         assert_eq!(
@@ -412,6 +421,22 @@ mod tests {
             .unwrap();
         let err = update_vendored_x(&store, &record).unwrap_err();
 
+        assert_eq!(err.kind, ErrorKind::InvalidInput);
+        assert_eq!(
+            fs::read_to_string(&vendored_md).unwrap(),
+            "edited in the repo"
+        );
+
+        // Same timestamps are ambiguous: an Update All snapshot can become
+        // diverged between scanning and applying, so it must remain protected.
+        let center_time = fs::metadata(&library_md).unwrap().modified().unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&vendored_md)
+            .unwrap()
+            .set_modified(center_time)
+            .unwrap();
+        let err = update_vendored_x(&store, &record).unwrap_err();
         assert_eq!(err.kind, ErrorKind::InvalidInput);
         assert_eq!(
             fs::read_to_string(&vendored_md).unwrap(),

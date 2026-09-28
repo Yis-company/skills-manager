@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ProjectSkill } from "./tauri";
 import {
   filterProjectSkillGroups,
+  getProjectUpdateCandidates,
+  getProjectUpdateReviewCount,
   getAgentDotTargets,
   getAssignedAgents,
   groupProjectSkills,
@@ -105,12 +107,37 @@ describe("isCenterUpdatable / isProjectUpdatable", () => {
   it.each([
     ["project_only", true, false],
     ["in_sync", false, false],
-    ["project_newer", true, true],
+    ["project_newer", true, false],
     ["center_newer", false, true],
-    ["diverged", true, true],
+    ["diverged", true, false],
   ] as const)("%s: center %s, project %s", (status, center, project) => {
     expect(isCenterUpdatable(status)).toBe(center);
     expect(isProjectUpdatable(status)).toBe(project);
+  });
+});
+
+describe("project update candidates", () => {
+  it("keeps mixed grouped copies and vendored aliases scoped to eligible effective variants", () => {
+    const localCopy = variant("claude_code", "Claude Code", { sync_status: "project_newer" });
+    const safeCopy = variant("cursor", "Cursor", { sync_status: "center_newer" });
+    const linkedToVendored = variant("pi", "Pi", { alias_of: "review", sync_status: "diverged" });
+    const [mixed] = groupProjectSkills([localCopy, safeCopy]);
+    const [vendoredGroup] = groupProjectSkills([vendored, linkedToVendored]);
+
+    expect(getProjectUpdateCandidates(mixed)).toEqual([safeCopy]);
+    expect(getProjectUpdateReviewCount(mixed)).toBe(1);
+    expect(getProjectUpdateCandidates(vendoredGroup)).toEqual([]);
+    expect(getProjectUpdateReviewCount(vendoredGroup)).toBe(0);
+  });
+
+  it("excludes unlinked and project-only copies", () => {
+    const [group] = groupProjectSkills([
+      variant("claude_code", "Claude Code", { in_center: false, center_skill_id: null, sync_status: "center_newer" }),
+      variant("cursor", "Cursor", { sync_status: "project_only" }),
+    ]);
+
+    expect(getProjectUpdateCandidates(group)).toEqual([]);
+    expect(getProjectUpdateReviewCount(group)).toBe(0);
   });
 });
 

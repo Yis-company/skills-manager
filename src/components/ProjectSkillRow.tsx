@@ -1,4 +1,4 @@
-import { Download, FileText, Loader2, RotateCcw, Square, SquareCheck, Trash2, Upload } from "lucide-react";
+import { Download, FileText, Loader2, Square, SquareCheck, Trash2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../utils";
 import { ToggleSwitch } from "./ToggleSwitch";
@@ -6,7 +6,7 @@ import { ProjectAgentDots } from "./ProjectAgentDots";
 import { CreatorBadge } from "./CreatorBadge";
 import { getSyncStatusMeta, type ProjectSkillItemProps } from "./projectSkillItem";
 import { getTagColor } from "../lib/skillTags";
-import { getAssignedAgents, isCenterUpdatable, isProjectUpdatable } from "../lib/projectSkillGroups";
+import { getAssignedAgents, getProjectUpdateCandidates, isCenterUpdatable } from "../lib/projectSkillGroups";
 
 /** A skill in the project list view. */
 export function ProjectSkillRow({
@@ -32,7 +32,7 @@ export function ProjectSkillRow({
 }: ProjectSkillItemProps) {
   const { t } = useTranslation();
   const canUpdateCenter = isCenterUpdatable(skill.status);
-  const canUpdateProject = isProjectUpdatable(skill.status);
+  const canUpdateProject = getProjectUpdateCandidates(skill).length > 0;
   const statusMeta = getSyncStatusMeta(t, skill.status);
   const assignedAgents = getAssignedAgents(skill.variants);
 
@@ -145,16 +145,10 @@ export function ProjectSkillRow({
                 onClick={(e) => { e.stopPropagation(); onUpdateProject(skill); }}
                 disabled={isUpdatingCenter || isUpdatingProject}
                 className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
-                title={
-                  skill.status === "project_newer"
-                    ? t("project.resetFromCenter")
-                    : t("project.updateProject")
-                }
+                title={t("project.updateProject")}
               >
                 {isUpdatingProject ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : skill.status === "project_newer" ? (
-                  <RotateCcw className="h-3.5 w-3.5" />
                 ) : (
                   <Download className="h-3.5 w-3.5" />
                 )}
