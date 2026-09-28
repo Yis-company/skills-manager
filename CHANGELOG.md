@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.43.0
+
+### Minor Changes
+
+- [#48](https://github.com/Yis-company/skills-manager/pull/48) [`038536d`](https://github.com/Yis-company/skills-manager/commit/038536dcdb4db38f0a9984715c929efac44b22d5) Thanks [@ybtam](https://github.com/ybtam)! - Expand the app into Agents Manager with instruction bundles and MCP configuration alongside skills, using the existing project and SSH workspaces. Add reviewed deployments, external credential references, CLI operations and backup conflict handling while retaining existing application identity and paths.
+
+- [#50](https://github.com/Yis-company/skills-manager/pull/50) [`a8690fe`](https://github.com/Yis-company/skills-manager/commit/a8690fe76b7ab4e0dcdd75098ea232c8df12e2e2) Thanks [@ybtam](https://github.com/ybtam)! - Add an Update CLI action for every saved remote host and show when its CLI already matches the app version.
+
+### Patch Changes
+
+- [#51](https://github.com/Yis-company/skills-manager/pull/51) [`5f14e35`](https://github.com/Yis-company/skills-manager/commit/5f14e35f6583ee30777235e061d92bdeb2a4ca4f) Thanks [@ybtam](https://github.com/ybtam)! - Add Update All from Library to project workspaces while preserving locally changed skill copies. Persist global agent skill removals across restarts and report removal failures accurately.
+
 ## 1.42.0
 
 ### Minor Changes
