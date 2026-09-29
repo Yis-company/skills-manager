@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.44.0
+
+### Minor Changes
+
+- [#55](https://github.com/Yis-company/skills-manager/pull/55) [`cc50d80`](https://github.com/Yis-company/skills-manager/commit/cc50d807e5f31508d8299c812391a2f437199dc8) Thanks [@ybtam](https://github.com/ybtam)! - Add a project Git workflow to review and commit selected files, push a branch, and create or open a GitHub pull request on the project's host.
+
+### Patch Changes
+
+- [#52](https://github.com/Yis-company/skills-manager/pull/52) [`6fe2e31`](https://github.com/Yis-company/skills-manager/commit/6fe2e3133e621653a2fec913c304ee61b2f3705e) Thanks [@ybtam](https://github.com/ybtam)! - Fix macOS release builds, which failed to sign since v1.41.0, so macOS downloads and in-app updates are published again.
+
 ## 1.43.0
 
 ### Minor Changes
