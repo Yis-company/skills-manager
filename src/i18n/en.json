@@ -608,6 +608,21 @@
         "pending": "Pending",
         "imported": "Imported"
       }
+    },
+    "market": {
+      "selectMode": "Select skills",
+      "exitSelectMode": "Cancel selection",
+      "selectAllPage": "Select all on this page",
+      "installSelected": "Install selected ({{count}})",
+      "installingProgress": "Installing {{completed}}/{{total}}",
+      "stopInstalling": "Stop",
+      "batchSummary": "Installed {{installed}} of {{total}} skills",
+      "batchStopped": "Stopped after {{installed}} of {{total}} skills",
+      "batchFailureDetail": "{{name}}: {{error}}",
+      "batchRetry": "Retry failed and unstarted ({{count}})",
+      "batchInstallError": "Could not install {{count}} skills",
+      "refreshError": "The install results were saved, but the library could not be refreshed.",
+      "selectSkill": "Select {{name}}"
     }
   },
   "settings": {
@@ -1073,12 +1088,12 @@
     "deleteSkill": "Delete skill",
     "deleteSkillConfirm": "Permanently delete skill \"{{name}}\"? This action cannot be undone.",
     "skillDeleted": "\"{{name}}\" deleted",
-    "selectMode": "Select",
+    "selectMode": "Select skills",
     "cancelSelect": "Exit Select",
     "selectedCount": "{{count}} selected",
     "selectHint": "Click skills to select",
-    "deleteSelected": "Delete {{count}}",
-    "batchDeleteConfirm": "Permanently delete {{count}} selected skills? This action cannot be undone.",
+    "deleteSelected": "Remove selected ({{count}})",
+    "batchDeleteConfirm": "Remove {{count}} selected skills from {{project}}? This permanently deletes their project copies across agents, including local-only files. Central library copies are kept.",
     "batchDeleted": "{{count}} skills deleted",
     "batchDeleteFailed": "{{count}} skills failed to delete",
     "batchEnable": "Enable {{count}}",
@@ -1160,7 +1175,8 @@
       "lockedReason": "Vendored copy (.agents/skills) — shared by {{agents}}",
       "commitHint": "Commit .agents/skills so everyone who clones the project gets these files.",
       "windowsNote": "Windows: agent links need Developer Mode. With git core.symlinks=false, links check out as plain files; delete them and apply agents again."
-    }
+    },
+    "batchDeletePartialFailure": "{{deleted}} removed; {{failed}} failed: {{details}}. Failed skills remain selected for retry."
   },
   "presetActions": {
     "button": "Apply Preset",
@@ -1223,13 +1239,13 @@
     "addButton": "Add {{count}} skills",
     "addedToast": "Added {{count}} skills",
     "removedToast": "Removed {{name}}",
-    "selectMode": "Select",
+    "selectMode": "Select skills",
     "cancelSelect": "Cancel selection",
     "selectHint": "Click skills to select",
     "selectedCount": "{{count}} selected",
     "selectAll": "Select All",
     "deselectAll": "Deselect All",
-    "deleteSelected": "Remove {{count}}",
+    "deleteSelected": "Remove from {{agent}} ({{count}})",
     "batchRemoveConfirm": "Remove {{count}} selected skills from {{agent}}? This only unlinks them from the global workspace; central library files are kept.",
     "batchRemoved": "{{count}} skills removed",
     "batchRemoveFailed": "{{count}} skills failed to remove",
@@ -1257,11 +1273,14 @@
         "centerNewer": "Center changed",
         "diverged": "Conflict"
       },
-      "deleteLocalSelected": "Delete {{count}} permanently",
+      "deleteLocalSelected": "Delete local files ({{count}})",
       "deleteLocalBatchConfirm": "Permanently delete {{count}} local skills from {{agent}}? This removes the local files and cannot be undone. Copies in your library, if any, are not affected.",
       "deletedLocalBatch": "{{count}} local skills deleted",
-      "deleteLocalBatchFailed": "{{count}} local skills failed to delete"
-    }
+      "deleteLocalBatchFailed": "{{count}} local skills failed to delete",
+      "deleteLocalBatchPartialFailure": "{{count}} failed to delete from {{agent}}: {{details}}. Failed skills remain selected for retry."
+    },
+    "batchRemovePartialFailure": "{{count}} failed to remove from {{agent}}: {{details}}. Failed skills remain selected for retry.",
+    "batchRefreshFailed": "Removal results were saved, but the workspace could not be refreshed. Refresh the list to see the latest state."
   },
   "remoteHosts": {
     "title": "Remote Hosts",

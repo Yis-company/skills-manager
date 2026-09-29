@@ -33,6 +33,7 @@ interface MultiSelectToolbarProps {
   labels: MultiSelectToolbarLabels;
   onSelectAll: () => void;
   onCancel: () => void;
+  disabled?: boolean;
 }
 
 const TONE_CLASS: Record<NonNullable<BulkAction["tone"]>, string> = {
@@ -52,13 +53,14 @@ export function MultiSelectToolbar({
   labels,
   onSelectAll,
   onCancel,
+  disabled = false,
 }: MultiSelectToolbarProps) {
   const hasSelection = selectedCount > 0;
   const inlineActions = hasSelection ? actions : [];
   const menuActions = hasSelection ? overflowActions : [];
 
   return (
-    <div className="flex items-center gap-2 px-1 py-1.5">
+    <div className="flex flex-wrap items-center gap-2 px-1 py-1.5">
       <span className="text-[13px] text-muted tabular-nums">
         {hasSelection ? labels.selected : labels.hint}
       </span>
@@ -67,7 +69,7 @@ export function MultiSelectToolbar({
         <button
           key={action.key}
           onClick={action.onSelect}
-          disabled={action.disabled || action.busy}
+          disabled={disabled || action.disabled || action.busy}
           className={cn(
             "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
             TONE_CLASS[action.tone ?? "secondary"]
@@ -91,19 +93,21 @@ export function MultiSelectToolbar({
               : action.icon,
             onSelect: action.onSelect,
             danger: action.tone === "danger",
-            disabled: action.disabled || action.busy,
+            disabled: disabled || action.disabled || action.busy,
           }))}
         />
       )}
 
       <button
         onClick={onSelectAll}
+        disabled={disabled}
         className="rounded-md px-2.5 py-1 text-[13px] font-medium text-muted hover:text-secondary hover:bg-surface-hover transition-colors"
       >
         {isAllSelected ? labels.deselectAll : labels.selectAll}
       </button>
       <button
         onClick={onCancel}
+        disabled={disabled}
         className="rounded-md px-2.5 py-1 text-[13px] font-medium text-muted hover:text-secondary hover:bg-surface-hover transition-colors"
       >
         {labels.cancel}

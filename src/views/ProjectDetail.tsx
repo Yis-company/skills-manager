@@ -109,9 +109,25 @@ export function ProjectDetail() {
   const [showAgentsDialog, setShowAgentsDialog] = useState(false);
   const [showGitDialog, setShowGitDialog] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSkillGroup | null>(null);
-  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+  const [batchDeleteTarget, setBatchDeleteTarget] = useState<{
+    hostId: string | null;
+    projectId: string;
+    projectName: string;
+    viewVersion: number;
+    skills: ProjectSkillGroup[];
+  } | null>(null);
+  const [batchDeleteRunning, setBatchDeleteRunning] = useState(false);
+  const [batchDeleteFailure, setBatchDeleteFailure] = useState<{
+    deleted: number;
+    failures: Array<{ name: string; error: string }>;
+  } | null>(null);
+  useEffect(() => {
+    setBatchDeleteTarget(null);
+    setBatchDeleteFailure(null);
+  }, [activeHostId, id]);
   const [batchTagDialogOpen, setBatchTagDialogOpen] = useState(false);
   const [batchToggling, setBatchToggling] = useState(false);
+  const batchSelectionLocked = batchDeleteRunning || batchDeleteTarget !== null || batchToggling || batchUpdatingCenter || batchUpdatingProject;
   const PROJECT_ADD_CALLOUT_KEY = "skills-manager.projectAddCalloutDismissed";
   const [showAddCallout, setShowAddCallout] = useState(() => {
     try {
@@ -181,14 +197,15 @@ export function ProjectDetail() {
     anyDisabled,
     handleSelectAll,
     exitMultiSelect,
+    removeSelected,
   } = useMultiSelect({
     items: groupedSkills,
     filtered,
     getKey: getSkillKey,
     isItemActive: (s) => s.enabledCount === s.totalCount,
     filterSignal: JSON.stringify([search, [...tagFilters].sort(), filterMode]),
-    scopeSignal: id ?? "",
-    escapeEnabled: !batchTagDialogOpen && !batchDeleteConfirm,
+    scopeSignal: `${activeHostId ?? "local"}:${id ?? ""}`,
+    escapeEnabled: !batchTagDialogOpen && !batchDeleteTarget && !batchSelectionLocked,
   });
 
   const exportTargets = useMemo(() => {
@@ -660,29 +677,44 @@ export function ProjectDetail() {
   };
 
   const handleBatchDeleteProject = async () => {
-    if (!id) return;
-    const hostId = activeHostId;
-    const projectId = id;
-    const viewVersion = viewIdentityRef.current.version;
+    const target = batchDeleteTarget;
+    if (!target || batchDeleteRunning) return;
+    const { hostId, projectId, viewVersion, skills: toDelete } = target;
     const isCurrentView = () => mountedRef.current && viewIdentityRef.current.version === viewVersion;
+    if (!isCurrentView()) {
+      setBatchDeleteTarget(null);
+      return;
+    }
+    setBatchDeleteRunning(true);
+    setBatchDeleteFailure(null);
     let deleted = 0;
-    let failed = 0;
-    for (const skill of selectedSkills) {
-      const result = await deleteProjectCopies(skill, hostId, projectId);
-      if (result.error) failed++;
-      else deleted++;
+    const failures: Array<{ name: string; error: string }> = [];
+    const deletedIds: string[] = [];
+    try {
+      for (const skill of toDelete) {
+        const result = await deleteProjectCopies(skill, hostId, projectId);
+        if (result.error) failures.push({ name: skill.name, error: getErrorMessage(result.error, t("common.error")) });
+        else {
+          deleted++;
+          deletedIds.push(skill.id);
+        }
+      }
+      if (isCurrentView()) {
+        removeSelected(deletedIds);
+        setBatchDeleteFailure(failures.length > 0 ? { deleted, failures } : null);
+        if (deleted > 0) toast.success(t("project.batchDeleted", { count: deleted }));
+        if (failures.length > 0) {
+          toast.error(t("project.batchDeleteFailed", { count: failures.length }));
+        } else if (selectedIds.size === deletedIds.length) {
+          exitMultiSelect();
+        }
+        setBatchDeleteTarget(null);
+      }
+    } finally {
+      if (isCurrentView()) setBatchDeleteTarget(null);
+      setBatchDeleteRunning(false);
+      void refreshAfterProjectDelete(hostId, projectId);
     }
-    if (deleted > 0 && isCurrentView()) {
-      toast.success(t("project.batchDeleted", { count: deleted }));
-    }
-    if (failed > 0 && isCurrentView()) {
-      toast.error(t("project.batchDeleteFailed", { count: failed }));
-    }
-    if (isCurrentView()) {
-      exitMultiSelect();
-      setBatchDeleteConfirm(false);
-    }
-    void refreshAfterProjectDelete(hostId, projectId);
   };
 
   const handleBatchToggleProject = async () => {
@@ -886,6 +918,7 @@ export function ProjectDetail() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                disabled={batchSelectionLocked}
                 placeholder={t("project.searchPlaceholder")}
                 className="app-input w-full pl-8 font-medium"
                 autoCapitalize="none"
@@ -897,6 +930,7 @@ export function ProjectDetail() {
               {(["all", "enabled", "disabled"] as const).map((mode) => (
                 <button
                   key={mode}
+                  disabled={batchSelectionLocked}
                   onClick={() => setFilterMode(mode)}
                   className={cn(
                     "app-segmented-button",
@@ -910,6 +944,7 @@ export function ProjectDetail() {
 
             <div className="app-segmented app-toolbar-segmented shrink-0">
               <button
+                disabled={batchSelectionLocked}
                 onClick={loadSkills}
                 className="rounded-md p-2 text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary"
                 title={t("common.refresh")}
@@ -942,6 +977,7 @@ export function ProjectDetail() {
               <button
                 type="button"
                 aria-pressed={isMultiSelect}
+                disabled={batchSelectionLocked}
                 onClick={() => isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true)}
                 className={cn(
                   "app-segmented-button inline-flex items-center gap-1.5 hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-border",
@@ -996,7 +1032,7 @@ export function ProjectDetail() {
                 <Plus className="h-3.5 w-3.5" />
                 {t("project.addSkill")}
               </button>
-              {showAddCallout && groupedSkills.length > 0 && (
+              {showAddCallout && groupedSkills.length > 0 && !isMultiSelect && (
                 <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-border bg-surface p-3 text-[12px] leading-snug shadow-lg">
                   <button
                     onClick={dismissAddCallout}
@@ -1016,6 +1052,7 @@ export function ProjectDetail() {
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[12px] text-muted">{t("mySkills.tags.filter")}</span>
             <button
+              disabled={batchSelectionLocked}
               onClick={() => setTagFilters(new Set())}
               className={cn(
                 "rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
@@ -1030,6 +1067,7 @@ export function ProjectDetail() {
               const isActive = tagFilters.has(UNTAGGED_FILTER);
               return (
                 <button
+                  disabled={batchSelectionLocked}
                   onClick={() => {
                     setTagFilters((prev) => {
                       const next = new Set(prev);
@@ -1056,6 +1094,7 @@ export function ProjectDetail() {
               return (
                 <button
                   key={tag}
+                  disabled={batchSelectionLocked}
                   onClick={() => {
                     setTagFilters((prev) => {
                       const next = new Set(prev);
@@ -1128,6 +1167,24 @@ export function ProjectDetail() {
                   onSelect: handleBatchUpdateCenter,
                 }]
               : []),
+            {
+              key: "delete",
+              tone: "danger" as const,
+              label: t("project.deleteSelected", { count: selectedIds.size }),
+              icon: <Trash2 className="h-3.5 w-3.5" />,
+              busy: batchDeleteRunning,
+              onSelect: () => {
+                if (!id || batchSelectionLocked) return;
+                setBatchDeleteFailure(null);
+                setBatchDeleteTarget({
+                  hostId: activeHostId,
+                  projectId: id,
+                  projectName: project?.name ?? "",
+                  viewVersion: viewIdentityRef.current.version,
+                  skills: [...selectedSkills],
+                });
+              },
+            },
           ]}
           overflowActions={[
             ...(selectedCenterSkills.length > 0
@@ -1138,13 +1195,6 @@ export function ProjectDetail() {
                   onSelect: () => setBatchTagDialogOpen(true),
                 }]
               : []),
-            {
-              key: "delete",
-              tone: "danger" as const,
-              label: t("project.deleteSelected", { count: selectedIds.size }),
-              icon: <Trash2 className="h-3.5 w-3.5" />,
-              onSelect: () => setBatchDeleteConfirm(true),
-            },
           ]}
           labels={{
             hint: t("project.selectHint"),
@@ -1156,7 +1206,18 @@ export function ProjectDetail() {
           }}
           onSelectAll={handleSelectAll}
           onCancel={exitMultiSelect}
+          disabled={batchSelectionLocked}
         />
+      )}
+
+      {batchDeleteFailure && (
+        <div role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-[12px] text-danger">
+          <p>{t("project.batchDeletePartialFailure", {
+            deleted: batchDeleteFailure.deleted,
+            failed: batchDeleteFailure.failures.length,
+            details: batchDeleteFailure.failures.map(({ name, error }) => `${name}: ${error}`).join("; "),
+          })}</p>
+        </div>
       )}
 
       {skillsError && skills.length > 0 && (
@@ -1225,7 +1286,9 @@ export function ProjectDetail() {
                   ? togglingAgentTarget.agent
                   : null,
               vendoredLock: vendoredLockOf(skill),
-              onToggleSelect: toggleSelect,
+              onToggleSelect: (key) => {
+                if (!batchSelectionLocked) toggleSelect(key);
+              },
               onOpenDetail: handleOpenDetail,
               onToggleAgent: handleToggleDetailAgent,
               onUpdateCenter: handleUpdateCenter,
@@ -1278,12 +1341,17 @@ export function ProjectDetail() {
 
       {/* Batch Delete Confirm Dialog */}
       <ConfirmDialog
-        open={batchDeleteConfirm}
+        open={!!batchDeleteTarget}
         title={t("project.deleteSkill")}
-        message={t("project.batchDeleteConfirm", { count: selectedIds.size })}
+        message={t("project.batchDeleteConfirm", {
+          count: batchDeleteTarget?.skills.length ?? 0,
+          project: batchDeleteTarget?.projectName ?? "",
+        })}
         tone="danger"
-        onClose={() => setBatchDeleteConfirm(false)}
+        lockWhilePending
+        onClose={() => setBatchDeleteTarget(null)}
         onConfirm={handleBatchDeleteProject}
+        details={batchDeleteTarget?.skills.map((skill) => skill.name)}
       />
 
       <BatchTagDialog

@@ -85,6 +85,11 @@ export function useMultiSelect<T>({
     });
   };
 
+  const removeSelected = (keys: Iterable<string>) => {
+    const removed = new Set(keys);
+    setRawSelectedIds((prev) => new Set([...prev].filter((key) => !removed.has(key))));
+  };
+
   const isAllSelected =
     filtered.length > 0 && filtered.every((s) => selectedIds.has(getKey(s)));
 
@@ -122,6 +127,7 @@ export function useMultiSelect<T>({
     setIsMultiSelect,
     selectedIds,
     toggleSelect,
+    removeSelected,
     isAllSelected,
     anyDisabled,
     handleSelectAll,

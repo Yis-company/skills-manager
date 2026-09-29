@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { UploadCloud, Github, Box } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -20,15 +21,27 @@ import { GitInstallTab } from "../components/GitInstallTab";
 import { LocalInstallTab } from "../components/LocalInstallTab";
 import { GitPreviewDialog } from "../components/GitPreviewDialog";
 import { getErrorMessage, getErrorKind } from "../lib/error";
+import { getActiveHostId, invokeHost } from "../lib/hostCall";
+import { managedSkillsQueryOptions, presetsQueryOptions, refreshQuery } from "../lib/appQueries";
 
 export function InstallSkills() {
   const { t } = useTranslation();
-  const { refreshPresets, refreshManagedSkills, managedSkills, openSkillDetailById } = useApp();
+  const { refreshPresets, refreshManagedSkills, managedSkills, openSkillDetailById, activeHostId } = useApp();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { tab: tabParam } = useSearch({ from: "/install" });
   const [activeTab, setActiveTab] = useState<InstallTab>("market");
   const market = useMarketSearch(activeTab === "market");
   const [installing, setInstalling] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [bulkLocked, setBulkLocked] = useState(false);
+  const [bulkFailures, setBulkFailures] = useState<{ skill: SkillsShSkill; error: string }[]>([]);
+  const [bulkRetrySkills, setBulkRetrySkills] = useState<SkillsShSkill[]>([]);
+  const [bulkSummary, setBulkSummary] = useState<{ installed: number; total: number; stopped: boolean } | null>(null);
+  const [bulkResultHostId, setBulkResultHostId] = useState<string | null>(null);
+  const batchRef = useRef<{ hostId: string | null; stopRequested: boolean; cancelKey: string | null } | null>(null);
+  const bulkEpochRef = useRef(0);
+  const mountedRef = useRef(true);
   const {
     gitUrl,
     setGitUrl,
@@ -54,6 +67,34 @@ export function InstallSkills() {
   const [importingAll, setImportingAll] = useState(false);
   const [renameEditing, setRenameEditing] = useState<Record<string, string>>({});
   const sourceOverflow = useSourceOverflow(market.sourceOptions);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const batch = batchRef.current;
+      if (!batch) return;
+      batch.stopRequested = true;
+      if (batch.cancelKey) {
+        invokeHost<boolean>(batch.hostId, "cancel_install", { key: batch.cancelKey }).catch(() => {});
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    bulkEpochRef.current++;
+    setBulkFailures([]);
+    setBulkRetrySkills([]);
+    setBulkSummary(null);
+    const batch = batchRef.current;
+    if (batch && (batch.hostId !== activeHostId || activeTab !== "market")) {
+      batch.stopRequested = true;
+      if (batch.cancelKey) {
+        invokeHost<boolean>(batch.hostId, "cancel_install", { key: batch.cancelKey }).catch(() => {});
+      }
+      setBulkProgress(null);
+    }
+  }, [activeHostId, activeTab]);
 
   const managedSkillsRef = useRef(managedSkills);
   managedSkillsRef.current = managedSkills;
@@ -210,6 +251,7 @@ export function InstallSkills() {
   };
 
   const handleInstallSkillssh = async (skill: SkillsShSkill) => {
+    if (batchRef.current) return;
     const displayName = skill.name || skill.skill_id;
     const cancelKey = `${skill.source}/${skill.skill_id}`;
     setInstalling(skill.id);
@@ -253,6 +295,96 @@ export function InstallSkills() {
       unlisten?.();
     }
   };
+
+  const runBulkInstall = async (skills: SkillsShSkill[]): Promise<string[]> => {
+    if (skills.length === 0 || batchRef.current || installing !== null) return [];
+    const hostId = activeHostId;
+    const epoch = bulkEpochRef.current;
+    const batch = { hostId, stopRequested: false, cancelKey: null as string | null };
+    batchRef.current = batch;
+    setBulkLocked(true);
+    setBulkFailures([]);
+    setBulkRetrySkills([]);
+    setBulkSummary(null);
+    setBulkResultHostId(hostId);
+    setBulkProgress({ completed: 0, total: skills.length });
+    let installed = 0;
+    let completed = 0;
+    let stopped = false;
+    const failures: { skill: SkillsShSkill; error: string }[] = [];
+    const retrySkills: SkillsShSkill[] = [];
+    const installedIds: string[] = [];
+
+    for (let index = 0; index < skills.length; index++) {
+      const skill = skills[index];
+      if (batch.stopRequested) {
+        stopped = true;
+        retrySkills.push(...skills.slice(index));
+        break;
+      }
+      const cancelKey = `${skill.source}/${skill.skill_id}`;
+      batch.cancelKey = cancelKey;
+      try {
+        await invokeHost<void>(hostId, "install_from_skillssh", {
+          source: skill.source,
+          skillId: skill.skill_id,
+        });
+        installed++;
+        installedIds.push(skill.id);
+      } catch (error: unknown) {
+        if (batch.stopRequested || getErrorKind(error) === "cancelled") {
+          stopped = true;
+          retrySkills.push(...skills.slice(index));
+          break;
+        }
+        failures.push({ skill, error: getErrorMessage(error, t("common.error")) });
+        retrySkills.push(skill);
+      }
+      completed++;
+      if (mountedRef.current && bulkEpochRef.current === epoch && getActiveHostId() === hostId) {
+        setBulkProgress({ completed, total: skills.length });
+      }
+    }
+
+    try {
+      await Promise.all([
+        refreshQuery(queryClient, presetsQueryOptions(hostId)),
+        refreshQuery(queryClient, managedSkillsQueryOptions(hostId)),
+      ]);
+    } catch (error) {
+      console.warn("Post-batch install refresh failed:", error);
+      if (mountedRef.current && bulkEpochRef.current === epoch && getActiveHostId() === hostId) {
+        toast.error(t("install.market.refreshError"));
+      }
+    }
+
+    if (mountedRef.current && bulkEpochRef.current === epoch && getActiveHostId() === hostId) {
+      setBulkFailures(failures);
+      setBulkRetrySkills(retrySkills);
+      setBulkSummary({ installed, total: skills.length, stopped });
+      setBulkProgress(null);
+      if (installed > 0) {
+        toast.success(t("install.market.batchSummary", { installed, total: skills.length }));
+      }
+      if (failures.length > 0) {
+        toast.error(t("install.market.batchInstallError", { count: failures.length }));
+      }
+    }
+    if (batchRef.current === batch) batchRef.current = null;
+    setBulkLocked(false);
+    return installedIds;
+  };
+
+  const handleStopBulkInstall = () => {
+    const batch = batchRef.current;
+    if (!batch) return;
+    batch.stopRequested = true;
+    if (batch.cancelKey) {
+      invokeHost<boolean>(batch.hostId, "cancel_install", { key: batch.cancelKey }).catch(() => {});
+    }
+  };
+
+  const handleRetryBulkInstall = () => runBulkInstall(bulkRetrySkills);
 
   const handleCancelInstall = (cancelKey: string) => {
     api.cancelInstall(cancelKey).catch(() => {
@@ -322,8 +454,9 @@ export function InstallSkills() {
               <button
                 key={tab.id}
                 onClick={() => switchTab(tab.id)}
+                disabled={bulkLocked}
                 className={cn(
-                  "mr-4 flex items-center gap-1.5 border-b-2 px-1 pb-1.5 text-[13px] font-medium transition-colors outline-none",
+                  "mr-4 flex items-center gap-1.5 border-b-2 px-1 pb-1.5 text-[13px] font-medium transition-colors outline-none disabled:cursor-not-allowed disabled:opacity-50",
                   isActive
                     ? "border-accent text-accent"
                     : "border-transparent text-muted hover:text-tertiary"
@@ -345,6 +478,15 @@ export function InstallSkills() {
           installing={installing}
           onInstall={handleInstallSkillssh}
           onCancelInstall={handleCancelInstall}
+          bulkProgress={activeHostId === batchRef.current?.hostId ? bulkProgress : null}
+          bulkFailures={activeHostId === bulkResultHostId ? bulkFailures : []}
+          bulkSummary={activeHostId === bulkResultHostId ? bulkSummary : null}
+          retryCount={bulkRetrySkills.length}
+          batchLocked={bulkLocked}
+          hostId={activeHostId}
+          onInstallSelected={runBulkInstall}
+          onStopBulkInstall={handleStopBulkInstall}
+          onRetryBulkInstall={handleRetryBulkInstall}
         />
       )}
 

@@ -138,16 +138,17 @@ test("a failed vendored delete keeps its aliases while a successful project dele
   });
   await page.goto("/project/p1");
   await expect(page.getByRole("heading", { level: 3 })).toHaveText(["a-vendored", "z-independent"]);
-  await page.getByRole("button", { name: "Select", exact: true }).click();
+  await page.getByRole("button", { name: "Select skills", exact: true }).click();
   await page.getByRole("button", { name: "Select All", exact: true }).click();
-  await page.getByRole("button", { name: "More actions", exact: true }).click();
-  await page.getByRole("button", { name: "Delete 2", exact: true }).click();
+  await page.getByRole("button", { name: "Remove selected (2)", exact: true }).click();
   await backend.failNext("delete_project_skill", "vendored delete failed");
   await backend.hold("get_project_skills");
   await page.getByRole("button", { name: "Delete", exact: true }).last().click();
 
   await expect(page.getByRole("heading", { level: 3 })).toHaveText(["a-vendored"]);
   await expect(page.getByText("1 skills failed to delete")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove selected (1)", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.locator('[title="2/2"]')).toBeVisible();
   await backend.release("get_project_skills");
   await expect(page.getByRole("heading", { level: 3 })).toHaveText(["a-vendored"]);
