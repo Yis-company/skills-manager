@@ -64,6 +64,7 @@ export const HOST_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "update_global_local_skill_from_center",
   "delete_global_local_skill",
   // Projects
+  "project_git_request",
   "get_projects",
   "add_project",
   "add_linked_workspace",

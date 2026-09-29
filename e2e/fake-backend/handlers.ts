@@ -7,6 +7,7 @@ import type {
   ProjectSkill,
 } from "../../src/lib/tauri";
 import { createState, type RemoteSeed, type State } from "./state";
+import { projectGitHandler } from "./projectGit";
 
 /**
  * A fake command: reads and changes `state`, returns what the real command
@@ -60,6 +61,7 @@ type ProjectSkillArgs = {
 // Only the commands the specs reach. Add one when a spec needs it; an unknown
 // command fails the test with "fake backend: no handler for <cmd>".
 export const handlers: Record<string, Handler<never>> = {
+  project_git_request: projectGitHandler,
   // ── App shell ──
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
@@ -111,6 +113,7 @@ export const handlers: Record<string, Handler<never>> = {
       presetSkillOrder: remoteState.presetSkillOrder,
       projects: remoteState.projects,
       projectSkills: remoteState.projectSkills,
+      projectGit: remoteState.projectGit,
       projectAgentTargets: remoteState.projectAgentTargets,
       tools: remoteState.tools,
       settings: remoteState.settings,

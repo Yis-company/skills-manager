@@ -13,6 +13,7 @@ import type {
   ToolInfo,
   RemoteHost,
 } from "../../src/lib/tauri";
+import type { ProjectGitPrReview, ProjectGitPushReview, ProjectGitStatus } from "../../src/lib/projectGit";
 
 export type RemoteSeed = Omit<Seed, "remoteHosts" | "remoteStates">;
 
@@ -27,6 +28,11 @@ export interface Seed {
   projects?: Project[];
   /** Skills found in each project, by project id. */
   projectSkills?: Record<string, ProjectSkill[]>;
+  projectGit?: Record<string, {
+    status: ProjectGitStatus;
+    push: ProjectGitPushReview;
+    pr: ProjectGitPrReview;
+  }>;
   /** Agent targets of each project, by project id. */
   projectAgentTargets?: Record<string, ProjectAgentTarget[]>;
   tools?: ToolInfo[];
@@ -112,6 +118,7 @@ export function createState({ settings, ...seed }: Seed): State {
     presetSkillOrder: {},
     projects: [],
     projectSkills: {},
+    projectGit: {},
     projectAgentTargets: {},
     tools: [tool("claude_code", "Claude Code"), tool("codex", "Codex")],
     // Without it an empty library opens the first-run restore dialog.

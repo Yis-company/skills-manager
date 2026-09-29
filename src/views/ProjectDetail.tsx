@@ -19,6 +19,7 @@ import {
   Circle,
   Tag,
   SlidersHorizontal,
+  GitBranch,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -57,6 +58,7 @@ import { projectSkillsQueryOptions, projectsQueryOptions, queryKeys, refreshQuer
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 import { ProjectAgentsDialog } from "../components/ProjectAgentsDialog";
 import { ResourceWorkspace } from "../components/ResourceWorkspace";
+import { ProjectGitDialog } from "../components/ProjectGitDialog";
 
 export function ProjectDetail() {
   const { id } = useParams({ from: "/project/$id" });
@@ -105,6 +107,7 @@ export function ProjectDetail() {
   const [togglingAgentTarget, setTogglingAgentTarget] = useState<{ skillKey: string; agent: string } | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showAgentsDialog, setShowAgentsDialog] = useState(false);
+  const [showGitDialog, setShowGitDialog] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSkillGroup | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
   const [batchTagDialogOpen, setBatchTagDialogOpen] = useState(false);
@@ -952,6 +955,16 @@ export function ProjectDetail() {
 
             {project.workspace_type !== "linked" && (
               <button
+                onClick={() => setShowGitDialog(true)}
+                className="app-toolbar-button app-toolbar-button-secondary"
+              >
+                <GitBranch className="h-3.5 w-3.5" />
+                {t("project.git.open")}
+              </button>
+            )}
+
+            {project.workspace_type !== "linked" && (
+              <button
                 onClick={() => setShowAgentsDialog(true)}
                 disabled={projectAgentTargets.length === 0}
                 className="app-toolbar-button app-toolbar-button-secondary"
@@ -1292,6 +1305,14 @@ export function ProjectDetail() {
           onApplied={async () => {
             await Promise.all([loadSkills(), refreshProjects()]);
           }}
+        />
+      )}
+      {showGitDialog && project.workspace_type !== "linked" && (
+        <ProjectGitDialog
+          key={`${activeHostId ?? "local"}:${id}`}
+          hostId={activeHostId}
+          projectId={id}
+          onClose={() => setShowGitDialog(false)}
         />
       )}
 
