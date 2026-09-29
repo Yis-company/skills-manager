@@ -256,7 +256,7 @@ test("project resources can select every assigned agent and nested edits retain 
     .click();
   await expect(
     page.getByRole("textbox", { name: "Instruction file content" }),
-  ).toHaveValue("Nested rules");
+  ).toHaveText("Nested rules");
   await page.getByLabel("Include directory", { exact: true }).fill("docs");
   await page
     .getByRole("heading", { name: "Instructions", exact: true })
@@ -278,6 +278,7 @@ test("project resources can select every assigned agent and nested edits retain 
   ).toMatchObject({
     target: { agent_key: "codex", project_id: "repo" },
     path: "docs/AGENTS.md",
+    content: "Updated nested rules",
   });
   expect(
     calls.findLast((call) => call.request.action === "write")?.request.target,
@@ -316,4 +317,42 @@ test("project worktrees get their own tabs and scope file scans", async ({
         .target?.worktree;
     })
     .toBe("/work/repo/.claude/worktrees/fix-login");
+});
+
+test("files the rich editor would reformat open in source mode unchanged", async ({
+  page,
+  backend,
+}) => {
+  const original = "<!-- keep this comment -->\n* star list\n";
+  await backend.patch({
+    projects: [project("repo", "Repo", 0, { agent_keys: ["claude_code"] })],
+    instructionFiles: {
+      "CLAUDE.md": {
+        content: original,
+        revision: "1",
+        managed: false,
+        kind: "root",
+      },
+    },
+  });
+  await page.goto("/project/repo?resource=instructions");
+  await page
+    .getByRole("tree", { name: "Instruction files" })
+    .getByTitle("CLAUDE.md")
+    .click();
+  const editor = page.getByRole("textbox", {
+    name: "Instruction file content",
+  });
+  await expect(editor).toHaveValue(original);
+  await expect(
+    page.getByText("Rich editing would reformat this file."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Save file", exact: true }).click();
+  await expect(page.getByText("File saved.", { exact: true })).toBeVisible();
+  const calls = (await backend.calls("instructions_request")) as {
+    request: { action: string; content?: string };
+  }[];
+  expect(
+    calls.findLast((call) => call.request.action === "write")?.request.content,
+  ).toBe(original);
 });

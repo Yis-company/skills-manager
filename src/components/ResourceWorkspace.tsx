@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useApp } from "../context/AppContext";
 import { invokeHost } from "../lib/hostCall";
 import { InstructionFileTree } from "./InstructionFileTree";
+import { MarkdownEditor } from "./MarkdownEditor";
 import { cn } from "../utils";
 import { useLocation, useRouter, useSearch } from "@tanstack/react-router";
 
@@ -1506,7 +1505,6 @@ function InstructionsLibrary({
   const [libraryTab, setLibraryTab] = useState<"library" | "files">(
     scope.kind === "library" ? "library" : "files",
   );
-  const [previewMode, setPreviewMode] = useState(false);
   const [worktrees, setWorktrees] = useState<
     { name: string; path: string; branch?: string; is_main: boolean }[]
   >([]);
@@ -2089,22 +2087,14 @@ function InstructionsLibrary({
                       Remove
                     </button>
                   </div>
-                  {previewMode ? (
-                    <MarkdownPreview content={content} />
-                  ) : (
-                    <textarea
-                      aria-label={`${filePath} content`}
-                      className={`${inputClass} mt-2 font-mono text-[12px]`}
-                      rows={7}
-                      value={content}
-                      onChange={(e) =>
-                        setFiles((old) => ({
-                          ...old,
-                          [filePath]: e.target.value,
-                        }))
-                      }
-                    />
-                  )}
+                  <MarkdownEditor
+                    ariaLabel={`${filePath} content`}
+                    rows={7}
+                    value={content}
+                    onChange={(next) =>
+                      setFiles((old) => ({ ...old, [filePath]: next }))
+                    }
+                  />
                 </div>
               ))}
             </div>
@@ -2124,12 +2114,6 @@ function InstructionsLibrary({
                 }}
               >
                 Add file
-              </button>
-              <button
-                className="app-button"
-                onClick={() => setPreviewMode((old) => !old)}
-              >
-                {previewMode ? "Edit" : "Preview"}
               </button>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -2194,14 +2178,8 @@ function InstructionsLibrary({
               <h3 className="text-[13px] font-semibold">{path}</h3>
               <div className="flex gap-2">
                 <button
-                  className="app-button"
-                  onClick={() => setPreviewMode((old) => !old)}
-                >
-                  {previewMode ? "Edit" : "Preview"}
-                </button>
-                <button
                   className="app-button-primary"
-                  disabled={busy || !loadedRevision || previewMode}
+                  disabled={busy || !loadedRevision}
                   onClick={() => void saveDiskFile()}
                 >
                   Save file
@@ -2230,15 +2208,13 @@ function InstructionsLibrary({
                 </button>
               </div>
             </div>
-            {previewMode ? (
-              <MarkdownPreview content={editContent} />
-            ) : (
-              <textarea
-                aria-label="Instruction file content"
-                className={`${inputClass} font-mono text-[12px]`}
+            {path && (
+              <MarkdownEditor
+                key={`${worktree}:${path}`}
+                ariaLabel="Instruction file content"
                 rows={18}
                 value={editContent}
-                onChange={(e) => setEditContent(e.target.value)}
+                onChange={setEditContent}
               />
             )}
             {references.length > 0 && (
@@ -2374,17 +2350,6 @@ function InstructionsLibrary({
         </div>
       )}
     </section>
-  );
-}
-
-function MarkdownPreview({ content }: { content: string }) {
-  return (
-    <div className="prose prose-sm dark:prose-invert mt-2 max-w-none overflow-auto rounded-lg border border-border-faint p-3 text-[12px]">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{ img: ({ alt }) => <span>[Image: {alt || "unnamed"}]</span> }}
-      >{content}</ReactMarkdown>
-    </div>
   );
 }
 
