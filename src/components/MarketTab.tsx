@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import {
   Check,
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -21,6 +22,9 @@ import { MARKET_SEARCH_STEP, type MarketSearch } from "../hooks/useMarketSearch"
 import type { SourceOverflow } from "../hooks/useSourceOverflow";
 import { StatusBanner } from "./StatusBanner";
 import { SourceFilterPills } from "./SourceFilterPills";
+import { useMultiSelect } from "../hooks/useMultiSelect";
+import { MultiSelectToolbar } from "./MultiSelectToolbar";
+import { getActiveHostId } from "../lib/hostCall";
 
 const MARKET_PAGE_SIZE = 24;
 
@@ -33,6 +37,15 @@ interface MarketTabProps {
   installing: string | null;
   onInstall: (skill: SkillsShSkill) => void;
   onCancelInstall: (cancelKey: string) => void;
+  bulkProgress: { completed: number; total: number } | null;
+  bulkFailures: { skill: SkillsShSkill; error: string }[];
+  onInstallSelected: (skills: SkillsShSkill[]) => Promise<string[]>;
+  onStopBulkInstall: () => void;
+  onRetryBulkInstall: () => Promise<string[]>;
+  hostId: string | null;
+  bulkSummary: { installed: number; total: number; stopped: boolean } | null;
+  retryCount: number;
+  batchLocked: boolean;
 }
 
 /**
@@ -46,6 +59,15 @@ export function MarketTab({
   installing,
   onInstall,
   onCancelInstall,
+  bulkProgress,
+  bulkFailures,
+  onInstallSelected,
+  onStopBulkInstall,
+  onRetryBulkInstall,
+  hostId,
+  bulkSummary,
+  retryCount,
+  batchLocked,
 }: MarketTabProps) {
   const { t } = useTranslation();
   const {
@@ -89,13 +111,49 @@ export function MarketTab({
     items: paginatedMarketSkills,
     visiblePages: visibleMarketPages,
   } = paginateMarketSkills(filteredMarketSkills, marketPage, MARKET_PAGE_SIZE);
+  const eligibleSkills = paginatedMarketSkills.filter(
+    (skill) => !installedSourceRefs.has(`${skill.source}/${skill.skill_id}`),
+  );
+  const {
+    isMultiSelect: selectMode,
+    setIsMultiSelect,
+    selectedIds,
+    toggleSelect,
+    removeSelected,
+    isAllSelected,
+    handleSelectAll,
+    exitMultiSelect,
+  } = useMultiSelect({
+    items: marketSkills,
+    filtered: eligibleSkills,
+    getKey: (skill) => skill.id,
+    isItemActive: (skill) => !installedSourceRefs.has(`${skill.source}/${skill.skill_id}`),
+    filterSignal: `${marketTab}|${debouncedMarketQuery}|${marketSourceFilter}|${currentMarketPage}|${Array.from(installedSourceRefs).sort().join(",")}`,
+    scopeSignal: hostId ?? "local",
+    escapeEnabled: !batchLocked && bulkProgress === null,
+  });
+  const selectedSkills = eligibleSkills.filter((skill) => selectedIds.has(skill.id));
+  const installSelected = async (skills: SkillsShSkill[]) => {
+    const selectedHostId = hostId;
+    const succeeded = await onInstallSelected(skills);
+    if (getActiveHostId() === selectedHostId) removeSelected(succeeded);
+  };
+  const retryBulkInstall = async () => {
+    const selectedHostId = hostId;
+    const succeeded = await onRetryBulkInstall();
+    if (getActiveHostId() === selectedHostId) removeSelected(succeeded);
+  };
   const hasMarketQuery = debouncedMarketQuery.trim().length > 0;
   const canLoadMoreSearch = hasMarketQuery && marketSkills.length >= marketSearchLimit;
   const isLoadingMoreSearch = hasMarketQuery && marketLoadingMore;
+  const batchRunning = bulkProgress !== null;
 
   return (
     <div className="animate-in fade-in duration-300">
-      <div className="app-panel mb-3 p-3.5">
+      <fieldset
+        disabled={batchRunning || batchLocked}
+        className="app-panel mb-3 min-w-0 p-3.5 disabled:opacity-60"
+      >
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-2">
             <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center">
@@ -153,7 +211,7 @@ export function MarketTab({
             />
           )}
         </div>
-      </div>
+      </fieldset>
 
       {marketError ? (
         <div className="mb-4">
@@ -165,6 +223,76 @@ export function MarketTab({
             onAction={() => setMarketReloadKey((value) => value + 1)}
             tone="danger"
           />
+        </div>
+      ) : null}
+
+      <div className="app-panel mb-3 flex flex-wrap items-center gap-2 p-3">
+        {selectMode ? (
+          <MultiSelectToolbar
+            selectedCount={selectedSkills.length}
+            isAllSelected={isAllSelected}
+            actions={[{
+              key: "install",
+              label: t("install.market.installSelected", { count: selectedSkills.length }),
+              icon: <DownloadCloud className="h-3.5 w-3.5" />,
+              onSelect: () => installSelected(selectedSkills),
+              tone: "primary",
+              disabled: selectedSkills.length === 0 || installing !== null,
+            }]}
+            labels={{
+              hint: t("mySkills.selectHint"),
+              selected: t("mySkills.selectedCount", { count: selectedSkills.length }),
+              selectAll: t("install.market.selectAllPage"),
+              deselectAll: t("mySkills.deselectAll"),
+              cancel: t("install.market.exitSelectMode"),
+              more: t("mySkills.moreActions"),
+            }}
+            onSelectAll={handleSelectAll}
+            onCancel={exitMultiSelect}
+            disabled={batchRunning || batchLocked}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsMultiSelect(true)}
+            disabled={batchRunning || batchLocked}
+            className="app-toolbar-button"
+          >
+            <CheckSquare className="h-4 w-4" />
+            {t("install.market.selectMode")}
+          </button>
+        )}
+        {batchRunning ? (
+          <>
+            <span role="status" className="ml-auto text-[13px] text-secondary">
+              {t("install.market.installingProgress", bulkProgress)}
+            </span>
+            <button type="button" onClick={onStopBulkInstall} className="app-toolbar-button app-toolbar-button-secondary">
+              {t("install.market.stopInstalling")}
+            </button>
+          </>
+        ) : null}
+      </div>
+
+      {bulkSummary ? (
+        <div className="app-panel mb-3 space-y-2 p-3" role="status">
+          <p className="text-[13px] font-medium text-secondary">
+            {t(bulkSummary.stopped ? "install.market.batchStopped" : "install.market.batchSummary", bulkSummary)}
+          </p>
+          {bulkFailures.length > 0 ? (
+            <>
+              <ul className="max-h-32 space-y-1 overflow-y-auto text-[12px] text-muted">
+                {bulkFailures.map(({ skill, error }) => (
+                  <li key={skill.id}>{t("install.market.batchFailureDetail", { name: skill.name || skill.skill_id, error })}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {retryCount > 0 ? (
+            <button type="button" onClick={() => void retryBulkInstall()} className="app-toolbar-button app-toolbar-button-secondary">
+              {t("install.market.batchRetry", { count: retryCount })}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -198,6 +326,8 @@ export function MarketTab({
                   const avatarUrl = `https://github.com/${owner}.png?size=32`;
                   const sourceRef = `${skill.source}/${skill.skill_id}`;
                   const isInstalled = installedSourceRefs.has(sourceRef);
+                  const isSelected = selectedIds.has(skill.id);
+                  const isEligible = !isInstalled;
 
                   return (
                   <div
@@ -230,7 +360,16 @@ export function MarketTab({
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
                         </button>
-                        {isInstalled ? (
+                        {selectMode ? (
+                          <input
+                            type="checkbox"
+                            aria-label={t("install.market.selectSkill", { name: displayName })}
+                            checked={isSelected}
+                            disabled={!isEligible || batchRunning || batchLocked}
+                            onChange={() => toggleSelect(skill.id)}
+                            className="h-4 w-4 accent-[var(--color-accent)] disabled:opacity-50"
+                          />
+                        ) : isInstalled ? (
                           <span
                             className="rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 p-1 text-emerald-400"
                             title={t("install.installed")}
@@ -252,7 +391,7 @@ export function MarketTab({
                         ) : (
                           <button
                             onClick={() => onInstall(skill)}
-                            disabled={installing !== null}
+                            disabled={installing !== null || batchRunning}
                             className="rounded-[5px] border border-accent-border bg-accent-dark p-1 text-white transition-colors hover:bg-accent disabled:opacity-50"
                             title={t("install.oneClickInstall")}
                           >
@@ -266,7 +405,7 @@ export function MarketTab({
                       <button
                         type="button"
                         onClick={() => setMarketSourceFilter(skill.source)}
-                        disabled={marketSourceFilter === skill.source}
+                        disabled={batchRunning || batchLocked || marketSourceFilter === skill.source}
                         title={t("install.onlyThisContributor")}
                         className={cn(
                           "rounded-[5px] bg-accent-bg px-1.5 py-0.5 text-[13px] leading-4 font-medium text-accent-light transition-colors",
@@ -303,7 +442,7 @@ export function MarketTab({
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-1.5">
                   <button
                     onClick={() => changeMarketPage(Math.max(1, currentMarketPage - 1))}
-                    disabled={currentMarketPage === 1}
+                    disabled={batchRunning || batchLocked || currentMarketPage === 1}
                     className="inline-flex items-center gap-1 rounded-[6px] border border-border-subtle bg-surface px-3 py-1.5 text-[13px] font-medium text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
@@ -319,6 +458,7 @@ export function MarketTab({
                         {showGap ? <span className="px-1 text-[13px] text-faint">...</span> : null}
                         <button
                           onClick={() => changeMarketPage(page)}
+                          disabled={batchRunning || batchLocked}
                           className={cn(
                             "min-w-8 rounded-[6px] border px-2.5 py-1.5 text-[13px] font-semibold transition-colors",
                             page === currentMarketPage
@@ -334,7 +474,7 @@ export function MarketTab({
 
                   <button
                     onClick={() => changeMarketPage(Math.min(totalMarketPages, currentMarketPage + 1))}
-                    disabled={currentMarketPage === totalMarketPages}
+                    disabled={batchRunning || batchLocked || currentMarketPage === totalMarketPages}
                     className="inline-flex items-center gap-1 rounded-[6px] border border-border-subtle bg-surface px-3 py-1.5 text-[13px] font-medium text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
                   >
                     {t("install.pagination.next")}
@@ -348,7 +488,7 @@ export function MarketTab({
                   <button
                     type="button"
                     onClick={() => setMarketSearchLimit((value) => value + MARKET_SEARCH_STEP)}
-                    disabled={!canLoadMoreSearch || marketLoading}
+                    disabled={batchRunning || batchLocked || !canLoadMoreSearch || marketLoading}
                     className="inline-flex items-center gap-2 rounded-[6px] border border-border-subtle bg-surface px-3.5 py-2 text-[13px] font-medium text-secondary transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {marketLoading ? (

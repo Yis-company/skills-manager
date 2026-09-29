@@ -108,6 +108,7 @@ export const handlers: Record<string, Handler<never>> = {
     const result = handler(args ?? {}, remoteState);
     const remoteSeed: RemoteSeed = {
       skills: remoteState.skills,
+      globalLocalSkills: remoteState.globalLocalSkills,
       presets: remoteState.presets,
       activePresetId: remoteState.activePresetId,
       presetSkillOrder: remoteState.presetSkillOrder,
@@ -122,6 +123,7 @@ export const handlers: Record<string, Handler<never>> = {
       mcpDefinitions: remoteState.mcpDefinitions,
       mcpTargets: remoteState.mcpTargets,
       resourcePreviews: remoteState.resourcePreviews,
+      failedInstallSkillIds: remoteState.failedInstallSkillIds,
     };
     state.remoteStates[hostId] = remoteSeed;
     return result;
@@ -465,9 +467,67 @@ export const handlers: Record<string, Handler<never>> = {
 
   // ── Tools ──
   get_tool_status: (_args: unknown, state) => state.tools,
+  get_global_local_skills: ({ agent }: { agent: string }, state) =>
+    state.globalLocalSkills[agent] ?? [],
+  unsync_skill_from_tool: ({ skillId, tool }: { skillId: string; tool: string }, state) => {
+    const skill = state.skills.find((item) => item.id === skillId);
+    if (skill) skill.targets = skill.targets.filter((target) => target.tool !== tool);
+    state.globalLocalSkills[tool] = (state.globalLocalSkills[tool] ?? []).filter(
+      (localSkill) => localSkill.center_skill_id !== skillId,
+    );
+    return null;
+  },
+  delete_global_local_skill: (
+    { agent, skillRelativePath }: { agent: string; skillRelativePath: string },
+    state,
+  ) => {
+    state.globalLocalSkills[agent] = (state.globalLocalSkills[agent] ?? []).filter(
+      (skill) => skill.relative_path !== skillRelativePath,
+    );
+    return null;
+  },
 
   // ── Skills and tags ──
   get_managed_skills: (_args: unknown, state) => state.skills,
+  install_from_skillssh: ({ source, skillId }: { source: string; skillId: string }, state) => {
+    if (state.failedInstallSkillIds.includes(skillId)) {
+      throw new Error(`fake install failure for ${skillId}`);
+    }
+    const sourceSkill = state.market.find(
+      (skill) => skill.source === source && skill.skill_id === skillId,
+    );
+    const sourceRef = `${source}/${skillId}`;
+    if (!state.skills.some((skill) => skill.source_ref === sourceRef)) {
+      const now = Date.now();
+      const name = sourceSkill?.name || skillId;
+      state.skills.push({
+        id: `market:${sourceRef}`,
+        name,
+        description: null,
+        author: null,
+        source_type: "skillssh",
+        source_ref: sourceRef,
+        source_ref_resolved: null,
+        source_subpath: null,
+        source_branch: null,
+        source_revision: null,
+        remote_revision: null,
+        update_status: "up_to_date",
+        last_checked_at: now,
+        last_check_error: null,
+        central_path: `/home/e2e/.skills-manager/skills/${name}`,
+        enabled: true,
+        created_at: now,
+        updated_at: now,
+        status: "available",
+        targets: [],
+        preset_ids: [],
+        tags: [],
+      });
+    }
+    return null;
+  },
+  cancel_install: () => true,
   delete_managed_skill: ({ skillId }: { skillId: string }, state) => {
     state.skills = state.skills.filter((skill) => skill.id !== skillId);
     return null;

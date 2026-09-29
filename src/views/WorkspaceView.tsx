@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useNavigate, Navigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
   Download,
@@ -32,6 +33,8 @@ import { DocumentDiffViewer } from "../components/DocumentDiffViewer";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectSkill } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
+import { invokeHost } from "../lib/hostCall";
+import { managedSkillsQueryOptions, refreshQuery, toolsQueryOptions } from "../lib/appQueries";
 import { copyCreator, type SkillCreator } from "../lib/skillCreator";
 import { getTagActiveColor, getTagColor, pruneStaleTagFilters, UNTAGGED_FILTER } from "../lib/skillTags";
 import { matchesTagFilter } from "../lib/tagFilter";
@@ -53,6 +56,14 @@ interface WorkspaceSkillCardTag {
 interface WorkspaceSkillCardStatus {
   label: string;
   className: string;
+}
+
+interface BatchWorkspaceTarget {
+  hostId: string | null;
+  agentKey: string;
+  agentName: string;
+  viewVersion: number;
+  skills: ProjectSkill[];
 }
 
 function WorkspaceSkillCard({
@@ -253,7 +264,8 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   const { agentKey } = useParams({ from: config.routePath });
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { tools, managedSkills, presets, refreshManagedSkills, refreshTools } = useApp();
+  const { tools, managedSkills, presets, refreshManagedSkills, refreshTools, activeHostId } = useApp();
+  const queryClient = useQueryClient();
 
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
@@ -272,10 +284,29 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   const [uploadConfirmSkill, setUploadConfirmSkill] = useState<ProjectSkill | null>(null);
   const [pullConfirmSkill, setPullConfirmSkill] = useState<ProjectSkill | null>(null);
   const [deleteLocalConfirmSkill, setDeleteLocalConfirmSkill] = useState<ProjectSkill | null>(null);
-  const [batchUnsyncConfirm, setBatchUnsyncConfirm] = useState(false);
-  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+  const [batchUnsyncTarget, setBatchUnsyncTarget] = useState<BatchWorkspaceTarget | null>(null);
+  const [batchDeleteTarget, setBatchDeleteTarget] = useState<BatchWorkspaceTarget | null>(null);
   const [batchRunning, setBatchRunning] = useState(false);
+  const [batchAction, setBatchAction] = useState<"unsync" | "local-delete" | null>(null);
+  const [batchFailures, setBatchFailures] = useState<{
+    unsync: Array<{ name: string; error: string }>;
+    localDelete: Array<{ name: string; error: string }>;
+  }>({ unsync: [], localDelete: [] });
+  const batchSelectionLocked = batchRunning || batchUnsyncTarget !== null || batchDeleteTarget !== null;
   const localDetailRequestRef = useRef(0);
+  const workspaceIdentityRef = useRef({ hostId: activeHostId, agentKey: agentKey ?? null, version: 0 });
+  if (workspaceIdentityRef.current.hostId !== activeHostId || workspaceIdentityRef.current.agentKey !== (agentKey ?? null)) {
+    workspaceIdentityRef.current = {
+      hostId: activeHostId,
+      agentKey: agentKey ?? null,
+      version: workspaceIdentityRef.current.version + 1,
+    };
+  }
+  const workspaceMountedRef = useRef(true);
+  useEffect(() => {
+    workspaceMountedRef.current = true;
+    return () => { workspaceMountedRef.current = false; };
+  }, []);
 
   // Cross-category redirect: a deep link like /global-workspace/openclaw should
   // land on /lobster-workspace/openclaw. Compute it before any filtering so a
@@ -332,6 +363,13 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     [currentTool, installedTools]
   );
   const currentToolKey = currentTool?.key ?? null;
+  const currentWorkspaceVersion = workspaceIdentityRef.current.version;
+
+  useEffect(() => {
+    setBatchUnsyncTarget(null);
+    setBatchDeleteTarget(null);
+    setBatchFailures({ unsync: [], localDelete: [] });
+  }, [activeHostId, currentToolKey]);
 
   const localSkillsRequestRef = useRef(0);
   const loadLocalSkills = useCallback(async () => {
@@ -355,20 +393,21 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   }, [currentToolKey, t]);
 
   const loadedAgentKeyRef = useRef<string | null>(null);
+  const localSkillsScopeKey = `${activeHostId ?? "local"}:${currentToolKey ?? ""}`;
   useEffect(() => {
     if (!currentToolKey) {
       loadedAgentKeyRef.current = null;
       setLocalSkills([]);
       return;
     }
-    if (loadedAgentKeyRef.current === currentToolKey) return;
-    loadedAgentKeyRef.current = currentToolKey;
+    if (loadedAgentKeyRef.current === localSkillsScopeKey) return;
+    loadedAgentKeyRef.current = localSkillsScopeKey;
     void loadLocalSkills();
     return () => {
       localSkillsRequestRef.current += 1;
       loadedAgentKeyRef.current = null;
     };
-  }, [currentToolKey, loadLocalSkills]);
+  }, [currentToolKey, localSkillsScopeKey, loadLocalSkills]);
 
   // Load real on-disk skill counts for every installed agent while the overview
   // is shown (#287). Scoped to the overview (currentToolKey === null); the
@@ -516,14 +555,15 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     isAllSelected,
     handleSelectAll,
     exitMultiSelect,
+    removeSelected,
   } = useMultiSelect({
     items: localSkills,
     filtered: visibleLocalSkills,
     getKey: localSkillKey,
     isItemActive: () => true,
     filterSignal: JSON.stringify([search, [...tagFilters].sort()]),
-    scopeSignal: agentKey ?? "",
-    escapeEnabled: !batchUnsyncConfirm && !batchDeleteConfirm,
+    scopeSignal: `${activeHostId ?? "local"}:${agentKey ?? ""}`,
+    escapeEnabled: !batchUnsyncTarget && !batchDeleteTarget && !batchRunning,
   });
 
   /**
@@ -549,53 +589,138 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     [visibleLocalSkills, selectedIds, managedLocalIds]
   );
 
+  const refreshWorkspaceAfterBatch = async (hostId: string | null, toolKey: string, viewVersion: number) => {
+    const isCurrentView = () =>
+      workspaceMountedRef.current &&
+      workspaceIdentityRef.current.version === viewVersion &&
+      workspaceIdentityRef.current.hostId === hostId &&
+      workspaceIdentityRef.current.agentKey === toolKey;
+    const localRequestId = isCurrentView() ? ++localSkillsRequestRef.current : null;
+    if (localRequestId !== null) setLocalSkillsLoading(true);
+    const [managedResult, toolsResult, localResult] = await Promise.allSettled([
+      refreshQuery(queryClient, managedSkillsQueryOptions(hostId)),
+      refreshQuery(queryClient, toolsQueryOptions(hostId)),
+      invokeHost<ProjectSkill[]>(hostId, "get_global_local_skills", { agent: toolKey }),
+    ]);
+    if (managedResult.status === "rejected") console.error("Failed to refresh managed skills after workspace batch action:", managedResult.reason);
+    if (toolsResult.status === "rejected") console.error("Failed to refresh agents after workspace batch action:", toolsResult.reason);
+    const refreshFailed = managedResult.status === "rejected" || toolsResult.status === "rejected" || localResult.status === "rejected";
+    if (localResult.status === "rejected") {
+      console.error("Failed to refresh local workspace skills after batch action:", localResult.reason);
+    } else if (
+      localRequestId !== null &&
+      isCurrentView() &&
+      localSkillsRequestRef.current === localRequestId
+    ) {
+      setLocalSkills(localResult.value);
+    }
+    if (refreshFailed && localRequestId !== null && isCurrentView() && localSkillsRequestRef.current === localRequestId) {
+      toast.error(t("globalWorkspace.batchRefreshFailed"));
+    }
+    if (localRequestId !== null && isCurrentView() && localSkillsRequestRef.current === localRequestId) {
+      setLocalSkillsLoading(false);
+    }
+  };
+
+  const isCurrentBatchTarget = (target: BatchWorkspaceTarget) =>
+    workspaceMountedRef.current &&
+    workspaceIdentityRef.current.version === target.viewVersion &&
+    workspaceIdentityRef.current.hostId === target.hostId &&
+    workspaceIdentityRef.current.agentKey === target.agentKey;
+
   const handleBatchUnsync = async () => {
-    if (!agentKey) return;
+    const target = batchUnsyncTarget;
+    if (!target || batchRunning) return;
+    if (!isCurrentBatchTarget(target)) {
+      setBatchUnsyncTarget(null);
+      return;
+    }
     setBatchRunning(true);
-    let removed = 0;
-    let failed = 0;
+    setBatchAction("unsync");
+    setBatchFailures((current) => ({ ...current, unsync: [] }));
+    const removedKeys: string[] = [];
+    const failures: Array<{ name: string; error: string }> = [];
     try {
-      for (const skill of selectedUnsyncable) {
-        if (!skill.center_skill_id) continue;
+      for (const skill of target.skills) {
+        if (!skill.center_skill_id) {
+          failures.push({ name: skill.name, error: t("common.error") });
+          continue;
+        }
         try {
-          await api.unsyncSkillFromTool(skill.center_skill_id, agentKey);
-          removed++;
-        } catch {
-          failed++;
+          await invokeHost<void>(target.hostId, "unsync_skill_from_tool", {
+            skillId: skill.center_skill_id,
+            tool: target.agentKey,
+          });
+          removedKeys.push(localSkillKey(skill));
+        } catch (error: unknown) {
+          failures.push({ name: skill.name, error: getErrorMessage(error, t("common.error")) });
         }
       }
-      if (removed > 0) toast.success(t("globalWorkspace.batchRemoved", { count: removed }));
-      if (failed > 0) toast.error(t("globalWorkspace.batchRemoveFailed", { count: failed }));
-      await Promise.all([refreshManagedSkills(), refreshTools(), loadLocalSkills()]);
+      if (isCurrentBatchTarget(target)) {
+        removeSelected(removedKeys);
+        setBatchFailures((current) => ({ ...current, unsync: failures }));
+        if (removedKeys.length > 0) toast.success(t("globalWorkspace.batchRemoved", { count: removedKeys.length }));
+        if (failures.length > 0) toast.error(t("globalWorkspace.batchRemoveFailed", { count: failures.length }));
+        if (failures.length === 0 && selectedIds.size === removedKeys.length) exitMultiSelect();
+        setBatchUnsyncTarget(null);
+      }
     } finally {
+      await refreshWorkspaceAfterBatch(target.hostId, target.agentKey, target.viewVersion);
       setBatchRunning(false);
-      setBatchUnsyncConfirm(false);
-      exitMultiSelect();
+      setBatchAction(null);
+      if (isCurrentBatchTarget(target)) setBatchUnsyncTarget(null);
     }
   };
 
   const handleBatchDeleteLocal = async () => {
-    if (!currentToolKey) return;
+    const target = batchDeleteTarget;
+    if (!target || batchRunning) return;
+    if (!isCurrentBatchTarget(target)) {
+      setBatchDeleteTarget(null);
+      return;
+    }
     setBatchRunning(true);
-    let deleted = 0;
-    let failed = 0;
+    setBatchAction("local-delete");
+    setBatchFailures((current) => ({ ...current, localDelete: [] }));
+    const deletedKeys: string[] = [];
+    const failures: Array<{ name: string; error: string }> = [];
     try {
-      for (const skill of selectedDeletable) {
+      for (const skill of target.skills) {
         try {
-          await api.deleteGlobalLocalSkill(currentToolKey, skill.relative_path);
-          deleted++;
-        } catch {
-          failed++;
+          await invokeHost<void>(target.hostId, "delete_global_local_skill", {
+            agent: target.agentKey,
+            skillRelativePath: skill.relative_path,
+          });
+          deletedKeys.push(localSkillKey(skill));
+        } catch (error: unknown) {
+          failures.push({ name: skill.name, error: getErrorMessage(error, t("common.error")) });
         }
       }
-      if (deleted > 0) toast.success(t("globalWorkspace.localSkills.deletedLocalBatch", { count: deleted }));
-      if (failed > 0) toast.error(t("globalWorkspace.localSkills.deleteLocalBatchFailed", { count: failed }));
-      await Promise.all([refreshManagedSkills(), refreshTools(), loadLocalSkills()]);
+      if (isCurrentBatchTarget(target)) {
+        removeSelected(deletedKeys);
+        setBatchFailures((current) => ({ ...current, localDelete: failures }));
+        if (deletedKeys.length > 0) toast.success(t("globalWorkspace.localSkills.deletedLocalBatch", { count: deletedKeys.length }));
+        if (failures.length > 0) toast.error(t("globalWorkspace.localSkills.deleteLocalBatchFailed", { count: failures.length }));
+        if (failures.length === 0 && selectedIds.size === deletedKeys.length) exitMultiSelect();
+        setBatchDeleteTarget(null);
+      }
     } finally {
+      await refreshWorkspaceAfterBatch(target.hostId, target.agentKey, target.viewVersion);
       setBatchRunning(false);
-      setBatchDeleteConfirm(false);
-      exitMultiSelect();
+      setBatchAction(null);
+      if (isCurrentBatchTarget(target)) setBatchDeleteTarget(null);
     }
+  };
+
+  const captureBatchTarget = (skills: ProjectSkill[]): BatchWorkspaceTarget | null => {
+    if (!currentTool || !currentToolKey) return null;
+    return {
+      hostId: activeHostId,
+      agentKey: currentToolKey,
+      agentName: currentTool.display_name,
+      viewVersion: currentWorkspaceVersion,
+      skills: [...skills],
+    };
   };
 
   const handleRemoveLocalManagedSkill = async (skill: ProjectSkill) => {
@@ -935,6 +1060,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                disabled={batchSelectionLocked}
                 placeholder={t("globalWorkspace.localSkills.searchPlaceholder")}
                 className="app-input w-full pl-8 font-medium"
                 autoCapitalize="none"
@@ -946,7 +1072,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
             <div className="app-segmented app-toolbar-segmented shrink-0">
               <button
                 onClick={() => void loadLocalSkills()}
-                disabled={localSkillsLoading}
+                disabled={localSkillsLoading || batchSelectionLocked}
                 className="rounded-md p-2 text-muted transition-colors outline-none hover:text-tertiary disabled:opacity-50"
                 title={t("settings.refresh")}
               >
@@ -976,6 +1102,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
               <button
                 type="button"
                 aria-pressed={isMultiSelect}
+                disabled={batchSelectionLocked}
                 onClick={() => isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true)}
                 className={cn(
                   "app-segmented-button inline-flex items-center gap-1.5 hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-border",
@@ -1001,6 +1128,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[12px] text-muted">{t("mySkills.tags.filter")}</span>
             <button
+              disabled={batchSelectionLocked}
               onClick={() => setTagFilters(new Set())}
               className={cn(
                 "rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
@@ -1015,6 +1143,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
               const isActive = tagFilters.has(UNTAGGED_FILTER);
               return (
                 <button
+                  disabled={batchSelectionLocked}
                   onClick={() => {
                     setTagFilters((prev) => {
                       const next = new Set(prev);
@@ -1041,6 +1170,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
               return (
                 <button
                   key={tag}
+                  disabled={batchSelectionLocked}
                   onClick={() => {
                     setTagFilters((prev) => {
                       const next = new Set(prev);
@@ -1108,10 +1238,13 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
               ...(selectedUnsyncable.length > 0
                 ? [{
                     key: "unsync",
-                    label: t("globalWorkspace.deleteSelected", { count: selectedUnsyncable.length }),
+                    label: t("globalWorkspace.deleteSelected", { count: selectedUnsyncable.length, agent: currentTool?.display_name ?? "" }),
                     icon: <Unlink className="h-3.5 w-3.5" />,
-                    busy: batchRunning,
-                    onSelect: () => setBatchUnsyncConfirm(true),
+                    busy: batchRunning && batchAction === "unsync",
+                    onSelect: () => {
+                      const target = captureBatchTarget(selectedUnsyncable);
+                      if (target && !batchSelectionLocked) setBatchUnsyncTarget(target);
+                    },
                   }]
                 : []),
               ...(selectedDeletable.length > 0
@@ -1120,8 +1253,11 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                     tone: "danger" as const,
                     label: t("globalWorkspace.localSkills.deleteLocalSelected", { count: selectedDeletable.length }),
                     icon: <Trash2 className="h-3.5 w-3.5" />,
-                    busy: batchRunning,
-                    onSelect: () => setBatchDeleteConfirm(true),
+                    busy: batchRunning && batchAction === "local-delete",
+                    onSelect: () => {
+                      const target = captureBatchTarget(selectedDeletable);
+                      if (target && !batchSelectionLocked) setBatchDeleteTarget(target);
+                    },
                   }]
                 : []),
             ]}
@@ -1135,7 +1271,26 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
             }}
             onSelectAll={handleSelectAll}
             onCancel={exitMultiSelect}
+            disabled={batchSelectionLocked}
           />
+        )}
+        {(batchFailures.unsync.length > 0 || batchFailures.localDelete.length > 0) && (
+          <div role="alert" className="mb-3 space-y-1 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-[12px] text-danger">
+            {batchFailures.unsync.length > 0 && (
+              <p>{t("globalWorkspace.batchRemovePartialFailure", {
+                count: batchFailures.unsync.length,
+                agent: currentTool?.display_name ?? "",
+                details: batchFailures.unsync.map(({ name, error }) => `${name}: ${error}`).join("; "),
+              })}</p>
+            )}
+            {batchFailures.localDelete.length > 0 && (
+              <p>{t("globalWorkspace.localSkills.deleteLocalBatchPartialFailure", {
+                count: batchFailures.localDelete.length,
+                agent: currentTool?.display_name ?? "",
+                details: batchFailures.localDelete.map(({ name, error }) => `${name}: ${error}`).join("; "),
+              })}</p>
+            )}
+          </div>
         )}
         <div
           className={cn(
@@ -1165,7 +1320,9 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                 actionsHover={viewMode === "list"}
                 selectable={isMultiSelect}
                 selected={selectedIds.has(key)}
-                onClick={() => isMultiSelect ? toggleSelect(key) : void openLocalDetail(skill)}
+                onClick={() => isMultiSelect
+                  ? (!batchSelectionLocked && toggleSelect(key))
+                  : void openLocalDetail(skill)}
               />
             );
           })}
@@ -1281,29 +1438,31 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         onConfirm={() => pullConfirmSkill ? handlePullLocalSkill(pullConfirmSkill) : Promise.resolve()}
       />
       <ConfirmDialog
-        open={batchUnsyncConfirm}
+        open={!!batchUnsyncTarget}
         title={t("globalWorkspace.removeSkill")}
         message={t("globalWorkspace.batchRemoveConfirm", {
-          count: selectedUnsyncable.length,
-          agent: currentTool?.display_name ?? "",
+          count: batchUnsyncTarget?.skills.length ?? 0,
+          agent: batchUnsyncTarget?.agentName ?? "",
         })}
-        details={selectedUnsyncable.map((skill) => skill.name)}
+        details={batchUnsyncTarget?.skills.map((skill) => skill.name)}
         tone="warning"
         confirmLabel={t("globalWorkspace.removeSkill")}
-        onClose={() => setBatchUnsyncConfirm(false)}
+        lockWhilePending
+        onClose={() => setBatchUnsyncTarget(null)}
         onConfirm={handleBatchUnsync}
       />
 
       <ConfirmDialog
-        open={batchDeleteConfirm}
+        open={!!batchDeleteTarget}
         title={t("globalWorkspace.localSkills.deleteLocalConfirmTitle")}
         message={t("globalWorkspace.localSkills.deleteLocalBatchConfirm", {
-          count: selectedDeletable.length,
-          agent: currentTool?.display_name ?? "",
+          count: batchDeleteTarget?.skills.length ?? 0,
+          agent: batchDeleteTarget?.agentName ?? "",
         })}
-        details={selectedDeletable.map((skill) => skill.relative_path)}
+        details={batchDeleteTarget?.skills.map((skill) => skill.relative_path)}
         confirmLabel={t("common.delete")}
-        onClose={() => setBatchDeleteConfirm(false)}
+        lockWhilePending
+        onClose={() => setBatchDeleteTarget(null)}
         onConfirm={handleBatchDeleteLocal}
       />
 

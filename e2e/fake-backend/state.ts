@@ -28,6 +28,8 @@ export interface Seed {
   projects?: Project[];
   /** Skills found in each project, by project id. */
   projectSkills?: Record<string, ProjectSkill[]>;
+  /** Skills deployed in each global agent workspace. */
+  globalLocalSkills?: Record<string, ProjectSkill[]>;
   projectGit?: Record<string, {
     status: ProjectGitStatus;
     push: ProjectGitPushReview;
@@ -43,6 +45,8 @@ export interface Seed {
   gitStatus?: GitBackupStatus;
   /** The skills.sh catalog: the leaderboard shows all of it, search filters it by name. */
   market?: SkillsShSkill[];
+  /** Skills.sh IDs whose install command should fail, for partial batch tests. */
+  failedInstallSkillIds?: string[];
   scan?: ScanResult;
   /** Answers of the native folder/file dialog, in order; null once used up. */
   dialogPaths?: string[];
@@ -118,6 +122,7 @@ export function createState({ settings, ...seed }: Seed): State {
     presetSkillOrder: {},
     projects: [],
     projectSkills: {},
+    globalLocalSkills: {},
     projectGit: {},
     projectAgentTargets: {},
     tools: [tool("claude_code", "Claude Code"), tool("codex", "Codex")],
@@ -128,6 +133,7 @@ export function createState({ settings, ...seed }: Seed): State {
     centralRepoPendingPath: null,
     gitStatus: gitStatus({ is_repo: false }),
     market: [],
+    failedInstallSkillIds: [],
     scan: { tools_scanned: 0, skills_found: 0, groups: [] },
     dialogPaths: [],
     batchImport: [],
