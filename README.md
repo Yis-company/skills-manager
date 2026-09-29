@@ -5,11 +5,11 @@
 <h1 align="center">Agents Manager</h1>
 
 <p align="center">
-  Manage skills, instruction files, and MCP connections across your coding tools and SSH hosts.
+  Manage Skills, Instructions, and MCP connections across coding agents, projects, and SSH hosts.
 </p>
 
 <p align="center">
-  Forked from <a href="https://github.com/xingkongliang/skills-manager">xingkongliang/skills-manager</a> — thanks to its author and contributors for the original work.
+  <a href="https://github.com/Yis-company/skills-manager">Yis-company/skills-manager</a>
 </p>
 
 <p align="center">
@@ -36,18 +36,17 @@
 
 ## Features
 
-Instructions and MCP connections use the existing library, project and SSH workspaces. See [Agents Manager workflows and CLI](AGENTS-MANAGER.md) for reviewed updates, credential references and backup compatibility.
-
-<p align="center">
-  <img src="assets/diagram-concept-map.png" width="640" alt="Concept map: Library, Preset, Global Workspace, Project Workspace, Agent" />
-</p>
+Agents Manager brings three kinds of reusable resources into one Library: Skills, Instructions, and MCP definitions. The same host selector scopes the Library and Global and Project Workspaces; a remote host keeps its own files and library. See [Agents Manager workflows and CLI](AGENTS-MANAGER.md) for deployment reviews, credential references, recovery, and backup compatibility.
 
 - **Unified skill library** — Install skills from Git repos, local folders, `.zip` / `.skill` archives, or the [skills.sh](https://skills.sh) marketplace. Everything goes into one central repo, which defaults to `~/.skills-manager` and can be customized in **Settings**.
+- **Instructions** — Edit supported instruction files in place or save reusable bundles with linked documents. Review deployments against the current project before applying them; library edits never silently change deployed files.
+- **MCP connections** — Add definitions manually, import supported configurations, or browse the official MCP Registry. Review commands, arguments, and credential references before saving or deploying. The target agent handles process startup and authentication.
 - **Marketplace** — Browse popular skills from the marketplace and find them with keyword search.
 - **Your agents can manage skills** — Claude Code, Codex, Cursor and the rest can install a skill, deploy it to another agent, or report what is where, by driving Agents Manager instead of writing into an agent's folder behind its back — so sources, presets, update tracking and per-agent state stay intact. The Dashboard sets this up in one click; see [Let your agents manage skills](#let-your-agents-manage-skills).
 - **Presets** — Group skills into named presets. In any workspace, click a preset pill to instantly activate or deactivate all its skills for the current agent scope. Applying a preset is a one-time copy, not a live sync. The sidebar lists all presets for quick access.
 - **Global Workspace** — Each agent gets its own page listing every skill in its global folder — including ones installed outside Agents Manager — so the view always reflects what the agent actually sees. Add or remove skills per agent, or use the All Agents overview to manage every installed agent at once.
 - **Project Workspaces** — View and manage project-local skill folders for supported agents, compare them with your central library, and sync changes in either direction. Supports nested skill directories and per-agent assignment when exporting.
+- **SSH hosts** — Register remote macOS or Linux hosts in Settings, connect using your existing SSH access, and manage their own library and project paths from the host selector.
 - **Linked Workspaces** — Point to any directory as a skills root — useful for skills that live outside the default agent paths. Managed as a standalone workspace without participating in global preset sync.
 - **Multi-tool sync** — Sync skills to any supported tool via symlink or copy with a single click. Every skill card shows an agent icon badge per enabled agent — click a badge to install or remove that skill for that agent right from the card, with the badge reflecting live sync state.
 - **Add from Library sheet** — In any workspace, click **+ Add Skills** to open a unified picker: search your central library, toggle target agents with always-visible chips (with select-all/clear), and batch-add multiple skills in one click.
@@ -56,7 +55,7 @@ Instructions and MCP connections use the existing library, project and SSH works
 - **Update tracking** — Check for upstream updates on Git-based skills; re-import local ones.
 - **Skill preview and source inspection** — Read `SKILL.md` / `README.md`, inspect source metadata, and compare local content with the upstream version inside the app.
 - **Custom tools** — Add your own agents/tools with custom skills directories, or override the default path for any built-in tool.
-- **Backup & multi-device sync** — Connect a private GitHub repository with one sign-in (or any Git remote), and the app backs your library up automatically and keeps all connected devices in sync. Merges are skill-aware — a rename on one machine combines cleanly with an edit on another — and skill conflicts keep your local version in place until you choose keep mine / use remote / keep both. Instruction and MCP library conflicts pause the merge until reviewed. Snapshot versions are restorable at any time.
+- **Backup & multi-device sync** — Back up the library, including portable Instructions and MCP definitions, to a Git repository. Skill changes merge by skill; conflicting Instructions or MCP definitions pause the merge for review. Backups and their controls are local to the machine, even when a remote host is selected. Deployment state, overrides, journals, catalog caches, and secrets are excluded. See [backup compatibility](AGENTS-MANAGER.md#backup-compatibility).
 - **Activity log & Export Logs** — Install / remove / update / sync operations are recorded locally. Use **Settings → Export Logs** to bundle recent logs and activity history into a single zip for easier issue reports.
 - **Flexible app settings** — Configure repo path, sync mode, theme, text size, language, tray behavior, proxy, Git remote, update checks, and the order agents appear throughout the app — all in one place.
 - **In-app updates** — The app tells you when a new version is out and installs it for you on macOS and Windows. Nothing downloads or installs on its own: checking only notifies, and installing and restarting each take a click.
@@ -65,7 +64,7 @@ Instructions and MCP connections use the existing library, project and SSH works
 
 ### macOS
 
-Download the `.dmg` for your Mac from the [latest release](https://github.com/A-and-Brian/skills-manager/releases/latest).
+Download the `.dmg` for your Mac from the [latest release](https://github.com/Yis-company/skills-manager/releases/latest).
 
 Releases aren't notarized by Apple yet, so the first time you open the app macOS says it "is damaged and can't be opened". After dragging it to Applications, run this once:
 
@@ -77,18 +76,16 @@ Updates installed from inside the app don't need this.
 
 ### Windows and Linux
 
-Download the installer for your platform from the [latest release](https://github.com/A-and-Brian/skills-manager/releases/latest): `.exe` or `.msi` for Windows, and `.AppImage`, `.deb`, or `.rpm` for Linux (x64 and arm64).
+Download the installer for your platform from the [latest release](https://github.com/Yis-company/skills-manager/releases/latest): `.exe` or `.msi` for Windows, and `.AppImage`, `.deb`, or `.rpm` for Linux (x64 and arm64).
 
 Every installer ships the CLI inside the app — see [Where the binary lives](#where-the-binary-lives).
 
 ## Quick Start
 
-1. Install skills from local folders, Git repositories, archives, or the marketplace.
-2. Open **Global Workspace** from the sidebar and pick an agent (e.g. Claude Code).
-3. Click a **Preset** pill to activate its skills for that agent, or use **+ Add Skills** to pick from your library and toggle target agents inline. Active presets show a ✓; partial installs show a count badge.
-4. To manage project-local skills, open a **Project Workspace** and use the same preset pills or the **+ Add Skills** picker with its multi-agent target selector.
-5. Configure agent paths, custom tools, theme, proxy, and Git preferences in **Settings**.
-6. If you want history or multi-machine sync, open **Backup** in the sidebar and click **Sign in with GitHub** — backup and cross-device sync run automatically from then on.
+1. Add Skills from local folders, Git repositories, archives, or the marketplace; create or import Instructions and MCP definitions in the Library.
+2. Choose a local or registered SSH host, then open Global Workspace or a Project Workspace and select the agent and resources to deploy.
+3. Review instruction and MCP deployment previews before applying them. Use presets or **+ Add Skills** to manage skills in a workspace.
+4. Set up Git backup for the local library from **Backup** or **Settings** when you want history or multi-device sync.
 
 ## Let your agents manage skills
 
@@ -96,10 +93,10 @@ Claude Code, Codex, Cursor and the rest can install a skill, deploy it to anothe
 
 The Dashboard offers a one-time setup: pick the agents that should be able to do it, and the app installs the [`manage-skills`](skills/manage-skills/SKILL.md) skill and deploys it to exactly those. Afterwards it is an ordinary library skill — adding or removing an agent is the agent badge row on its own card. No PATH setup is involved: the app publishes a copy of its CLI where agents look for it.
 
-It is also an ordinary published skill, so it can be installed without the app:
+It is also published as a skill, so it can be installed without the app:
 
 ```bash
-npx skills add A-and-Brian/skills-manager
+npx skills add Yis-company/skills-manager
 ```
 
 ## Backup & Multi-Device Sync
@@ -116,12 +113,13 @@ The **Backup** page (sidebar) keeps your skill library versioned in a Git reposi
 
 - **Automatic**: local changes are committed and pushed in the background a couple of minutes after you stop editing; updates pushed by your other devices are merged in and pushed back automatically. **Back Up Now** is always available for an immediate run, and every backup in the history shows which device made it.
 - **Skill-aware merging**: changes are merged per skill, not per text line — renaming a skill on one machine combines cleanly with editing its content on another.
-- **Conflicts never block or overwrite**: if the same skill was edited on two devices at once, everything else syncs normally while that skill keeps your local version and appears under **Needs attention** (also badged on its card in the Library). Pick **keep mine / use remote / keep both** — a safety snapshot is taken before any choice is applied, so every decision is undoable.
+- **Skill conflicts**: if the same skill was edited on two devices at once, review the conflict and choose **keep mine / use remote / keep both**. A safety snapshot is taken before a choice is applied.
+- **Instruction and MCP conflicts**: a conflicting bundle or definition pauses the merge. Choose which version to keep in the Library, then run sync again.
 - **Snapshots & restore**: manual backups create snapshot versions; open the Backup page history to restore any of them. A restore first saves the current state as its own snapshot.
 
 ### What's included
 
-Skills, tags, presets, and per-agent skill toggles are backed up. Secrets (API keys, tokens, proxy settings) and machine-specific wiring never leave the machine. Skills over 100 MB stay local and are excluded from backup automatically (labeled on the Backup page). The SQLite database is not in Git — it stores metadata that is rebuilt from the skill files.
+Skills, tags, presets, per-agent skill toggles, portable instruction bundles, and MCP definitions are backed up. Deployment state, overrides, journals, catalog caches, and secrets stay local. Backups are controlled by the local machine even while an SSH host is selected. Skills over 100 MB stay local and are excluded from backup automatically (labeled on the Backup page). The SQLite database is not in Git — it stores metadata that is rebuilt from the skill files.
 
 ### Disconnecting
 
@@ -129,11 +127,13 @@ The Backup page offers three levels: **disconnect this machine** (other devices 
 
 ## Supported Tools
 
-54 agents are supported out of the box, including:
+Skill management supports 54 agents out of the box, including:
 
 Claude Code · Codex · Cursor · GitHub Copilot · Gemini CLI · GitLab Duo · OpenCode · OpenClaw · Hermes Agent · OpenHands · Cline · Goose · Windsurf · Continue · Grok · Antigravity · Qwen Code · ZCode · Crush · Kilo Code · Roo Code · Amp · Kiro CLI · Droid · TRAE IDE · Warp · Qoder · CodeBuddy
 
 **Settings** lists them all, leading with the ones detected on your machine. You can also add custom tools there and manage their skills the same way.
+
+Instruction and MCP support varies by agent and scope; see the [capability boundaries](AGENTS-MANAGER.md#mcp-connections).
 
 ## Tech Stack
 
@@ -195,6 +195,8 @@ Available command groups:
 - `repo` — inspect or change the configured base directory
 - `agents` (`tools` alias) — list agents and globally enable or disable them
 - `skills` — manage the central library and real per-agent deployments (`deploy / undeploy / status`)
+- `instructions` — save, inspect, scan, preview, apply, and recover instruction bundles
+- `mcps` — inspect capabilities, manage definitions, preview deployments, and recover operations
 - `presets` — create, update, delete, organize, deploy, undeploy, and inspect presets
 - `git` — operate on the git-backed `skills/` repository (`clone`, `pull`, `push`, `commit`, `versions`, `restore`)
 
@@ -232,7 +234,7 @@ Remote connections require the CLI version to match the local desktop app. When 
 
 The app downloads the matching macOS or Linux CLI from `Yis-company/skills-manager`, transfers it using your existing SSH access, and selects a separate versioned CLI for that connection. It keeps the remote desktop app, its published CLI, and your skill library in place. No remote internet access or `sudo` is needed. An unpublished version or unsupported platform produces an error without changing the selected CLI.
 
-Desktop update checks and installation also use `Yis-company/skills-manager`. Older installed builds contain `A-and-Brian/skills-manager` URLs, which currently redirect to this fork. They can receive the correction through a normal app update while those redirects remain available. If a redirect stops working, install a corrected build from the [fork's releases](https://github.com/Yis-company/skills-manager/releases). Editing a checkout does not change an already installed app.
+Desktop update checks and installation also use `Yis-company/skills-manager`. Editing a checkout does not change an already installed app.
 
 ### Build
 
@@ -269,15 +271,11 @@ If the fix needs a code change, merge it with a changeset and release the next v
 
 ## Troubleshooting
 
-[Open an issue](https://github.com/A-and-Brian/skills-manager/issues), and attach the bundle from **Settings → Export Logs**.
-
-## Support
-
-Agents Manager is free and open source. If it saves you time, you can support this fork through [GitHub Sponsors](https://github.com/sponsors/A-and-Brian) or [buycoffee.to](https://buycoffee.to/yibtam), once a month or as a one-off. Support goes to the work done here since the fork: new features, fixes and releases. It doesn't go to the original project. To support the original author, see [xingkongliang/skills-manager](https://github.com/xingkongliang/skills-manager).
+[Open an issue](https://github.com/Yis-company/skills-manager/issues), and attach the bundle from **Settings → Export Logs**.
 
 ## Credits
 
-Agents Manager began as a fork of [xingkongliang/skills-manager](https://github.com/xingkongliang/skills-manager). Most of the app — and the history in [CHANGELOG.md](CHANGELOG.md) up to 1.40.0 — is their work.
+Agents Manager builds on [skills-manager by xingkongliang](https://github.com/xingkongliang/skills-manager). We thank the original author and contributors for their work.
 
 ## License
 
