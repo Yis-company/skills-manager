@@ -164,4 +164,19 @@
   .app-badge {
     @apply inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-hover px-2.5 py-1 text-[12px] font-medium text-tertiary;
   }
+
+  /* Tiptap rich Markdown editor (MarkdownEditor.tsx). */
+  .markdown-editor {
+    @apply space-y-2 leading-6;
+  }
+  .markdown-editor h1 { @apply text-[18px] font-semibold text-primary; }
+  .markdown-editor h2 { @apply text-[15px] font-semibold text-primary; }
+  .markdown-editor h3 { @apply text-[13px] font-semibold text-primary; }
+  .markdown-editor ul { @apply list-disc pl-5; }
+  .markdown-editor ol { @apply list-decimal pl-5; }
+  .markdown-editor code { @apply rounded bg-surface-hover px-1 font-mono text-[12px]; }
+  .markdown-editor pre { @apply overflow-x-auto rounded-lg bg-surface-hover p-2 font-mono text-[12px]; }
+  .markdown-editor pre code { @apply bg-transparent p-0; }
+  .markdown-editor blockquote { @apply border-l-2 border-border pl-3 text-muted; }
+  .markdown-editor a { @apply text-accent underline; }
 }

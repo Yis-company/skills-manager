@@ -119,6 +119,7 @@ export const handlers: Record<string, Handler<never>> = {
       settings: remoteState.settings,
       instructionBundles: remoteState.instructionBundles,
       instructionFiles: remoteState.instructionFiles,
+      instructionWorktrees: remoteState.instructionWorktrees,
       mcpDefinitions: remoteState.mcpDefinitions,
       mcpTargets: remoteState.mcpTargets,
       resourcePreviews: remoteState.resourcePreviews,
@@ -185,6 +186,7 @@ export const handlers: Record<string, Handler<never>> = {
       );
       return { removed: true };
     }
+    if (action === "worktrees") return { items: state.instructionWorktrees };
     if (action === "scan")
       return {
         target: request.target,

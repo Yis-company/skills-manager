@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useApp } from "../context/AppContext";
 import { invokeHost } from "../lib/hostCall";
+import { InstructionFileTree } from "./InstructionFileTree";
+import { MarkdownEditor } from "./MarkdownEditor";
 import { cn } from "../utils";
 import { useLocation, useRouter, useSearch } from "@tanstack/react-router";
 
@@ -175,6 +175,11 @@ function ResourceWorkspaceBody({
             )}
           >
             {key === "mcps" ? "MCPs" : key[0].toUpperCase() + key.slice(1)}
+            {key === "mcps" && (
+              <span className="ml-1.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                Alpha
+              </span>
+            )}
           </button>
         ))}
         {tab !== "skills" && !scopedAgent && (
@@ -1500,7 +1505,10 @@ function InstructionsLibrary({
   const [libraryTab, setLibraryTab] = useState<"library" | "files">(
     scope.kind === "library" ? "library" : "files",
   );
-  const [previewMode, setPreviewMode] = useState(false);
+  const [worktrees, setWorktrees] = useState<
+    { name: string; path: string; branch?: string; is_main: boolean }[]
+  >([]);
+  const [worktree, setWorktree] = useState("");
   const { tools } = useApp();
   const tool = tools.find((candidate) => candidate.key === agentKey);
   const scopeRestriction =
@@ -1511,6 +1519,11 @@ function InstructionsLibrary({
   const instructionTarget = {
     agent_key: agentKey,
     ...(target.projectId ? { project_id: target.projectId } : {}),
+  };
+  // Worktrees scope file browsing and editing; bundle updates stay on the main project.
+  const fileTarget = {
+    ...instructionTarget,
+    ...(worktree ? { worktree } : {}),
   };
   const nativeInstructionPath = () =>
     ({
@@ -1541,9 +1554,7 @@ function InstructionsLibrary({
         warnings: string[];
       }>({
         action: "scan",
-        target: {
-          ...instructionTarget,
-        },
+        target: fileTarget,
         ...(directory ? { include_dirs: [directory] } : {}),
       });
       setDiskFiles(result.files);
@@ -1580,6 +1591,7 @@ function InstructionsLibrary({
           target: {
             agent_key: agentKey,
             ...(target.projectId ? { project_id: target.projectId } : {}),
+            ...(worktree ? { worktree } : {}),
           },
           ...(scopeDir ? { include_dirs: [scopeDir] } : {}),
         },
@@ -1607,9 +1619,29 @@ function InstructionsLibrary({
     agentKey,
     target.projectId,
     scopeDir,
+    worktree,
     unavailable,
     blockedReason,
   ]);
+  useEffect(() => {
+    setWorktree("");
+    setWorktrees([]);
+    if (!target.projectId) return;
+    let current = true;
+    void invokeHost<{ items: typeof worktrees }>(hostId, "instructions_request", {
+      request: { action: "worktrees", project_id: target.projectId },
+    })
+      .then((result) => {
+        if (current) setWorktrees(result.items);
+      })
+      .catch((error) => {
+        if (current)
+          setNotice(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      current = false;
+    };
+  }, [hostId, target.projectId]);
   const newBundle = () => {
     setPreview(null);
     setSelected("");
@@ -1673,9 +1705,7 @@ function InstructionsLibrary({
         revision: string;
       }>({
         action: "read",
-        target: {
-          ...instructionTarget,
-        },
+        target: fileTarget,
         path: file.path,
       });
       setEditContent(result.content);
@@ -1692,9 +1722,7 @@ function InstructionsLibrary({
     try {
       const result = await request<{ path: string; revision: string }>({
         action: "write",
-        target: {
-          ...instructionTarget,
-        },
+        target: fileTarget,
         path,
         content: editContent,
         expected_revision: loadedRevision,
@@ -1856,6 +1884,42 @@ function InstructionsLibrary({
       {blockedReason && (
         <div className="app-panel p-3 text-[12px] text-muted">
           {blockedReason}
+        </div>
+      )}
+      {!blockedReason && worktrees.length > 1 && (
+        <div
+          role="tablist"
+          aria-label="Worktrees"
+          className="flex flex-wrap items-center gap-2 border-b border-border-faint pb-2"
+        >
+          {worktrees.map((entry) => {
+            const value = entry.is_main ? "" : entry.path;
+            return (
+              <button
+                key={entry.path}
+                role="tab"
+                aria-selected={worktree === value}
+                title={entry.path}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-[12px]",
+                  worktree === value
+                    ? "bg-surface-active text-primary"
+                    : "text-muted hover:bg-surface-hover hover:text-primary",
+                )}
+                onClick={() => {
+                  setWorktree(value);
+                  setPath("");
+                  setEditContent("");
+                  setLoadedRevision(null);
+                }}
+              >
+                {entry.is_main ? "main" : entry.name}
+                {entry.branch && (
+                  <span className="text-muted">{` (${entry.branch})`}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
       {!blockedReason && (
@@ -2023,22 +2087,14 @@ function InstructionsLibrary({
                       Remove
                     </button>
                   </div>
-                  {previewMode ? (
-                    <MarkdownPreview content={content} />
-                  ) : (
-                    <textarea
-                      aria-label={`${filePath} content`}
-                      className={`${inputClass} mt-2 font-mono text-[12px]`}
-                      rows={7}
-                      value={content}
-                      onChange={(e) =>
-                        setFiles((old) => ({
-                          ...old,
-                          [filePath]: e.target.value,
-                        }))
-                      }
-                    />
-                  )}
+                  <MarkdownEditor
+                    ariaLabel={`${filePath} content`}
+                    rows={7}
+                    value={content}
+                    onChange={(next) =>
+                      setFiles((old) => ({ ...old, [filePath]: next }))
+                    }
+                  />
                 </div>
               ))}
             </div>
@@ -2059,12 +2115,6 @@ function InstructionsLibrary({
               >
                 Add file
               </button>
-              <button
-                className="app-button"
-                onClick={() => setPreviewMode((old) => !old)}
-              >
-                {previewMode ? "Edit" : "Preview"}
-              </button>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -2078,7 +2128,12 @@ function InstructionsLibrary({
                 <>
                   <button
                     className="app-button"
-                    disabled={busy || !!scopeRestriction}
+                    disabled={busy || !!scopeRestriction || !!worktree}
+                    title={
+                      worktree
+                        ? "Bundle updates apply to the main project. Switch to the main worktree."
+                        : undefined
+                    }
                     onClick={() => void previewBundle()}
                   >
                     Review updates
@@ -2100,53 +2155,31 @@ function InstructionsLibrary({
             <h3 className="border-b border-border-faint px-3 py-2 text-[13px] font-semibold">
               Files in this scope
             </h3>
-            {diskFiles.map((file) => (
-              <button
-                key={file.path}
-                className={cn(
-                  "block w-full border-b border-border-faint px-3 py-2 text-left hover:bg-surface-hover",
-                  path === file.path && "bg-surface-active",
-                )}
-                onClick={() => void openDiskFile(file)}
-              >
-                <span className="block break-all text-[12px] font-medium">
-                  {file.path}
-                </span>
-                <span className="text-[10px] text-muted">
-                  {file.applicable === false ? "Referenced document" : file.kind}
-                  {file.managed ? " · managed" : " · local"}
-                  {file.conflict ? " · changed since deployment" : ""}
-                  {file.symlink_target && (
-                    <span className="block break-all">
-                      Link target: {file.symlink_target}
-                    </span>
-                  )}
-                </span>
-              </button>
-            ))}
-            {excluded.map((entry) => (
-              <p
-                key={entry.path}
-                title={entry.reason}
-                className="px-3 py-2 text-[11px] text-muted"
-              >
-                Skipped {entry.path}
-              </p>
-            ))}
+            <InstructionFileTree
+              files={diskFiles}
+              selectedPath={path}
+              onOpen={(file) => void openDiskFile(file)}
+            />
+            {excluded.length > 0 && (
+              <details className="border-t border-border-faint px-3 py-2 text-[11px] text-muted">
+                <summary className="cursor-pointer">
+                  Skipped ({excluded.length})
+                </summary>
+                {excluded.map((entry) => (
+                  <p key={entry.path} title={entry.reason} className="mt-1 break-all">
+                    {entry.path}: {entry.reason}
+                  </p>
+                ))}
+              </details>
+            )}
           </div>
           <div className="app-panel space-y-3 p-4">
             <div className="flex items-center justify-between">
               <h3 className="text-[13px] font-semibold">{path}</h3>
               <div className="flex gap-2">
                 <button
-                  className="app-button"
-                  onClick={() => setPreviewMode((old) => !old)}
-                >
-                  {previewMode ? "Edit" : "Preview"}
-                </button>
-                <button
                   className="app-button-primary"
-                  disabled={busy || !loadedRevision || previewMode}
+                  disabled={busy || !loadedRevision}
                   onClick={() => void saveDiskFile()}
                 >
                   Save file
@@ -2175,15 +2208,13 @@ function InstructionsLibrary({
                 </button>
               </div>
             </div>
-            {previewMode ? (
-              <MarkdownPreview content={editContent} />
-            ) : (
-              <textarea
-                aria-label="Instruction file content"
-                className={`${inputClass} font-mono text-[12px]`}
+            {path && (
+              <MarkdownEditor
+                key={`${worktree}:${path}`}
+                ariaLabel="Instruction file content"
                 rows={18}
                 value={editContent}
-                onChange={(e) => setEditContent(e.target.value)}
+                onChange={setEditContent}
               />
             )}
             {references.length > 0 && (
@@ -2319,17 +2350,6 @@ function InstructionsLibrary({
         </div>
       )}
     </section>
-  );
-}
-
-function MarkdownPreview({ content }: { content: string }) {
-  return (
-    <div className="prose prose-sm dark:prose-invert mt-2 max-w-none overflow-auto rounded-lg border border-border-faint p-3 text-[12px]">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{ img: ({ alt }) => <span>[Image: {alt || "unnamed"}]</span> }}
-      >{content}</ReactMarkdown>
-    </div>
   );
 }
 
