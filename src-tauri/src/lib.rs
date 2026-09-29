@@ -1019,6 +1019,7 @@ pub fn run() {
             commands::resources::instructions_request,
             commands::resources::mcps_request,
             commands::resources::resource_sync_request,
+            commands::projects::project_git_request,
             // Tools
             commands::tools::get_tool_status,
             commands::tools::set_tool_enabled,

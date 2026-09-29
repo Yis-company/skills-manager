@@ -75,6 +75,7 @@ pub const COMMANDS: &[&str] = &[
     "update_global_local_skill_from_center",
     "delete_global_local_skill",
     // Projects
+    "project_git_request",
     "get_projects",
     "add_project",
     "add_linked_workspace",
@@ -170,6 +171,11 @@ fn reply<T: Serialize>(result: Result<T, AppError>) -> Result<Value, AppError> {
 pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, AppError> {
     let a = Args(args);
     match command {
+        "project_git_request" => projects::project_git_request_core(
+            ctx,
+            &a.req::<String>("projectId")?,
+            a.req("request")?,
+        ),
         "instructions_request" => crate::core::instructions::dispatch(ctx, a.req("request")?),
         "mcps_request" => crate::core::mcps::dispatch(ctx, a.req("request")?),
         "resource_sync_request" => crate::core::resource_sync::dispatch(ctx, a.req("request")?),
