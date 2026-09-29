@@ -8,6 +8,7 @@ type Target = {
   agent_key: "claude_code" | "codex" | "antigravity" | "hermes" | "cursor";
   project_id?: string;       // absent means the user's home directory
   relative_dir?: string;     // path under the agent's instruction root
+  worktree?: string;         // absolute path of a project worktree (scan/read/write)
 };
 
 type Request =
@@ -25,7 +26,8 @@ type Request =
       resolutions?: Record<string, "keep_local" | "take_library">; dry_run?: boolean }
   | { action: "deployments" }
   | { action: "undeploy"; deployment_id: string }
-  | { action: "recover" };
+  | { action: "recover" }
+  | { action: "worktrees"; project_id: string };
 ```
 
 Library bundles are complete `.md`/`.mdc` files. `list` returns summaries,
@@ -48,6 +50,13 @@ explicit `keep_local` or `take_library` resolution. Apply preflights every
 target path and byte value, journals the transaction, and restores only files
 that still contain transaction output. `recover` returns transaction id, kind,
 status, affected relative paths, failures and remaining recovery work.
+
+`worktrees` lists the project's git working trees, main first:
+`{ items: { name, path, branch?, is_main }[] }`. It is empty unless the project
+path is the root of a working tree. A target `worktree` must be one of those
+paths. Project scans skip the project's other worktrees, so nested worktrees do
+not show up as project instructions. Bundle preview rejects worktree targets;
+bundles deploy to the main project directory.
 
 Global Cursor instructions are unsupported. Global Claude Code, Codex,
 Antigravity and Hermes use their native config roots; Codex honors `CODEX_HOME`

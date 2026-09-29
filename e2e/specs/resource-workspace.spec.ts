@@ -277,3 +277,37 @@ test("project resources can select every assigned agent and nested edits retain 
     calls.findLast((call) => call.request.action === "write")?.request.target,
   ).not.toHaveProperty("relative_dir");
 });
+
+test("project worktrees get their own tabs and scope file scans", async ({
+  page,
+  backend,
+}) => {
+  await backend.patch({
+    projects: [project("repo", "Repo", 0, { agent_keys: ["claude_code"] })],
+    instructionWorktrees: [
+      { name: "repo", path: "/work/repo", branch: "main", is_main: true },
+      {
+        name: "fix-login",
+        path: "/work/repo/.claude/worktrees/fix-login",
+        branch: "fix/login",
+        is_main: false,
+      },
+    ],
+  });
+  await page.goto("/project/repo?resource=instructions");
+  const tabs = page.getByRole("tablist", { name: "Worktrees" });
+  await expect(tabs.getByRole("tab", { name: "main (main)" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await tabs.getByRole("tab", { name: "fix-login (fix/login)" }).click();
+  await expect
+    .poll(async () => {
+      const calls = (await backend.calls("instructions_request")) as {
+        request: { action: string; target?: { worktree?: string } };
+      }[];
+      return calls.findLast((call) => call.request.action === "scan")?.request
+        .target?.worktree;
+    })
+    .toBe("/work/repo/.claude/worktrees/fix-login");
+});

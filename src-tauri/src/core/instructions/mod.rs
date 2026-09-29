@@ -74,6 +74,9 @@ enum Request {
         deployment_id: String,
     },
     Recover,
+    Worktrees {
+        project_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +84,18 @@ struct Target {
     agent_key: String,
     project_id: Option<String>,
     relative_dir: Option<String>,
+    /// Absolute path of a linked git worktree of the project. Omitted when
+    /// absent so stored deployment targets keep comparing equal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    worktree: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct Worktree {
+    name: String,
+    path: PathBuf,
+    branch: Option<String>,
+    is_main: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +161,9 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
         Request::Deployments => deployments(ctx).map(|items| json!({"items":items})),
         Request::Undeploy { deployment_id } => undeploy(ctx, &deployment_id),
         Request::Recover => recover(ctx),
+        Request::Worktrees { project_id } => {
+            project_dir(ctx, &project_id).map(|dir| json!({"items":project_worktrees(&dir)}))
+        }
     }
 }
 
@@ -480,15 +498,26 @@ fn resolve_target(ctx: &HostCtx, target: &Target) -> Result<PathBuf, AppError> {
     }
     let base = match target.project_id.as_deref() {
         Some(id) => {
-            let project = PathBuf::from(
-                db(ctx.store.get_project_by_id(id))?
-                    .ok_or_else(|| AppError::not_found("project not found"))?
-                    .path,
-            );
-            if !project.is_dir() {
-                return Err(AppError::not_found("project directory is unavailable"));
+            let project = project_dir(ctx, id)?;
+            match target.worktree.as_deref() {
+                None => project,
+                Some(worktree) => {
+                    let wanted = fs::canonicalize(worktree)
+                        .map_err(|_| AppError::not_found("worktree is unavailable"))?;
+                    if !project_worktrees(&project)
+                        .iter()
+                        .any(|candidate| candidate.path == wanted)
+                    {
+                        return Err(err("worktree does not belong to this project"));
+                    }
+                    wanted
+                }
             }
-            fs::canonicalize(project).map_err(AppError::io)?
+        }
+        None if target.worktree.is_some() => {
+            return Err(err(
+                "worktrees are available only for project instruction scopes",
+            ));
         }
         None => {
             let override_path = match target.agent_key.as_str() {
@@ -510,6 +539,84 @@ fn resolve_target(ctx: &HostCtx, target: &Target) -> Result<PathBuf, AppError> {
     let rel = target.relative_dir.as_deref().unwrap_or("");
     let extra = safe_relative_optional(rel)?;
     Ok(base.join(extra))
+}
+
+fn project_dir(ctx: &HostCtx, id: &str) -> Result<PathBuf, AppError> {
+    let project = PathBuf::from(
+        db(ctx.store.get_project_by_id(id))?
+            .ok_or_else(|| AppError::not_found("project not found"))?
+            .path,
+    );
+    if !project.is_dir() {
+        return Err(AppError::not_found("project directory is unavailable"));
+    }
+    fs::canonicalize(project).map_err(AppError::io)
+}
+
+/// Main working tree first, then linked worktrees that still exist on disk.
+/// Empty unless `project` is the root of a git working tree.
+fn project_worktrees(project: &Path) -> Vec<Worktree> {
+    let Ok(opened) = git2::Repository::open(project) else {
+        return Vec::new();
+    };
+    if opened
+        .workdir()
+        .and_then(|dir| fs::canonicalize(dir).ok())
+        .as_deref()
+        != Some(project)
+    {
+        return Vec::new();
+    }
+    let main = if opened.is_worktree() {
+        // A linked worktree's git dir names the shared repository in `commondir`.
+        let common = fs::read_to_string(opened.path().join("commondir")).unwrap_or_default();
+        match git2::Repository::open(opened.path().join(common.trim())) {
+            Ok(main) => main,
+            Err(_) => return Vec::new(),
+        }
+    } else {
+        opened
+    };
+    let branch = |repo: &git2::Repository| {
+        repo.head()
+            .ok()
+            .filter(|head| head.is_branch())
+            .and_then(|head| head.shorthand().map(ToOwned::to_owned))
+    };
+    let mut items = Vec::new();
+    if let Some(path) = main.workdir().and_then(|dir| fs::canonicalize(dir).ok()) {
+        items.push(Worktree {
+            name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path,
+            branch: branch(&main),
+            is_main: true,
+        });
+    }
+    let names: Vec<String> = main
+        .worktrees()
+        .map(|names| names.iter().flatten().map(str::to_owned).collect())
+        .unwrap_or_default();
+    for name in names {
+        let Ok(worktree) = main.find_worktree(&name) else {
+            continue;
+        };
+        let Ok(path) = fs::canonicalize(worktree.path()) else {
+            continue;
+        };
+        let branch = git2::Repository::open_from_worktree(&worktree)
+            .ok()
+            .and_then(|repo| branch(&repo));
+        items.push(Worktree {
+            name,
+            path,
+            branch,
+            is_main: false,
+        });
+    }
+    items
 }
 
 fn safe_relative_optional(s: &str) -> Result<PathBuf, AppError> {
@@ -590,6 +697,14 @@ fn scan(ctx: &HostCtx, target: &Target, include_dirs: &[String]) -> Result<Value
         );
     }
     let root_c = fs::canonicalize(&root).map_err(AppError::io)?;
+    let other_worktrees: BTreeSet<PathBuf> = match target.project_id.as_deref() {
+        Some(id) => project_worktrees(&project_dir(ctx, id)?)
+            .into_iter()
+            .map(|worktree| worktree.path)
+            .filter(|path| path != &root_c)
+            .collect(),
+        None => BTreeSet::new(),
+    };
     let mut roots = vec![(root.clone(), false)];
     for d in include_dirs {
         match safe_relative_optional(d) {
@@ -661,6 +776,12 @@ fn scan(ctx: &HostCtx, target: &Target, include_dirs: &[String]) -> Result<Value
                     )
                 {
                     excluded.push(json!({"path":p,"reason":"ignored directory"}));
+                    continue;
+                }
+                if p.is_dir()
+                    && fs::canonicalize(&p).is_ok_and(|path| other_worktrees.contains(&path))
+                {
+                    excluded.push(json!({"path":p,"reason":"separate worktree"}));
                     continue;
                 }
                 let ty = match e.file_type() {
@@ -1160,6 +1281,9 @@ fn guarded_for_preview(root: &Path, rel: &Path) -> Result<PathBuf, AppError> {
 }
 
 fn preview(ctx: &HostCtx, target: Target, id: &str, dry_run: bool) -> Result<Value, AppError> {
+    if target.worktree.is_some() {
+        return Err(err("bundle updates apply to the main project directory"));
+    }
     let (def, incoming) = load_definition(id)?;
     if !incoming.keys().any(|path| {
         supported_instruction_file(&target.agent_key, path, target.project_id.is_some())
@@ -2088,7 +2212,70 @@ mod tests {
             agent_key: "claude_code".into(),
             project_id: Some(id),
             relative_dir: None,
+            worktree: None,
         }
+    }
+
+    #[test]
+    fn worktrees_are_listed_and_scanned_separately() {
+        let repo = test_repo();
+        let project = repo._tmp.path().join("project");
+        fs::create_dir_all(project.join(".claude/worktrees")).unwrap();
+        let git = git2::Repository::init(&project).unwrap();
+        let signature = git2::Signature::now("test", "test@example.com").unwrap();
+        let tree = git
+            .find_tree(git.index().unwrap().write_tree().unwrap())
+            .unwrap();
+        git.commit(Some("HEAD"), &signature, &signature, "init", &tree, &[])
+            .unwrap();
+        let nested = project.join(".claude/worktrees/nested");
+        let outside = repo._tmp.path().join("outside");
+        git.worktree("nested", &nested, None).unwrap();
+        git.worktree("outside", &outside, None).unwrap();
+        fs::write(project.join("CLAUDE.md"), "main").unwrap();
+        fs::write(nested.join("CLAUDE.md"), "nested").unwrap();
+        fs::write(outside.join("CLAUDE.md"), "outside").unwrap();
+        let store = SkillStore::new(&repo._tmp.path().join("worktrees.db")).unwrap();
+        let ctx = HostCtx::for_tests(store, Arc::new(NoopEvents));
+        let target = project_target(&ctx, &project);
+        let project_id = target.project_id.clone().unwrap();
+
+        let listed = dispatch(&ctx, json!({"action":"worktrees","project_id":project_id})).unwrap();
+        let items = listed["items"].as_array().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["is_main"], true);
+        let outside_path = fs::canonicalize(&outside).unwrap();
+        assert!(items
+            .iter()
+            .any(|item| item["path"] == json!(outside_path) && item["branch"] == "outside"));
+
+        let paths = |target: &Target| -> Vec<String> {
+            dispatch(&ctx, json!({"action":"scan","target":target})).unwrap()["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|file| file["path"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(paths(&target), vec!["CLAUDE.md"]);
+        let in_nested = Target {
+            worktree: Some(nested.to_string_lossy().into_owned()),
+            ..target.clone()
+        };
+        assert_eq!(paths(&in_nested), vec!["CLAUDE.md"]);
+        let read = dispatch(
+            &ctx,
+            json!({"action":"read","target":in_nested,"path":"CLAUDE.md"}),
+        )
+        .unwrap();
+        assert_eq!(read["content"], "nested");
+
+        let unrelated = Target {
+            worktree: Some(repo._tmp.path().to_string_lossy().into_owned()),
+            ..target.clone()
+        };
+        assert!(dispatch(&ctx, json!({"action":"scan","target":unrelated})).is_err());
+        drop(repo);
     }
 
     #[test]

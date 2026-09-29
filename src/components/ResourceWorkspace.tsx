@@ -1506,6 +1506,10 @@ function InstructionsLibrary({
     scope.kind === "library" ? "library" : "files",
   );
   const [previewMode, setPreviewMode] = useState(false);
+  const [worktrees, setWorktrees] = useState<
+    { name: string; path: string; branch?: string; is_main: boolean }[]
+  >([]);
+  const [worktree, setWorktree] = useState("");
   const { tools } = useApp();
   const tool = tools.find((candidate) => candidate.key === agentKey);
   const scopeRestriction =
@@ -1516,6 +1520,11 @@ function InstructionsLibrary({
   const instructionTarget = {
     agent_key: agentKey,
     ...(target.projectId ? { project_id: target.projectId } : {}),
+  };
+  // Worktrees scope file browsing and editing; bundle updates stay on the main project.
+  const fileTarget = {
+    ...instructionTarget,
+    ...(worktree ? { worktree } : {}),
   };
   const nativeInstructionPath = () =>
     ({
@@ -1546,9 +1555,7 @@ function InstructionsLibrary({
         warnings: string[];
       }>({
         action: "scan",
-        target: {
-          ...instructionTarget,
-        },
+        target: fileTarget,
         ...(directory ? { include_dirs: [directory] } : {}),
       });
       setDiskFiles(result.files);
@@ -1585,6 +1592,7 @@ function InstructionsLibrary({
           target: {
             agent_key: agentKey,
             ...(target.projectId ? { project_id: target.projectId } : {}),
+            ...(worktree ? { worktree } : {}),
           },
           ...(scopeDir ? { include_dirs: [scopeDir] } : {}),
         },
@@ -1612,9 +1620,29 @@ function InstructionsLibrary({
     agentKey,
     target.projectId,
     scopeDir,
+    worktree,
     unavailable,
     blockedReason,
   ]);
+  useEffect(() => {
+    setWorktree("");
+    setWorktrees([]);
+    if (!target.projectId) return;
+    let current = true;
+    void invokeHost<{ items: typeof worktrees }>(hostId, "instructions_request", {
+      request: { action: "worktrees", project_id: target.projectId },
+    })
+      .then((result) => {
+        if (current) setWorktrees(result.items);
+      })
+      .catch((error) => {
+        if (current)
+          setNotice(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      current = false;
+    };
+  }, [hostId, target.projectId]);
   const newBundle = () => {
     setPreview(null);
     setSelected("");
@@ -1678,9 +1706,7 @@ function InstructionsLibrary({
         revision: string;
       }>({
         action: "read",
-        target: {
-          ...instructionTarget,
-        },
+        target: fileTarget,
         path: file.path,
       });
       setEditContent(result.content);
@@ -1697,9 +1723,7 @@ function InstructionsLibrary({
     try {
       const result = await request<{ path: string; revision: string }>({
         action: "write",
-        target: {
-          ...instructionTarget,
-        },
+        target: fileTarget,
         path,
         content: editContent,
         expected_revision: loadedRevision,
@@ -1861,6 +1885,42 @@ function InstructionsLibrary({
       {blockedReason && (
         <div className="app-panel p-3 text-[12px] text-muted">
           {blockedReason}
+        </div>
+      )}
+      {!blockedReason && worktrees.length > 1 && (
+        <div
+          role="tablist"
+          aria-label="Worktrees"
+          className="flex flex-wrap items-center gap-2 border-b border-border-faint pb-2"
+        >
+          {worktrees.map((entry) => {
+            const value = entry.is_main ? "" : entry.path;
+            return (
+              <button
+                key={entry.path}
+                role="tab"
+                aria-selected={worktree === value}
+                title={entry.path}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-[12px]",
+                  worktree === value
+                    ? "bg-surface-active text-primary"
+                    : "text-muted hover:bg-surface-hover hover:text-primary",
+                )}
+                onClick={() => {
+                  setWorktree(value);
+                  setPath("");
+                  setEditContent("");
+                  setLoadedRevision(null);
+                }}
+              >
+                {entry.is_main ? "main" : entry.name}
+                {entry.branch && (
+                  <span className="text-muted">{` (${entry.branch})`}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
       {!blockedReason && (
@@ -2083,7 +2143,12 @@ function InstructionsLibrary({
                 <>
                   <button
                     className="app-button"
-                    disabled={busy || !!scopeRestriction}
+                    disabled={busy || !!scopeRestriction || !!worktree}
+                    title={
+                      worktree
+                        ? "Bundle updates apply to the main project. Switch to the main worktree."
+                        : undefined
+                    }
                     onClick={() => void previewBundle()}
                   >
                     Review updates

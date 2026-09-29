@@ -79,6 +79,12 @@ export interface Seed {
       kind: "root" | "nested" | "override" | "native";
     }
   >;
+  instructionWorktrees?: {
+    name: string;
+    path: string;
+    branch?: string;
+    is_main: boolean;
+  }[];
   mcpDefinitions?: {
     id: string;
     name: string;
@@ -138,6 +144,7 @@ export function createState({ settings, ...seed }: Seed): State {
     deleteFailedIds: [],
     instructionBundles: [],
     instructionFiles: {},
+    instructionWorktrees: [],
     mcpDefinitions: [],
     mcpTargets: {},
     resourcePreviews: {},
