@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useApp } from "../context/AppContext";
 import { invokeHost } from "../lib/hostCall";
+import { InstructionFileTree } from "./InstructionFileTree";
 import { cn } from "../utils";
 import { useLocation, useRouter, useSearch } from "@tanstack/react-router";
 
@@ -2170,39 +2171,23 @@ function InstructionsLibrary({
             <h3 className="border-b border-border-faint px-3 py-2 text-[13px] font-semibold">
               Files in this scope
             </h3>
-            {diskFiles.map((file) => (
-              <button
-                key={file.path}
-                className={cn(
-                  "block w-full border-b border-border-faint px-3 py-2 text-left hover:bg-surface-hover",
-                  path === file.path && "bg-surface-active",
-                )}
-                onClick={() => void openDiskFile(file)}
-              >
-                <span className="block break-all text-[12px] font-medium">
-                  {file.path}
-                </span>
-                <span className="text-[10px] text-muted">
-                  {file.applicable === false ? "Referenced document" : file.kind}
-                  {file.managed ? " · managed" : " · local"}
-                  {file.conflict ? " · changed since deployment" : ""}
-                  {file.symlink_target && (
-                    <span className="block break-all">
-                      Link target: {file.symlink_target}
-                    </span>
-                  )}
-                </span>
-              </button>
-            ))}
-            {excluded.map((entry) => (
-              <p
-                key={entry.path}
-                title={entry.reason}
-                className="px-3 py-2 text-[11px] text-muted"
-              >
-                Skipped {entry.path}
-              </p>
-            ))}
+            <InstructionFileTree
+              files={diskFiles}
+              selectedPath={path}
+              onOpen={(file) => void openDiskFile(file)}
+            />
+            {excluded.length > 0 && (
+              <details className="border-t border-border-faint px-3 py-2 text-[11px] text-muted">
+                <summary className="cursor-pointer">
+                  Skipped ({excluded.length})
+                </summary>
+                {excluded.map((entry) => (
+                  <p key={entry.path} title={entry.reason} className="mt-1 break-all">
+                    {entry.path}: {entry.reason}
+                  </p>
+                ))}
+              </details>
+            )}
           </div>
           <div className="app-panel space-y-3 p-4">
             <div className="flex items-center justify-between">

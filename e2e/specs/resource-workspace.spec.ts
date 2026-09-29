@@ -250,7 +250,10 @@ test("project resources can select every assigned agent and nested edits retain 
   });
   await page.goto("/project/repo?resource=instructions");
   await page.getByLabel("Agent", { exact: true }).selectOption("codex");
-  await page.getByRole("button", { name: /docs\/AGENTS.md/ }).click();
+  await page
+    .getByRole("tree", { name: "Instruction files" })
+    .getByTitle("docs/AGENTS.md")
+    .click();
   await expect(
     page.getByRole("textbox", { name: "Instruction file content" }),
   ).toHaveValue("Nested rules");
@@ -258,7 +261,10 @@ test("project resources can select every assigned agent and nested edits retain 
   await page
     .getByRole("heading", { name: "Instructions", exact: true })
     .click();
-  await page.getByRole("button", { name: /docs\/AGENTS.md/ }).click();
+  await page
+    .getByRole("tree", { name: "Instruction files" })
+    .getByTitle("docs/AGENTS.md")
+    .click();
   await page
     .getByRole("textbox", { name: "Instruction file content" })
     .fill("Updated nested rules");
