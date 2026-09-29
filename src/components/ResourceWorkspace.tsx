@@ -175,6 +175,11 @@ function ResourceWorkspaceBody({
             )}
           >
             {key === "mcps" ? "MCPs" : key[0].toUpperCase() + key.slice(1)}
+            {key === "mcps" && (
+              <span className="ml-1.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                Alpha
+              </span>
+            )}
           </button>
         ))}
         {tab !== "skills" && !scopedAgent && (
