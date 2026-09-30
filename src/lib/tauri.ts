@@ -171,6 +171,8 @@ export interface ProjectAgentTarget {
   selected: boolean;
   /** Project-relative skills folder, shared by every agent in the group. */
   relative_skills_dir: string;
+  /** Every agent reading the folder. */
+  agent_names: string[];
 }
 
 export type AgentSkipReason =

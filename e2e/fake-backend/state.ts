@@ -318,6 +318,7 @@ export function agentTarget(
     is_custom: false,
     selected: true,
     relative_skills_dir: `.${key}/skills`,
+    agent_names: [display_name],
     ...extra,
   };
 }

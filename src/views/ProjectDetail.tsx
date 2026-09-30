@@ -218,6 +218,7 @@ export function ProjectDetail() {
       is_custom: false,
       selected: true,
       relative_skills_dir: ".claude/skills",
+      agent_names: ["Claude Code"],
     }];
   }, [projectAgentTargets]);
 

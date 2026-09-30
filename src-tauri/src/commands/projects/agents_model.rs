@@ -18,11 +18,15 @@ pub(super) fn agent_skill_configs(store: &SkillStore) -> Vec<project_scanner::Ag
 }
 
 /// One project skills folder and every adapter that reads it. The group is
-/// named after the first of them.
+/// keyed by the first of them.
 struct AgentGroup {
     config: project_scanner::AgentSkillConfig,
     members: Vec<String>,
+    member_names: Vec<String>,
 }
+
+/// Past this many agents a group is named after its folder, not its agents.
+const MAX_NAMED_GROUP_AGENTS: usize = 3;
 
 fn agent_groups(store: &SkillStore) -> Vec<AgentGroup> {
     let mut grouped: Vec<(String, Vec<(String, String)>)> = Vec::new();
@@ -42,15 +46,13 @@ fn agent_groups(store: &SkillStore) -> Vec<AgentGroup> {
         .into_iter()
         .filter_map(|(relative_skills_dir, agents)| {
             let (key, first_display_name) = agents.first()?.clone();
-            let members = agents.iter().map(|(key, _)| key.clone()).collect();
-            let display_name = if agents.len() == 1 {
-                first_display_name
-            } else {
-                agents
-                    .into_iter()
-                    .map(|(_, display_name)| display_name)
-                    .collect::<Vec<_>>()
-                    .join(" / ")
+            let (members, member_names): (Vec<String>, Vec<String>) = agents.into_iter().unzip();
+            let display_name = match member_names.len() {
+                1 => first_display_name,
+                count if count > MAX_NAMED_GROUP_AGENTS => {
+                    format!("Shared ({relative_skills_dir})")
+                }
+                _ => member_names.join(" / "),
             };
             Some(AgentGroup {
                 config: project_scanner::AgentSkillConfig {
@@ -59,6 +61,7 @@ fn agent_groups(store: &SkillStore) -> Vec<AgentGroup> {
                     relative_skills_dir,
                 },
                 members,
+                member_names,
             })
         })
         .collect()
@@ -152,6 +155,7 @@ pub(super) fn project_agent_targets_for_record(
             is_custom: false,
             selected: true,
             relative_skills_dir: rec.path.clone(),
+            agent_names: vec![linked_workspace_agent_name(rec)],
         }];
     }
 
@@ -172,28 +176,35 @@ pub(super) fn project_agent_targets_for_record(
         .map(|keys| group_keys_in(&groups, keys));
     groups
         .into_iter()
-        .map(|AgentGroup { config, members }| {
-            let adapter = adapters.iter().find(|adapter| adapter.key == config.key);
-            // A shared folder is reachable while any agent reading it is.
-            let enabled = members.iter().any(|key| !disabled_tools.contains(key));
-            let installed = adapters
-                .iter()
-                .any(|adapter| members.contains(&adapter.key) && adapter.is_installed());
-            // A project that never chose uses every agent it can deploy to.
-            let selected = match &saved {
-                Some(keys) => keys.contains(&config.key),
-                None => installed && enabled,
-            };
-            ProjectAgentTargetDto {
-                enabled,
-                installed,
-                is_custom: adapter.is_some_and(|a| a.is_custom),
-                selected,
-                key: config.key,
-                display_name: config.display_name,
-                relative_skills_dir: config.relative_skills_dir,
-            }
-        })
+        .map(
+            |AgentGroup {
+                 config,
+                 members,
+                 member_names,
+             }| {
+                let adapter = adapters.iter().find(|adapter| adapter.key == config.key);
+                // A shared folder is reachable while any agent reading it is.
+                let enabled = members.iter().any(|key| !disabled_tools.contains(key));
+                let installed = adapters
+                    .iter()
+                    .any(|adapter| members.contains(&adapter.key) && adapter.is_installed());
+                // A project that never chose uses every agent it can deploy to.
+                let selected = match &saved {
+                    Some(keys) => keys.contains(&config.key),
+                    None => installed && enabled,
+                };
+                ProjectAgentTargetDto {
+                    enabled,
+                    installed,
+                    is_custom: adapter.is_some_and(|a| a.is_custom),
+                    selected,
+                    key: config.key,
+                    display_name: config.display_name,
+                    relative_skills_dir: config.relative_skills_dir,
+                    agent_names: member_names,
+                }
+            },
+        )
         .collect()
 }
 

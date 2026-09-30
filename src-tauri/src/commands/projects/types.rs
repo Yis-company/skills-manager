@@ -56,6 +56,8 @@ pub struct ProjectAgentTargetDto {
     pub selected: bool,
     /// Project-relative skills folder, shared by every agent in the group.
     pub relative_skills_dir: String,
+    /// Every agent reading the folder.
+    pub agent_names: Vec<String>,
 }
 
 /// Convert a project record into its DTO, folding the copies of one logical

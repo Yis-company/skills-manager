@@ -517,8 +517,8 @@ mod tests {
         let db_path = tmp.path().join("watcher.db");
         let project_path = tmp.path().join("proj");
         fs::create_dir_all(&project_path).unwrap();
-        let skills_dir = project_path.join(".codex").join("skills");
-        let agent_dir = project_path.join(".codex");
+        let skills_dir = project_path.join(".claude").join("skills");
+        let agent_dir = project_path.join(".claude");
 
         let store = SkillStore::new(&db_path).unwrap();
         insert_non_linked_project(&store, &project_path);
@@ -533,8 +533,8 @@ mod tests {
         let tmp = tempdir().unwrap();
         let db_path = tmp.path().join("watcher.db");
         let project_path = tmp.path().join("proj");
-        let skills_dir = project_path.join(".codex").join("skills");
-        let agent_dir = project_path.join(".codex");
+        let skills_dir = project_path.join(".claude").join("skills");
+        let agent_dir = project_path.join(".claude");
         fs::create_dir_all(skills_dir.join("hello")).unwrap();
         fs::write(
             skills_dir.join("hello").join("SKILL.md"),
