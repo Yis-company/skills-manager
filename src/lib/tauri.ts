@@ -926,6 +926,21 @@ export const setProjectSkillAgents = (projectId: string, skillRelativePath: stri
 export const clearProjectSkillAgents = (projectId: string, skillRelativePath: string) =>
   invoke<SkillAgentOutcome>("clear_project_skill_agents", { projectId, skillRelativePath });
 
+/** A link in a project folder agents no longer deploy to. */
+export interface RetiredLink {
+  /** Project-relative path of the link. */
+  path: string;
+  /** Points at a library skill or the vendored copy, so the app may remove it. */
+  ours: boolean;
+}
+
+export const previewProjectRetiredLinks = (projectId: string) =>
+  invoke<RetiredLink[]>("preview_project_retired_links", { projectId });
+
+/** Removes the links that are ours; returns the links still there. */
+export const applyProjectRetiredLinks = (projectId: string) =>
+  invoke<RetiredLink[]>("apply_project_retired_links", { projectId });
+
 /** Only "link" is accepted; a project reaches copy mode by converting. */
 export const setProjectDeployMode = (projectId: string, deployMode: "link") =>
   invoke<void>("set_project_deploy_mode", { projectId, deployMode });

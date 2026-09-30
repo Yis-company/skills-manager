@@ -992,6 +992,117 @@ fn config_roots(project_root: &Path, config: &AgentSkillConfig) -> (PathBuf, Pat
     )
 }
 
+/// Project skills folders agents deployed to before they moved to
+/// `.agents/skills` on 2026-09-30. Nothing deploys to them any more, so links
+/// left there are only found by looking for them.
+pub const RETIRED_PROJECT_SKILLS_DIRS: &[&str] = &[
+    ".augment/skills",
+    ".codeium/windsurf/skills",
+    ".codex/skills",
+    ".commandcode/skills",
+    ".config/agents/skills",
+    ".config/crush/skills",
+    ".config/goose/skills",
+    ".copilot/skills",
+    ".cursor/skills",
+    ".deepagents/agent/skills",
+    ".dsh/skills",
+    ".factory/skills",
+    ".gemini/antigravity/skills",
+    ".gemini/skills",
+    ".junie/skills",
+    ".kilocode/skills",
+    ".kimi-code/skills",
+    ".mcpjam/skills",
+    ".mux/skills",
+    ".omp/skills",
+    ".opencode/skills",
+    ".openhands/skills",
+    ".pi/skills",
+    ".pochi/skills",
+    ".qwen/skills",
+    ".roo/skills",
+    ".zcode/skills",
+    ".zencoder/skills",
+];
+
+/// A link in a retired project skills folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RetiredLink {
+    /// Project-relative path of the link.
+    pub path: String,
+    /// It points at a library skill or the vendored copy, so it is ours to
+    /// remove. Any other link is the user's.
+    pub ours: bool,
+}
+
+/// Links in retired folders that no agent group deploys to now. A folder a
+/// group still uses, say through a path override, is not retired.
+pub fn find_retired_links(
+    project_root: &Path,
+    configs: &[AgentSkillConfig],
+    library: &[PathBuf],
+) -> Vec<RetiredLink> {
+    let vendored = vendored_roots(project_root);
+    let mut links = Vec::new();
+    for dir in RETIRED_PROJECT_SKILLS_DIRS {
+        if configs
+            .iter()
+            .any(|config| normal_parts(&config.relative_skills_dir).eq(normal_parts(dir)))
+        {
+            continue;
+        }
+        for root in [dir.to_string(), format!("{dir}-disabled")] {
+            collect_links(&project_root.join(root), &mut |link| {
+                let ours = lexical_link_target(link).is_some_and(|target| {
+                    library.contains(&target)
+                        || vendored.iter().any(|root| target.starts_with(root))
+                });
+                let path = link.strip_prefix(project_root).unwrap_or(link);
+                links.push(RetiredLink {
+                    path: path.to_string_lossy().into_owned(),
+                    ours,
+                });
+            });
+        }
+    }
+    links
+}
+
+/// Remove the retired links that are ours. Returns the links still there:
+/// the user's, and any of ours that could not be removed.
+pub fn remove_retired_links(
+    project_root: &Path,
+    configs: &[AgentSkillConfig],
+    library: &[PathBuf],
+) -> Vec<RetiredLink> {
+    for link in find_retired_links(project_root, configs, library) {
+        if !link.ours {
+            continue;
+        }
+        let path = project_root.join(&link.path);
+        if let Err(err) = sync_engine::remove_recorded_target(&path, "symlink") {
+            log::warn!("Failed to remove retired link {}: {err:#}", path.display());
+        }
+    }
+    find_retired_links(project_root, configs, library)
+}
+
+/// Every link under `dir`, looking inside real directories for nested skills.
+fn collect_links(dir: &Path, found: &mut impl FnMut(&Path)) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if is_link(&path) {
+            found(&path);
+        } else if path.is_dir() && !path.join("SKILL.md").exists() {
+            collect_links(&path, found);
+        }
+    }
+}
+
 fn exists(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
 }
@@ -1794,5 +1905,58 @@ mod tests {
             vec![("cursor", ConvertAction::KeepRealDir)]
         );
         assert!(cursor.join("SKILL.md").is_file() && !is_link(&cursor));
+    }
+
+    /// Links left in a folder agents moved away from: ours go, the user's
+    /// stay, and a folder a group still deploys to is left out.
+    #[test]
+    fn retired_links_that_are_ours_are_removed_and_the_rest_reported() {
+        let project = project_with(&[
+            ("claude_code", ".claude/skills"),
+            ("cursor", ".cursor/skills"),
+        ]);
+        project.link(".codex/skills", "x");
+        project.real(VENDORED_SKILLS_DIR, "v");
+        sync_engine::link_skill_relative(
+            &project.root.join(".codex/skills-disabled/v"),
+            &project.root.join(VENDORED_SKILLS_DIR).join("v"),
+            &project.root,
+            ReplacePolicy::NoClobber,
+        )
+        .unwrap();
+        let foreign = project.root.join(".codex/skills/team/mine");
+        fs::create_dir_all(foreign.parent().unwrap()).unwrap();
+        symlink(project._tmp.path(), &foreign).unwrap();
+        project.real(".codex/skills", "local");
+        // Cursor still deploys here, so its links are not retired.
+        project.link(".cursor/skills", "x");
+
+        let library = vec![project.library.clone()];
+        let retired = |path: &str, ours: bool| RetiredLink {
+            path: path.to_string(),
+            ours,
+        };
+        let mut found = find_retired_links(&project.root, &project.configs, &library);
+        found.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(
+            found,
+            vec![
+                retired(".codex/skills-disabled/v", true),
+                retired(".codex/skills/team/mine", false),
+                retired(".codex/skills/x", true),
+            ]
+        );
+
+        let left = remove_retired_links(&project.root, &project.configs, &library);
+        assert_eq!(left, vec![retired(".codex/skills/team/mine", false)]);
+        assert!(!exists(&project.root.join(".codex/skills/x")));
+        assert!(project.root.join(".codex/skills/local/SKILL.md").is_file());
+        assert!(project.library.join("SKILL.md").is_file());
+        assert!(project
+            .root
+            .join(VENDORED_SKILLS_DIR)
+            .join("v/SKILL.md")
+            .is_file());
+        assert!(is_link(&project.root.join(".cursor/skills/x")));
     }
 }

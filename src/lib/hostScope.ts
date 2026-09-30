@@ -85,6 +85,8 @@ export const HOST_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "apply_project_agent_change",
   "set_project_skill_agents",
   "clear_project_skill_agents",
+  "preview_project_retired_links",
+  "apply_project_retired_links",
   "set_project_deploy_mode",
   "preview_project_convert_to_copy",
   "apply_project_convert_to_copy",

@@ -634,6 +634,8 @@ export const handlers: Record<string, Handler<never>> = {
     state.projectSkills[projectId] = remaining;
     return null;
   },
+  preview_project_retired_links: () => [],
+  apply_project_retired_links: () => [],
   get_project_agent_targets: ({ projectId }: { projectId: string }, state) =>
     state.projectAgentTargets[projectId] ?? [],
   get_project_skill_document: ({ skillRelativePath }: ProjectSkillArgs) => ({

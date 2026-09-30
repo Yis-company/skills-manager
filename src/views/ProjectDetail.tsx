@@ -57,6 +57,7 @@ import { invokeHost } from "../lib/hostCall";
 import { projectSkillsQueryOptions, projectsQueryOptions, queryKeys, refreshQuery } from "../lib/appQueries";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 import { ProjectAgentsDialog } from "../components/ProjectAgentsDialog";
+import { RetiredLinksBanner } from "../components/RetiredLinksBanner";
 import { ResourceWorkspace } from "../components/ResourceWorkspace";
 import { ProjectGitDialog } from "../components/ProjectGitDialog";
 
@@ -1048,6 +1049,8 @@ export function ProjectDetail() {
             </div>
           </div>
         </div>
+
+        {project.workspace_type !== "linked" && <RetiredLinksBanner projectId={id} refreshKey={skills} />}
 
         {allTags.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">

@@ -1,6 +1,6 @@
 //! Choosing the agents a project, or one of its skills, deploys to.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri::State;
 
@@ -10,7 +10,8 @@ use super::agents_model::{
     reconcile_skill_agents, validated_agent_keys,
 };
 use super::fs_safety::ensure_safe_skill_relative_path;
-use crate::core::project_deploy::{self, AgentChangePlan, SkillOutcome};
+use crate::core::project_deploy::{self, AgentChangePlan, RetiredLink, SkillOutcome};
+use crate::core::project_scanner::AgentSkillConfig;
 use crate::core::skill_store::{ProjectRecord, SkillStore};
 use crate::core::{error::AppError, host::HostCtx};
 
@@ -196,6 +197,64 @@ pub fn clear_project_skill_agents_core(
         .map(|keys| current_group_keys(&store, keys))
         .unwrap_or_else(|| effective_project_agent_keys(&store, &record));
     reconcile_skill_agents(&store, &record, &skill_relative_path, &desired, false)
+}
+
+/// Links left in project folders agents no longer deploy to.
+#[tauri::command]
+pub async fn preview_project_retired_links(
+    ctx: State<'_, HostCtx>,
+    project_id: String,
+) -> Result<Vec<RetiredLink>, AppError> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        preview_project_retired_links_core(&ctx, project_id)
+    })
+    .await?
+}
+
+pub fn preview_project_retired_links_core(
+    ctx: &HostCtx,
+    project_id: String,
+) -> Result<Vec<RetiredLink>, AppError> {
+    retired_links(ctx, project_id, project_deploy::find_retired_links)
+}
+
+/// Remove the retired links that are ours, returning the ones still there.
+#[tauri::command]
+pub async fn apply_project_retired_links(
+    ctx: State<'_, HostCtx>,
+    project_id: String,
+) -> Result<Vec<RetiredLink>, AppError> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || apply_project_retired_links_core(&ctx, project_id))
+        .await?
+}
+
+pub fn apply_project_retired_links_core(
+    ctx: &HostCtx,
+    project_id: String,
+) -> Result<Vec<RetiredLink>, AppError> {
+    retired_links(ctx, project_id, project_deploy::remove_retired_links)
+}
+
+fn retired_links(
+    ctx: &HostCtx,
+    project_id: String,
+    run: fn(&Path, &[AgentSkillConfig], &[PathBuf]) -> Vec<RetiredLink>,
+) -> Result<Vec<RetiredLink>, AppError> {
+    let store = ctx.store.clone();
+    let record = get_agent_selectable_project(&store, &project_id)?;
+    let library: Vec<PathBuf> = store
+        .get_all_skills()
+        .map_err(AppError::db)?
+        .into_iter()
+        .map(|skill| PathBuf::from(skill.central_path))
+        .collect();
+    Ok(run(
+        Path::new(&record.path),
+        &agent_skill_configs(&store),
+        &library,
+    ))
 }
 
 #[cfg(test)]
