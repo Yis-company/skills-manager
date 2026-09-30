@@ -5,8 +5,9 @@ use std::path::Path;
 use tauri::State;
 
 use super::agents_model::{
-    agent_skill_configs, effective_project_agent_keys, get_agent_selectable_project,
-    plan_project_agent_change, read_workspace_skills, reconcile_skill_agents, validated_agent_keys,
+    agent_skill_configs, current_group_keys, effective_project_agent_keys,
+    get_agent_selectable_project, plan_project_agent_change, read_workspace_skills,
+    reconcile_skill_agents, validated_agent_keys,
 };
 use super::fs_safety::ensure_safe_skill_relative_path;
 use crate::core::project_deploy::{self, AgentChangePlan, SkillOutcome};
@@ -34,7 +35,7 @@ pub fn set_project_agent_keys_core(
     let store = ctx.store.clone();
     let record = get_agent_selectable_project(&store, &project_id)?;
     let agent_keys = agent_keys
-        .map(|keys| validated_agent_keys(&agent_skill_configs(&store), keys))
+        .map(|keys| validated_agent_keys(&store, keys))
         .transpose()?;
     store
         .set_project_agent_keys(&record.id, agent_keys.as_deref())
@@ -62,7 +63,7 @@ pub fn preview_project_agent_change_core(
     let store = ctx.store.clone();
     let record = get_agent_selectable_project(&store, &project_id)?;
     let configs = agent_skill_configs(&store);
-    let desired = validated_agent_keys(&configs, agent_keys)?;
+    let desired = validated_agent_keys(&store, agent_keys)?;
     plan_project_agent_change(&store, &record, &configs, &desired)
 }
 
@@ -87,7 +88,7 @@ pub fn apply_project_agent_change_core(
     let store = ctx.store.clone();
     let record = get_agent_selectable_project(&store, &project_id)?;
     let configs = agent_skill_configs(&store);
-    let desired = validated_agent_keys(&configs, agent_keys)?;
+    let desired = validated_agent_keys(&store, agent_keys)?;
     // Plan again: the disk may have moved on since the preview.
     let plan = plan_project_agent_change(&store, &record, &configs, &desired)?;
     let configured_mode = store.get_setting("sync_mode").map_err(AppError::db)?;
@@ -160,7 +161,7 @@ pub fn set_project_skill_agents_core(
     let store = ctx.store.clone();
     ensure_safe_skill_relative_path(&skill_relative_path)?;
     let record = get_agent_selectable_project(&store, &project_id)?;
-    let desired = validated_agent_keys(&agent_skill_configs(&store), agent_keys)?;
+    let desired = validated_agent_keys(&store, agent_keys)?;
     choose_skill_agents(&store, &record, &skill_relative_path, &desired)
 }
 
@@ -191,7 +192,8 @@ pub fn clear_project_skill_agents_core(
         .map_err(AppError::db)?;
     let desired = record
         .agent_keys
-        .clone()
+        .as_deref()
+        .map(|keys| current_group_keys(&store, keys))
         .unwrap_or_else(|| effective_project_agent_keys(&store, &record));
     reconcile_skill_agents(&store, &record, &skill_relative_path, &desired, false)
 }
