@@ -239,11 +239,15 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             project_relative_skills_dir: None,
         },
         ToolAdapter {
+            // Antigravity reads project skills from `.agents/skills`. Globally,
+            // `~/.gemini/config/skills` is the only folder its IDE, CLI and 2.0
+            // app all read; `~/.gemini/antigravity/skills` is the IDE's legacy
+            // one. See https://antigravity.google/docs/skills.
             key: "antigravity".into(),
             display_name: "Antigravity".into(),
-            relative_skills_dir: ".gemini/antigravity/skills".into(),
+            relative_skills_dir: ".gemini/config/skills".into(),
             relative_detect_dir: ".gemini/antigravity".into(),
-            additional_scan_dirs: vec![],
+            additional_scan_dirs: vec![".gemini/antigravity/skills".into()],
             override_skills_dir: None,
             category: ToolCategory::Coding,
             is_custom: false,
@@ -267,7 +271,8 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             display_name: "Kilo Code".into(),
             relative_skills_dir: ".agents/skills".into(),
             relative_detect_dir: ".kilocode".into(),
-            additional_scan_dirs: vec![".kilocode/skills".into()],
+            // Kilo moved its folder from `.kilocode` to `.kilo`.
+            additional_scan_dirs: vec![".kilo/skills".into(), ".kilocode/skills".into()],
             override_skills_dir: None,
             category: ToolCategory::Coding,
             is_custom: false,
@@ -353,7 +358,10 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             display_name: "Windsurf".into(),
             relative_skills_dir: ".agents/skills".into(),
             relative_detect_dir: ".codeium/windsurf".into(),
-            additional_scan_dirs: vec![".codeium/windsurf/skills".into()],
+            additional_scan_dirs: vec![
+                ".codeium/windsurf/skills".into(),
+                ".config/devin/skills".into(),
+            ],
             override_skills_dir: None,
             category: ToolCategory::Coding,
             is_custom: false,
@@ -505,6 +513,8 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             project_relative_skills_dir: None,
         },
         ToolAdapter {
+            // The Cortex Code CLI reads project skills from `.cortex/skills`.
+            // See https://docs.snowflake.com/en/user-guide/cortex-code/extensibility.
             key: "cortex".into(),
             display_name: "Cortex Code".into(),
             relative_skills_dir: ".snowflake/cortex/skills".into(),
@@ -514,7 +524,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             category: ToolCategory::Coding,
             is_custom: false,
             recursive_scan: false,
-            project_relative_skills_dir: None,
+            project_relative_skills_dir: Some(".cortex/skills".into()),
         },
         ToolAdapter {
             key: "crush".into(),
@@ -605,7 +615,8 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             display_name: "Mux".into(),
             relative_skills_dir: ".agents/skills".into(),
             relative_detect_dir: ".mux".into(),
-            additional_scan_dirs: vec![".mux/skills".into()],
+            // Mux is now Xum, which reads `~/.xum/skills`.
+            additional_scan_dirs: vec![".xum/skills".into(), ".mux/skills".into()],
             override_skills_dir: None,
             category: ToolCategory::Coding,
             is_custom: false,
@@ -688,6 +699,8 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             project_relative_skills_dir: None,
         },
         ToolAdapter {
+            // TRAE CN keeps user skills in `~/.trae-cn/skills` but reads project
+            // skills from `.trae/skills`, like TRAE. See docs.trae.cn/ide_skills.
             key: "trae_cn".into(),
             display_name: "TRAE CN".into(),
             relative_skills_dir: ".trae-cn/skills".into(),
@@ -697,7 +710,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             category: ToolCategory::Coding,
             is_custom: false,
             recursive_scan: false,
-            project_relative_skills_dir: None,
+            project_relative_skills_dir: Some(".trae/skills".into()),
         },
         ToolAdapter {
             key: "zencoder".into(),
@@ -1006,14 +1019,17 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn antigravity_reads_project_skills_from_the_shared_folder() {
+    fn antigravity_deploys_where_every_variant_reads() {
         let adapter = default_tool_adapters()
             .into_iter()
             .find(|adapter| adapter.key == "antigravity")
             .expect("antigravity adapter should exist");
 
-        assert_eq!(adapter.relative_skills_dir, ".gemini/antigravity/skills");
+        assert_eq!(adapter.relative_skills_dir, ".gemini/config/skills");
         assert_eq!(adapter.project_relative_skills_dir(), ".agents/skills");
+        assert!(adapter
+            .additional_scan_dirs
+            .contains(&".gemini/antigravity/skills".to_string()));
     }
 
     #[test]
@@ -1069,6 +1085,16 @@ mod tests {
         let grok = adapter("grok");
         assert_eq!(grok.relative_skills_dir, shared);
         assert_eq!(grok.project_relative_skills_dir(), ".grok/skills");
+
+        // Project folders that differ from the global one.
+        assert_eq!(
+            adapter("trae_cn").project_relative_skills_dir(),
+            ".trae/skills"
+        );
+        assert_eq!(
+            adapter("cortex").project_relative_skills_dir(),
+            ".cortex/skills"
+        );
 
         // Agents that do not read it, or only behind a setting, keep their own.
         for (key, native) in [

@@ -993,7 +993,7 @@ fn config_roots(project_root: &Path, config: &AgentSkillConfig) -> (PathBuf, Pat
 }
 
 /// Project skills folders agents deployed to before they moved to
-/// `.agents/skills` on 2026-09-30. Nothing deploys to them any more, so links
+/// `.agents/skills` or corrected paths on 2026-09-30. Nothing deploys to them any more, so links
 /// left there are only found by looking for them.
 pub const RETIRED_PROJECT_SKILLS_DIRS: &[&str] = &[
     ".augment/skills",
@@ -1017,11 +1017,13 @@ pub const RETIRED_PROJECT_SKILLS_DIRS: &[&str] = &[
     ".mux/skills",
     ".omp/skills",
     ".opencode/skills",
+    ".snowflake/cortex/skills",
     ".openhands/skills",
     ".pi/skills",
     ".pochi/skills",
     ".qwen/skills",
     ".roo/skills",
+    ".trae-cn/skills",
     ".zcode/skills",
     ".zencoder/skills",
 ];
