@@ -81,6 +81,7 @@ export function ProjectSkillDetailPanel({
             is_custom: false,
             selected: true,
             relative_skills_dir: "",
+            agent_names: [t.display_name],
           }))}
         />
         {skill.tags.length > 0 && (

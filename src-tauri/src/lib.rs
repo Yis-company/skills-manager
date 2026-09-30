@@ -1136,6 +1136,8 @@ pub fn run() {
             commands::projects::apply_project_agent_change,
             commands::projects::set_project_skill_agents,
             commands::projects::clear_project_skill_agents,
+            commands::projects::preview_project_retired_links,
+            commands::projects::apply_project_retired_links,
             commands::projects::set_project_deploy_mode,
             commands::projects::preview_project_convert_to_copy,
             commands::projects::apply_project_convert_to_copy,

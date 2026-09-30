@@ -96,6 +96,8 @@ pub const COMMANDS: &[&str] = &[
     "apply_project_agent_change",
     "set_project_skill_agents",
     "clear_project_skill_agents",
+    "preview_project_retired_links",
+    "apply_project_retired_links",
     "set_project_deploy_mode",
     "preview_project_convert_to_copy",
     "apply_project_convert_to_copy",
@@ -445,6 +447,14 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             ctx,
             a.req("projectId")?,
             a.req("skillRelativePath")?,
+        )),
+        "preview_project_retired_links" => reply(projects::preview_project_retired_links_core(
+            ctx,
+            a.req("projectId")?,
+        )),
+        "apply_project_retired_links" => reply(projects::apply_project_retired_links_core(
+            ctx,
+            a.req("projectId")?,
         )),
         "set_project_deploy_mode" => reply(projects::set_project_deploy_mode_core(
             ctx,

@@ -250,7 +250,9 @@ export function ProjectAgentsDialog({ open, projectId, deployMode, targets, onCl
                       </span>
                       <AgentIcon agentKey={target.key} displayName={target.display_name} className="h-5 w-5 rounded-[4px]" />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium text-secondary">{target.display_name}</span>
+                        <span className="block truncate font-medium text-secondary" title={target.agent_names.join(", ")}>
+                          {target.display_name}
+                        </span>
                         <span className="block truncate font-mono text-[11px] text-faint">{target.relative_skills_dir}</span>
                       </span>
                       {badge && <span className="shrink-0 text-[11px] text-muted">{badge}</span>}

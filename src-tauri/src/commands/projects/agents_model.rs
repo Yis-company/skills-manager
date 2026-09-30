@@ -11,6 +11,24 @@ use crate::core::skill_store::{ProjectRecord, SkillRecord, SkillStore};
 use crate::core::{error::AppError, project_scanner, tool_adapters};
 
 pub(super) fn agent_skill_configs(store: &SkillStore) -> Vec<project_scanner::AgentSkillConfig> {
+    agent_groups(store)
+        .into_iter()
+        .map(|group| group.config)
+        .collect()
+}
+
+/// One project skills folder and every adapter that reads it. The group is
+/// keyed by the first of them.
+struct AgentGroup {
+    config: project_scanner::AgentSkillConfig,
+    members: Vec<String>,
+    member_names: Vec<String>,
+}
+
+/// Past this many agents a group is named after its folder, not its agents.
+const MAX_NAMED_GROUP_AGENTS: usize = 3;
+
+fn agent_groups(store: &SkillStore) -> Vec<AgentGroup> {
     let mut grouped: Vec<(String, Vec<(String, String)>)> = Vec::new();
     for adapter in tool_adapters::all_tool_adapters(store) {
         let project_dir = adapter.project_relative_skills_dir().to_string();
@@ -28,22 +46,47 @@ pub(super) fn agent_skill_configs(store: &SkillStore) -> Vec<project_scanner::Ag
         .into_iter()
         .filter_map(|(relative_skills_dir, agents)| {
             let (key, first_display_name) = agents.first()?.clone();
-            let display_name = if agents.len() == 1 {
-                first_display_name
-            } else {
-                agents
-                    .into_iter()
-                    .map(|(_, display_name)| display_name)
-                    .collect::<Vec<_>>()
-                    .join(" / ")
+            let (members, member_names): (Vec<String>, Vec<String>) = agents.into_iter().unzip();
+            let display_name = match member_names.len() {
+                1 => first_display_name,
+                count if count > MAX_NAMED_GROUP_AGENTS => {
+                    format!("Shared ({relative_skills_dir})")
+                }
+                _ => member_names.join(" / "),
             };
-            Some(project_scanner::AgentSkillConfig {
-                key,
-                display_name,
-                relative_skills_dir,
+            Some(AgentGroup {
+                config: project_scanner::AgentSkillConfig {
+                    key,
+                    display_name,
+                    relative_skills_dir,
+                },
+                members,
+                member_names,
             })
         })
         .collect()
+}
+
+/// Saved agent keys in terms of the current groups. A key is saved as an
+/// adapter key, and a group is named after its first adapter, so an adapter
+/// moving into or out of a shared folder changes the group its key stands
+/// for. Keys no group claims are kept; duplicates are dropped.
+pub(super) fn current_group_keys(store: &SkillStore, keys: &[String]) -> Vec<String> {
+    group_keys_in(&agent_groups(store), keys)
+}
+
+fn group_keys_in(groups: &[AgentGroup], keys: &[String]) -> Vec<String> {
+    let mut current: Vec<String> = Vec::new();
+    for key in keys {
+        let group_key = groups
+            .iter()
+            .find(|group| group.members.contains(key))
+            .map_or(key, |group| &group.config.key);
+        if !current.contains(group_key) {
+            current.push(group_key.clone());
+        }
+    }
+    current
 }
 
 fn linked_workspace_agent_key(rec: &ProjectRecord) -> String {
@@ -112,6 +155,7 @@ pub(super) fn project_agent_targets_for_record(
             is_custom: false,
             selected: true,
             relative_skills_dir: rec.path.clone(),
+            agent_names: vec![linked_workspace_agent_name(rec)],
         }];
     }
 
@@ -124,27 +168,43 @@ pub(super) fn project_agent_targets_for_record(
         .into_iter()
         .collect();
 
-    agent_skill_configs(store)
+    let adapters = tool_adapters::all_tool_adapters(store);
+    let groups = agent_groups(store);
+    let saved = rec
+        .agent_keys
+        .as_deref()
+        .map(|keys| group_keys_in(&groups, keys));
+    groups
         .into_iter()
-        .map(|config| {
-            let adapter = tool_adapters::find_adapter_with_store(store, &config.key);
-            let enabled = !disabled_tools.contains(&config.key);
-            let installed = adapter.as_ref().map(|a| a.is_installed()).unwrap_or(false);
-            // A project that never chose uses every agent it can deploy to.
-            let selected = match &rec.agent_keys {
-                Some(keys) => keys.contains(&config.key),
-                None => installed && enabled,
-            };
-            ProjectAgentTargetDto {
-                enabled,
-                installed,
-                is_custom: adapter.as_ref().map(|a| a.is_custom).unwrap_or(false),
-                selected,
-                key: config.key,
-                display_name: config.display_name,
-                relative_skills_dir: config.relative_skills_dir,
-            }
-        })
+        .map(
+            |AgentGroup {
+                 config,
+                 members,
+                 member_names,
+             }| {
+                let adapter = adapters.iter().find(|adapter| adapter.key == config.key);
+                // A shared folder is reachable while any agent reading it is.
+                let enabled = members.iter().any(|key| !disabled_tools.contains(key));
+                let installed = adapters
+                    .iter()
+                    .any(|adapter| members.contains(&adapter.key) && adapter.is_installed());
+                // A project that never chose uses every agent it can deploy to.
+                let selected = match &saved {
+                    Some(keys) => keys.contains(&config.key),
+                    None => installed && enabled,
+                };
+                ProjectAgentTargetDto {
+                    enabled,
+                    installed,
+                    is_custom: adapter.is_some_and(|a| a.is_custom),
+                    selected,
+                    key: config.key,
+                    display_name: config.display_name,
+                    relative_skills_dir: config.relative_skills_dir,
+                    agent_names: member_names,
+                }
+            },
+        )
         .collect()
 }
 
@@ -256,21 +316,20 @@ pub(super) fn get_agent_selectable_project(
     Ok(record)
 }
 
-/// Check requested agents are project agent groups, dropping duplicates.
+/// Resolve requested agents to project agent groups, dropping duplicates. Any
+/// agent of a group names it, not only the one the group is named after.
 pub(super) fn validated_agent_keys(
-    configs: &[project_scanner::AgentSkillConfig],
+    store: &SkillStore,
     agent_keys: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
-    let mut keys: Vec<String> = Vec::new();
-    for key in agent_keys {
-        if !configs.iter().any(|config| config.key == key) {
-            return Err(AppError::invalid_input(format!("Unknown agent: {key}")));
-        }
-        if !keys.contains(&key) {
-            keys.push(key);
-        }
+    let groups = agent_groups(store);
+    if let Some(unknown) = agent_keys
+        .iter()
+        .find(|key| !groups.iter().any(|group| group.members.contains(key)))
+    {
+        return Err(AppError::invalid_input(format!("Unknown agent: {unknown}")));
     }
-    Ok(keys)
+    Ok(group_keys_in(&groups, &agent_keys))
 }
 
 fn library_source(
@@ -288,9 +347,13 @@ pub(super) fn plan_project_agent_change(
 ) -> Result<AgentChangePlan, AppError> {
     let skills = read_workspace_skills(rec, configs);
     let all_managed = store.get_all_skills().map_err(AppError::db)?;
+    let groups = agent_groups(store);
     let overrides = store
         .get_project_skill_agent_overrides(&rec.id)
-        .map_err(AppError::db)?;
+        .map_err(AppError::db)?
+        .into_iter()
+        .map(|(path, keys)| (path, group_keys_in(&groups, &keys)))
+        .collect();
     let available = available_agent_keys(store, rec);
     let source_of = |skill: &project_scanner::ProjectSkillInfo| library_source(skill, &all_managed);
     Ok(if is_copy_project(rec) {
@@ -384,9 +447,9 @@ pub(super) fn skill_has_any_copy(
 #[cfg(test)]
 mod tests {
     use super::super::test_fixtures::{agent_selection_fixture, keys};
-    use super::export_agent_keys;
     #[cfg(unix)]
     use super::{agent_skill_configs, reconcile_skill_agents, skill_has_any_copy};
+    use super::{export_agent_keys, project_agent_targets_for_record, validated_agent_keys};
     use crate::core::error::ErrorKind;
     #[cfg(unix)]
     use std::fs;
@@ -416,6 +479,39 @@ mod tests {
 
         record.agent_keys = Some(Vec::new());
         let err = export_agent_keys(&store, &record, None).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidInput);
+    }
+
+    /// An agent joining a folder ahead of the saved one renames its group.
+    /// The saved choice still selects the folder, under its new name.
+    #[test]
+    fn saved_agents_follow_their_folder_when_its_group_is_renamed() {
+        let tmp = tempdir().unwrap();
+        let (store, record) = agent_selection_fixture(tmp.path(), Some(keys(&["agent_a"])));
+        let tools = serde_json::json!([
+            { "key": "agent_c", "display_name": "Agent C", "skills_dir": tmp.path().join("c"),
+              "project_relative_skills_dir": ".a/skills" },
+            { "key": "agent_a", "display_name": "Agent A", "skills_dir": tmp.path().join("a"),
+              "project_relative_skills_dir": ".a/skills" },
+            { "key": "agent_b", "display_name": "Agent B", "skills_dir": tmp.path().join("b"),
+              "project_relative_skills_dir": ".b/skills" },
+        ]);
+        store
+            .set_setting("custom_tools", &tools.to_string())
+            .unwrap();
+
+        let selected: Vec<String> = project_agent_targets_for_record(&store, &record)
+            .into_iter()
+            .filter(|target| target.selected)
+            .map(|target| target.key)
+            .collect();
+        assert_eq!(selected, keys(&["agent_c"]));
+
+        assert_eq!(
+            validated_agent_keys(&store, keys(&["agent_a", "agent_c", "agent_b"])).unwrap(),
+            keys(&["agent_c", "agent_b"])
+        );
+        let err = validated_agent_keys(&store, keys(&["agent_z"])).unwrap_err();
         assert_eq!(err.kind, ErrorKind::InvalidInput);
     }
 

@@ -1176,7 +1176,15 @@
       "commitHint": "Commit .agents/skills so everyone who clones the project gets these files.",
       "windowsNote": "Windows: agent links need Developer Mode. With git core.symlinks=false, links check out as plain files; delete them and apply agents again."
     },
-    "batchDeletePartialFailure": "{{deleted}} removed; {{failed}} failed: {{details}}. Failed skills remain selected for retry."
+    "batchDeletePartialFailure": "{{deleted}} removed; {{failed}} failed: {{details}}. Failed skills remain selected for retry.",
+    "retiredLinks": {
+      "title": "{{count}} old skill links",
+      "hint": "These agents now read .agents/skills, so the links the app left in their old folders are unused.",
+      "remove": "Remove links",
+      "removed": "Removed {{count}} old skill links",
+      "kept": "{{count}} links in old agent folders were kept: they don't point at your library",
+      "failed": "{{count}} old skill links could not be removed"
+    }
   },
   "presetActions": {
     "button": "Apply Preset",

@@ -1511,6 +1511,92 @@ mod sync_desired_targets_tests {
         central_repo::set_test_base_dir_override(None);
     }
 
+    /// An agent moving to the shared `~/.agents/skills` (Codex left
+    /// `~/.codex/skills`) takes its own old link with it, but leaves a real
+    /// directory that replaced the link where it is.
+    #[cfg(unix)]
+    #[test]
+    fn moving_to_the_shared_folder_removes_our_old_link_and_keeps_a_real_dir() {
+        let _lock = central_repo::test_base_dir_lock();
+        let tmp = tempdir().unwrap();
+        let base = tmp.path().join("repo");
+        central_repo::set_test_base_dir_override(Some(base.clone()));
+        fs::create_dir_all(central_repo::skills_dir()).unwrap();
+        let store = SkillStore::new(&base.join("test.db")).unwrap();
+        let native = tmp.path().join("codex-skills");
+        let shared = tmp.path().join("agents-skills");
+        fs::create_dir_all(&native).unwrap();
+
+        let mut desired = Vec::new();
+        for name in ["linked", "replaced"] {
+            let source = central_repo::skills_dir().join(name);
+            fs::create_dir_all(&source).unwrap();
+            fs::write(source.join("SKILL.md"), name).unwrap();
+            store
+                .insert_skill(&SkillRecord {
+                    id: name.to_string(),
+                    name: name.to_string(),
+                    description: None,
+                    source_type: "import".to_string(),
+                    source_ref: None,
+                    source_ref_resolved: None,
+                    source_subpath: None,
+                    source_branch: None,
+                    source_revision: None,
+                    remote_revision: None,
+                    central_path: source.to_string_lossy().to_string(),
+                    content_hash: None,
+                    enabled: true,
+                    created_at: 1,
+                    updated_at: 1,
+                    status: "ok".to_string(),
+                    update_status: "local_only".to_string(),
+                    last_checked_at: None,
+                    last_check_error: None,
+                })
+                .unwrap();
+            store
+                .insert_target(&SkillTargetRecord {
+                    id: format!("target-{name}"),
+                    skill_id: name.to_string(),
+                    tool: "codex".to_string(),
+                    target_path: native.join(name).to_string_lossy().to_string(),
+                    mode: "symlink".to_string(),
+                    status: "ok".to_string(),
+                    synced_at: Some(1),
+                    last_error: None,
+                    source_hash: None,
+                })
+                .unwrap();
+            desired.push(ScenarioSyncTarget {
+                skill_id: name.to_string(),
+                skill_name: name.to_string(),
+                tool: "codex".to_string(),
+                source: source.clone(),
+                target: shared.join(name),
+                mode: sync_engine::SyncMode::Symlink,
+                source_hash: None,
+            });
+            std::os::unix::fs::symlink(&source, native.join(name)).unwrap();
+        }
+        // The user replaced one of our links with their own directory.
+        fs::remove_file(native.join("replaced")).unwrap();
+        fs::create_dir_all(native.join("replaced")).unwrap();
+
+        sync_desired_targets(&store, &desired).unwrap();
+
+        assert!(fs::symlink_metadata(native.join("linked")).is_err());
+        assert!(native.join("replaced").is_dir());
+        for name in ["linked", "replaced"] {
+            assert!(fs::symlink_metadata(shared.join(name))
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        }
+
+        central_repo::set_test_base_dir_override(None);
+    }
+
     /// Startup must survive a collision. `ensure_default_startup_scenario`
     /// reaches this function through `sync_scenario_skills`, and its caller
     /// chain ends at `initialize_store().expect(...)` in lib.rs — so returning
