@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.45.0
+
+### Minor Changes
+
+- [#62](https://github.com/Yis-company/skills-manager/pull/62) [`13965a7`](https://github.com/Yis-company/skills-manager/commit/13965a7d26f6759fb42194d6bc2326e918a169b7) Thanks [@ybtam](https://github.com/ybtam)! - Add bulk installation from the skills catalog and make project and global workspace bulk removal easier to find, with scoped confirmations and partial-failure recovery.
+
+- [#56](https://github.com/Yis-company/skills-manager/pull/56) [`e89f890`](https://github.com/Yis-company/skills-manager/commit/e89f890dfcf93d0cc8790f04760d160374d79d68) Thanks [@ybtam](https://github.com/ybtam)! - Show instruction workspace files as a collapsible folder tree.
+
+- [#56](https://github.com/Yis-company/skills-manager/pull/56) [`8f718ee`](https://github.com/Yis-company/skills-manager/commit/8f718eefc2d228d1ca96b55e5b4b47650d793d04) Thanks [@ybtam](https://github.com/ybtam)! - Edit instruction files with a Tiptap rich editor. Files the editor would reformat open in source mode, and unchanged files are never rewritten.
+
+- [#56](https://github.com/Yis-company/skills-manager/pull/56) [`28689e2`](https://github.com/Yis-company/skills-manager/commit/28689e2c21d60a27545abd4d981764335b92fb37) Thanks [@ybtam](https://github.com/ybtam)! - Show each git worktree of a project as its own tab in Instructions, and stop listing nested worktrees' files as project instructions.
+
+- [#63](https://github.com/Yis-company/skills-manager/pull/63) [`23f1a50`](https://github.com/Yis-company/skills-manager/commit/23f1a5025a1edd89ff0a84a77a9446e71d6454b5) Thanks [@ybtam](https://github.com/ybtam)! - Offer to remove the skill links left in project folders that agents no longer read, keeping links and folders that are not the app's.
+
+- [#63](https://github.com/Yis-company/skills-manager/pull/63) [`aab3187`](https://github.com/Yis-company/skills-manager/commit/aab3187e3b0c75bb190773e69c32ef1179ffa345) Thanks [@ybtam](https://github.com/ybtam)! - Deploy skills to the shared .agents/skills folder for agents that read it by default, instead of linking them into each agent's own folder. Agents sharing the folder now switch a skill on or off together.
+
+### Patch Changes
+
+- [#63](https://github.com/Yis-company/skills-manager/pull/63) [`e4c7b14`](https://github.com/Yis-company/skills-manager/commit/e4c7b14bc8e48ac0f65543f4f4f5b3c52af597e7) Thanks [@ybtam](https://github.com/ybtam)! - Keep project agent selections and per-skill overrides attached to their skills folder when agents move between folders.
+
+- [#63](https://github.com/Yis-company/skills-manager/pull/63) [`260709e`](https://github.com/Yis-company/skills-manager/commit/260709e0a84c5f2d76b98a82ed03fbc4c4de6a44) Thanks [@ybtam](https://github.com/ybtam)! - Correct skill paths for Antigravity, TRAE CN and Cortex Code, and discover skills in Kilo's, Windsurf's and Xum's current folders.
+
+- [#56](https://github.com/Yis-company/skills-manager/pull/56) [`c643e06`](https://github.com/Yis-company/skills-manager/commit/c643e068e38b0ef323dce5a2f05a9e4c0ef3c15a) Thanks [@ybtam](https://github.com/ybtam)! - Mark the MCPs tab as alpha.
+
 ## 1.44.0
 
 ### Minor Changes
