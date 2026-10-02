@@ -14,7 +14,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
-import { cn } from "../../utils";
+import { cn, compactHomePath } from "../../utils";
 import * as api from "../../lib/tauri";
 import { listenOnActiveHost } from "../../lib/hostEvents";
 import { useApp } from "../../context/AppContext";
@@ -23,7 +23,6 @@ import {
   ACTION_BUTTON_CLASS,
   FIELD_CLASS,
   SEGMENTED_BUTTON_CLASS,
-  compactHomePath,
   pickDirectory,
 } from "./shared";
 

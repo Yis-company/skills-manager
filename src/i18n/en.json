@@ -878,6 +878,7 @@
     "confirm": "Confirm",
     "delete": "Delete",
     "rename": "Rename",
+    "edit": "Edit",
     "save": "Save",
     "create": "Create",
     "search": "Search",
@@ -936,6 +937,7 @@
     "descPlaceholder": "Briefly describe this preset...",
     "deleteConfirm": "Delete preset \"{{name}}\"? Skills will remain in the central repo.",
     "renamed": "Preset renamed",
+    "updated": "Preset updated",
     "deleted": "Preset deleted",
     "created": "Preset created",
     "switched": "Switched to \"{{name}}\""

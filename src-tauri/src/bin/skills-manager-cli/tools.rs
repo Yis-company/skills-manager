@@ -1,4 +1,5 @@
-//! `agents` (alias `tools`): list agents and switch them on or off globally.
+//! `agents` (alias `tools`): list agents, switch them on or off globally, and
+//! add custom ones.
 
 use anyhow::{anyhow, bail};
 use app_lib::commands::tools as tool_cmd;
@@ -16,6 +17,22 @@ pub(crate) fn run_tools(args: ToolsArgs, store: &SkillStore, json: bool) -> anyh
         }
         ToolsCommand::Disable { agents } => {
             print_json(&run_set_agents_enabled(store, &agents, false)?, json)
+        }
+        ToolsCommand::AddCustom {
+            key,
+            path,
+            name,
+            project_path,
+        } => {
+            let display_name = name.unwrap_or_else(|| key.clone());
+            tool_cmd::add_custom_tool_core(store, key.clone(), display_name, path, project_path)
+                .map_err(map_app_err)?;
+            store.log_audit(AuditDraft::new("add_custom_agent").tool(key.clone()).ok());
+            let info = tool_service::list_tool_info(store)
+                .into_iter()
+                .find(|info| info.key == key.trim())
+                .ok_or_else(|| anyhow!("agent {key} was not saved"))?;
+            print_json(&info, json)
         }
     }
     Ok(())
