@@ -34,6 +34,20 @@ pub(crate) enum ToolsCommand {
         #[arg(required = true)]
         agents: Vec<String>,
     },
+    /// Add a custom agent: a skills folder this app does not know by default
+    AddCustom {
+        /// Unique agent key, e.g. `hermes-work`
+        key: String,
+        /// Agent skills folder, e.g. `~/.hermes/profiles/work/skills`
+        #[arg(long)]
+        path: String,
+        /// Display name (defaults to the key)
+        #[arg(long)]
+        name: Option<String>,
+        /// Project-relative skills folder, e.g. `.hermes/skills`
+        #[arg(long)]
+        project_path: Option<String>,
+    },
 }
 
 #[derive(Args, Debug)]

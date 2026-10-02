@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { cn } from "../utils";
+import { cn, compactHomePath } from "../utils";
 import { useApp } from "../context/AppContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PresetBar } from "../components/PresetBar";
@@ -43,10 +43,6 @@ import { useMultiSelect } from "../hooks/useMultiSelect";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import { CODING_WORKSPACE_CONFIG, LOBSTER_WORKSPACE_CONFIG, type WorkspaceConfig } from "./workspaceConfigs";
 import { ResourceWorkspace } from "../components/ResourceWorkspace";
-
-function compactHomePath(path: string) {
-  return path.replace(/^\/Users\/[^/]+/, "~");
-}
 
 interface WorkspaceSkillCardTag {
   label: string;

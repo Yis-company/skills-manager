@@ -425,7 +425,7 @@ pub async fn add_custom_tool(
     let ctx = ctx.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         add_custom_tool_core(
-            &ctx,
+            &ctx.store,
             key,
             display_name,
             skills_dir,
@@ -435,14 +435,14 @@ pub async fn add_custom_tool(
     .await?
 }
 
+/// Shared by the app, remote hosts, and the CLI (`agents add-custom`).
 pub fn add_custom_tool_core(
-    ctx: &HostCtx,
+    store: &SkillStore,
     key: String,
     display_name: String,
     skills_dir: String,
     project_relative_skills_dir: Option<String>,
 ) -> Result<(), AppError> {
-    let store = ctx.store.clone();
     let key = key.trim().to_string();
     let display_name = display_name.trim().to_string();
     let skills_dir = normalize_skills_dir_input(&skills_dir)?;
@@ -456,13 +456,13 @@ pub fn add_custom_tool_core(
     }
 
     // Validate key uniqueness
-    let all = tool_adapters::all_tool_adapters(&store);
+    let all = tool_adapters::all_tool_adapters(store);
     if all.iter().any(|a| a.key == key) {
         return Err(AppError::invalid_input(format!(
             "Agent key \"{key}\" already exists"
         )));
     }
-    let mut customs = get_custom_tools(&store);
+    let mut customs = get_custom_tools(store);
     customs.push(CustomToolDef {
         key: key.clone(),
         display_name,
@@ -470,8 +470,8 @@ pub fn add_custom_tool_core(
         project_relative_skills_dir,
         category: Default::default(),
     });
-    set_custom_tools(&store, &customs)?;
-    reconcile_tool_sync_after_path_change(&store, &key);
+    set_custom_tools(store, &customs)?;
+    reconcile_tool_sync_after_path_change(store, &key);
     Ok(())
 }
 

@@ -29,13 +29,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
-import { cn } from "../../utils";
+import { cn, compactHomePath } from "../../utils";
 import { useApp } from "../../context/AppContext";
 import { AgentIcon } from "../../components/AgentIcon";
 import { ToggleSwitch } from "../../components/ToggleSwitch";
 import * as api from "../../lib/tauri";
 import { getErrorMessage } from "../../lib/error";
-import { ACTION_BUTTON_CLASS, FIELD_CLASS, compactHomePath, pickDirectory } from "./shared";
+import { ACTION_BUTTON_CLASS, FIELD_CLASS, pickDirectory } from "./shared";
 import { HostBadge } from "../../components/HostBadge";
 import { SortableItem } from "../../components/SortableItem";
 
