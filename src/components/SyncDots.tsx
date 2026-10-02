@@ -1,20 +1,24 @@
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+
+import { hasAgentIcon } from "../lib/agentIcons";
 import type { ManagedSkill, ToolInfo } from "../lib/tauri";
 import { cn } from "../utils";
 import { AgentIcon } from "./AgentIcon";
-import { hasAgentIcon } from "../lib/agentIcons";
 
 function shortLabel(displayName: string, key: string): string {
   const words = displayName.trim().split(/\s+/).filter(Boolean);
+
   if (words.length >= 2) {
     return (words[0][0] + words[1][0]).toUpperCase();
   }
+
   const word = words[0] || key;
+
   return word.slice(0, 2).toUpperCase();
 }
 
-type DotState = "synced" | "available" | "orphan";
+type DotState = "available" | "orphan" | "synced";
 
 interface Dot {
   key: string;
@@ -26,7 +30,7 @@ interface Props {
   skill: ManagedSkill;
   tools: ToolInfo[];
   limit?: number;
-  size?: "sm" | "md";
+  size?: "md" | "sm";
   className?: string;
   /**
    * When true, also surface skill targets whose agent is no longer installed/enabled
@@ -40,7 +44,7 @@ interface Props {
    */
   onToggle?: (toolKey: string, enabled: boolean) => void;
   /** Tool key currently performing a sync/unsync operation; shows a loader on that dot. */
-  pendingKey?: string | null;
+  pendingKey?: null | string;
 }
 
 export function SyncDots({
@@ -76,12 +80,10 @@ export function SyncDots({
     }
   }
 
-  const visible = typeof limit === "number" ? dots.slice(0, limit) : dots;
+  const visible = limit === undefined ? dots : dots.slice(0, limit);
   const hiddenCount = dots.length - visible.length;
 
-  const dim = size === "sm"
-    ? "h-[16px] w-[16px] text-[8px]"
-    : "h-[18px] w-[18px] text-[9px]";
+  const dim = size === "sm" ? "h-[16px] w-[16px] text-[8px]" : "h-[18px] w-[18px] text-[9px]";
 
   const iconStateClass: Record<DotState, string> = {
     synced: "bg-surface",
@@ -114,13 +116,18 @@ export function SyncDots({
         const isPending = pendingKey === dot.key;
         const interactive = !!onToggle && !isPending;
         const title = `${dot.displayName}${stateTitle[dot.state]}${onToggle ? clickHint[dot.state] : ""}`;
+
         const baseClass = cn(
           "inline-flex select-none items-center justify-center overflow-hidden rounded-[4px] transition-colors",
           dim,
-          useIcon ? iconStateClass[dot.state] : cn("border font-mono font-semibold tracking-tight", textStateClass[dot.state]),
-          interactive && "cursor-pointer hover:ring-1 hover:ring-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+          useIcon
+            ? iconStateClass[dot.state]
+            : cn("border font-mono font-semibold tracking-tight", textStateClass[dot.state]),
+          interactive &&
+            "cursor-pointer hover:ring-1 hover:ring-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
           isPending && "opacity-70",
         );
+
         const content = isPending ? (
           <Loader2 className="h-3 w-3 animate-spin text-muted" />
         ) : useIcon ? (

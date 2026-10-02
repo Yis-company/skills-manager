@@ -1,6 +1,6 @@
 import type { ManagedSkill } from "./tauri";
 
-export type PickerStatus = "available" | "installed" | "conflict" | "unavailable";
+export type PickerStatus = "available" | "conflict" | "installed" | "unavailable";
 
 export interface GlobalPickerContext {
   kind: "global";
@@ -27,31 +27,36 @@ export function classifySkill(skill: ManagedSkill, ctx: PickerContext): PickerSt
 
   const allInstalled = ctx.selectedAgents.every((agent) => {
     const installed = ctx.projectCenterSkillIdsByAgent[agent] ?? [];
+
     return installed.includes(skill.id);
   });
+
   if (allInstalled) return "installed";
 
   const dirName = ctx.dirNameMap[skill.id]?.toLowerCase();
+
   if (ctx.dirNameMapError && !dirName) return "conflict";
 
   const anyConflict = ctx.selectedAgents.some((agent) => {
     const installed = ctx.projectCenterSkillIdsByAgent[agent] ?? [];
+
     if (installed.includes(skill.id)) return false;
+
     if (!dirName) return false;
     const dirNames = ctx.projectSkillDirNamesByAgent[agent] ?? [];
+
     return dirNames.includes(dirName);
   });
+
   if (anyConflict) return "conflict";
 
   return "available";
 }
 
-export function targetsToInstall(
-  skill: ManagedSkill,
-  ctx: ProjectPickerContext,
-): string[] {
+export function targetsToInstall(skill: ManagedSkill, ctx: ProjectPickerContext): string[] {
   return ctx.selectedAgents.filter((agent) => {
     const installed = ctx.projectCenterSkillIdsByAgent[agent] ?? [];
+
     return !installed.includes(skill.id);
   });
 }

@@ -1,3 +1,7 @@
+import type { InvokeArgs } from "@tauri-apps/api/core";
+
+import { isString } from "../utils";
+
 /**
  * Which commands follow the active host. Everything else always runs on this
  * computer: window, tray, app updates, backup, skills.sh browsing and the
@@ -129,6 +133,7 @@ export const LOCAL_ONLY_SETTING_KEYS: readonly string[] = [
   "show_tray_icon",
   "merge_engine",
 ];
+
 export const LOCAL_ONLY_SETTING_PREFIXES: readonly string[] = ["backup_", "git_backup_", "github_"];
 
 /** How this app lays out the library. They stay with the app, like the theme. */
@@ -150,6 +155,7 @@ export const HOST_SCOPED_SETTING_KEYS: ReadonlySet<string> = new Set([
   "proxy_url",
   "agent_control_setup_prompt",
 ]);
+
 /** Per-project settings; projects live on the host. */
 export const HOST_SCOPED_SETTING_PREFIXES: readonly string[] = ["project_last_used_export_agents:"];
 
@@ -161,11 +167,14 @@ export function isHostScopedSetting(key: string): boolean {
 }
 
 /** Whether `command` with these `args` runs on the active host. */
-export function isHostScoped(command: string, args?: unknown): boolean {
+export function isHostScoped(command: string, args?: InvokeArgs): boolean {
   if (!HOST_SCOPED_COMMANDS.has(command)) return false;
+
   if (command === "get_settings" || command === "set_settings") {
-    const key = (args as { key?: unknown } | undefined)?.key;
-    return typeof key === "string" && isHostScopedSetting(key);
+    const key = args && "key" in args ? args.key : undefined;
+
+    return isString(key) && isHostScopedSetting(key);
   }
+
   return true;
 }

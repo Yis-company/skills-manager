@@ -1,21 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { useTranslation } from "react-i18next";
 import {
-  Search,
-  Layers,
-  Download,
-  Settings as SettingsIcon,
-  FolderOpen,
-  Folder,
-  Home,
   ArrowRight,
+  Download,
+  Folder,
+  FolderOpen,
+  Home,
+  Layers,
+  Search,
+  Settings as SettingsIcon,
 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+
 import { useApp } from "../context/AppContext";
 import { getPresetIconOption } from "../lib/presetIcons";
 import { cn } from "../utils";
 
-type ItemKind = "skill" | "preset" | "project" | "action";
+type ItemKind = "action" | "preset" | "project" | "skill";
 
 interface PaletteItem {
   id: string;
@@ -30,18 +31,13 @@ interface PaletteItem {
 export function CommandPalette() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const {
-    managedSkills,
-    presets,
-    projects,
-    viewedPreset,
-    setViewedPresetId,
-    openSkillDetailById,
-  } = useApp();
+
+  const { managedSkills, presets, projects, viewedPreset, setViewedPresetId, openSkillDetailById } =
+    useApp();
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [selectedIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -53,31 +49,30 @@ export function CommandPalette() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+
       const typing =
         target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable);
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         if (typing && !open) return;
         e.preventDefault();
         setOpen((prev) => !prev);
+        setActiveIndex(0);
       } else if (e.key === "Escape" && open) {
         e.preventDefault();
         close();
       }
     };
+
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
   }, [open, close]);
 
   useEffect(() => {
-    if (open) {
-      setActiveIndex(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
+    if (open) requestAnimationFrame(() => inputRef.current?.focus());
   }, [open]);
 
   const items = useMemo<PaletteItem[]>(() => {
@@ -86,9 +81,7 @@ export function CommandPalette() {
     const skillItems: PaletteItem[] = managedSkills
       .filter(
         (s) =>
-          !q ||
-          s.name.toLowerCase().includes(q) ||
-          (s.description || "").toLowerCase().includes(q),
+          !q || s.name.toLowerCase().includes(q) || (s.description || "").toLowerCase().includes(q),
       )
       .slice(0, 8)
       .map((s) => ({
@@ -109,6 +102,7 @@ export function CommandPalette() {
       .map((s) => {
         const option = getPresetIconOption(s);
         const Icon = option.icon;
+
         return {
           id: `preset:${s.id}`,
           kind: "preset",
@@ -119,6 +113,7 @@ export function CommandPalette() {
             if (viewedPreset?.id !== s.id) {
               setViewedPresetId(s.id);
             }
+
             if (!window.location.pathname.endsWith("/my-skills")) {
               navigate({ to: "/my-skills" });
             }
@@ -127,12 +122,7 @@ export function CommandPalette() {
       });
 
     const projectItems: PaletteItem[] = projects
-      .filter(
-        (p) =>
-          !q ||
-          p.name.toLowerCase().includes(q) ||
-          p.path.toLowerCase().includes(q),
-      )
+      .filter((p) => !q || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q))
       .slice(0, 5)
       .map((p) => ({
         id: `proj:${p.id}`,
@@ -181,6 +171,7 @@ export function CommandPalette() {
         run: () => navigate({ to: "/settings/{-$category}" }),
       },
     ];
+
     const actions = actionDefs.filter((a) => !q || a.label.toLowerCase().includes(q));
 
     return [...skillItems, ...presetItems, ...projectItems, ...actions];
@@ -196,16 +187,17 @@ export function CommandPalette() {
     t,
   ]);
 
-  useEffect(() => {
-    if (activeIndex >= items.length) setActiveIndex(0);
-  }, [items.length, activeIndex]);
+  // Fall back to the first item when the list shrinks below the selection.
+  const activeIndex = selectedIndex < items.length ? selectedIndex : 0;
 
   // Scroll active item into view
   useEffect(() => {
     if (!open) return;
+
     const el = listRef.current?.querySelector<HTMLDivElement>(
       `[data-palette-index="${activeIndex}"]`,
     );
+
     el?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, open]);
 
@@ -221,13 +213,14 @@ export function CommandPalette() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, Math.max(items.length - 1, 0)));
+      setActiveIndex(Math.min(activeIndex + 1, Math.max(items.length - 1, 0)));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveIndex((i) => Math.max(i - 1, 0));
+      setActiveIndex(Math.max(activeIndex - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
       const item = items[activeIndex];
+
       if (item) {
         item.run();
         close();
@@ -237,68 +230,66 @@ export function CommandPalette() {
 
   // Build render order by group, with flat index for keyboard nav
   let flatIndex = 0;
-  const rendered = groups
-    .map((g) => {
-      const groupItems = items.filter((it) => it.kind === g.kind);
-      if (groupItems.length === 0) return null;
-      return (
-        <div key={g.kind}>
-          <div className="px-4 pt-3 pb-1 font-mono text-[10px] uppercase tracking-[0.12em] text-faint">
-            {g.label} · {groupItems.length}
-          </div>
-          {groupItems.map((item) => {
-            const idx = flatIndex++;
-            const active = idx === activeIndex;
-            return (
-              <div
-                key={item.id}
-                data-palette-index={idx}
-                role="option"
-                aria-selected={active}
-                onMouseEnter={() => setActiveIndex(idx)}
-                onClick={() => {
-                  item.run();
-                  close();
-                }}
-                className={cn(
-                  "flex cursor-pointer items-center gap-3 px-4 py-2 text-[13px]",
-                  active ? "bg-surface-hover" : "hover:bg-surface-hover/60",
-                )}
-              >
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border-subtle bg-surface text-muted">
-                  {item.icon}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div
-                    className={cn(
-                      "truncate",
-                      item.kind === "skill" ? "font-mono" : "",
-                      active ? "text-primary" : "text-secondary",
-                    )}
-                  >
-                    {item.label}
-                  </div>
-                  {item.sublabel && (
-                    <div className="truncate text-[12px] text-muted">
-                      {item.sublabel}
-                    </div>
+
+  const rendered = groups.map((g) => {
+    const groupItems = items.filter((it) => it.kind === g.kind);
+
+    if (groupItems.length === 0) return null;
+
+    return (
+      <div key={g.kind}>
+        <div className="px-4 pb-1 pt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-faint">
+          {g.label} · {groupItems.length}
+        </div>
+        {groupItems.map((item) => {
+          const idx = flatIndex++;
+          const active = idx === activeIndex;
+
+          return (
+            <div
+              key={item.id}
+              data-palette-index={idx}
+              role="option"
+              aria-selected={active}
+              onMouseEnter={() => setActiveIndex(idx)}
+              onClick={() => {
+                item.run();
+                close();
+              }}
+              className={cn(
+                "flex cursor-pointer items-center gap-3 px-4 py-2 text-[13px]",
+                active ? "bg-surface-hover" : "hover:bg-surface-hover/60",
+              )}
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border-subtle bg-surface text-muted">
+                {item.icon}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div
+                  className={cn(
+                    "truncate",
+                    item.kind === "skill" ? "font-mono" : "",
+                    active ? "text-primary" : "text-secondary",
                   )}
+                >
+                  {item.label}
                 </div>
-                {item.shortcut && (
-                  <span className="rounded border border-border-subtle bg-surface-hover px-1.5 py-0.5 font-mono text-[10px] text-faint">
-                    {item.shortcut}
-                  </span>
-                )}
-                {active && (
-                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted" />
+                {item.sublabel && (
+                  <div className="truncate text-[12px] text-muted">{item.sublabel}</div>
                 )}
               </div>
-            );
-          })}
-        </div>
-      );
-    })
-    .filter(Boolean);
+              {item.shortcut && (
+                <span className="rounded border border-border-subtle bg-surface-hover px-1.5 py-0.5 font-mono text-[10px] text-faint">
+                  {item.shortcut}
+                </span>
+              )}
+              {active && <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted" />}
+            </div>
+          );
+        })}
+      </div>
+    );
+  });
 
   return (
     <div
@@ -326,11 +317,7 @@ export function CommandPalette() {
           </span>
         </div>
 
-        <div
-          ref={listRef}
-          className="max-h-[60vh] overflow-y-auto pb-2"
-          role="listbox"
-        >
+        <div ref={listRef} className="max-h-[60vh] overflow-y-auto pb-2" role="listbox">
           {items.length === 0 ? (
             <div className="px-4 py-10 text-center text-[13px] text-muted">
               {t("commandPalette.empty")}

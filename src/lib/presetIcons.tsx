@@ -32,6 +32,7 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
+
 import type { Preset } from "./tauri";
 
 export interface PresetIconOption {
@@ -262,9 +263,7 @@ export const PRESET_ICON_OPTIONS: PresetIconOption[] = [
   },
 ];
 
-const PRESET_ICON_MAP = new Map(
-  PRESET_ICON_OPTIONS.map((option) => [option.key, option] as const)
-);
+const PRESET_ICON_MAP = new Map(PRESET_ICON_OPTIONS.map((option) => [option.key, option] as const));
 
 const PRESET_KEYWORD_RULES: Array<{ key: string; keywords: string[] }> = [
   { key: "briefcase", keywords: ["工作", "work", "office", "client"] },
@@ -293,25 +292,27 @@ const PRESET_KEYWORD_RULES: Array<{ key: string; keywords: string[] }> = [
   { key: "palette", keywords: ["设计", "design", "brand", "ui"] },
 ];
 
-export function inferPresetIconKey(preset?: Pick<Preset, "name" | "description" | "icon"> | null) {
+export function inferPresetIconKey(preset?: null | Pick<Preset, "description" | "icon" | "name">) {
   if (preset?.icon && PRESET_ICON_MAP.has(preset.icon)) {
     return preset.icon;
   }
 
   const haystack = `${preset?.name || ""} ${preset?.description || ""}`.toLowerCase();
+
   const matched = PRESET_KEYWORD_RULES.find((rule) =>
-    rule.keywords.some((keyword) => haystack.includes(keyword))
+    rule.keywords.some((keyword) => haystack.includes(keyword)),
   );
 
   return matched?.key || "briefcase";
 }
 
 export function getPresetIconOption(
-  preset?: Pick<Preset, "name" | "description" | "icon"> | string | null
+  preset?: null | Pick<Preset, "description" | "icon" | "name"> | string,
 ) {
   const key =
-    typeof preset === "string"
-      ? preset
-      : inferPresetIconKey(preset);
+    preset instanceof Object || preset === null || preset === undefined
+      ? inferPresetIconKey(preset)
+      : preset;
+
   return PRESET_ICON_MAP.get(key) || PRESET_ICON_OPTIONS[0];
 }

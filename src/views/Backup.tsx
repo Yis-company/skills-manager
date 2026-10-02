@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   CheckCircle2,
   Cloud,
@@ -10,23 +10,24 @@ import {
   Unlink,
   XCircle,
 } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { ToggleSwitch } from "../components/ToggleSwitch";
+
+import { BackupConflicts } from "../components/BackupConflicts";
+import { BackupHistoryList } from "../components/BackupHistoryList";
+import { BackupStatusCard } from "../components/BackupStatusCard";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { GithubConnectCard } from "../components/GithubConnectCard";
 import { GitRecoveryDialog } from "../components/GitRecoveryDialog";
 import { GitSetupDialog } from "../components/GitSetupDialog";
 import { LocalBackupNotice } from "../components/LocalBackupNotice";
-import { BackupStatusCard } from "../components/BackupStatusCard";
-import { BackupConflicts } from "../components/BackupConflicts";
-import { GithubConnectCard } from "../components/GithubConnectCard";
-import { BackupHistoryList } from "../components/BackupHistoryList";
+import { ToggleSwitch } from "../components/ToggleSwitch";
 import { useApp } from "../context/AppContext";
 import { useBackupStatus } from "../hooks/useBackupStatus";
 import { useGithubDeviceFlow } from "../hooks/useGithubDeviceFlow";
-import { getErrorMessage } from "../lib/error";
 import { displaySnapshotLabel, formatBytes } from "../lib/backupFormat";
+import { getErrorMessage } from "../lib/error";
 import {
   isAuthFailureMessage,
   isRecoverableSetupError,
@@ -38,10 +39,11 @@ import { githubRepoWebUrl as toGithubRepoWebUrl } from "../lib/gitUrl";
 import * as api from "../lib/tauri";
 import type { GitUpstreamHealth } from "../lib/tauri";
 
-type LoadingAction = "start" | "sync" | "recovery" | "save" | "disconnect" | "github" | null;
+type LoadingAction = "disconnect" | "github" | "recovery" | "save" | "start" | "sync" | null;
 
 const DEFAULT_GITHUB_REPO = "skills-manager-backup";
-type RecoveryReason = GitUpstreamHealth | "conflict";
+
+type RecoveryReason = "conflict" | GitUpstreamHealth;
 
 export function Backup() {
   const { t } = useTranslation();
@@ -49,6 +51,7 @@ export function Backup() {
   // Backup is this computer's, but while a host is active the shared skill
   // list is the host's, so it says nothing about what is backed up here.
   const localSkills = activeHost ? null : managedSkills;
+
   const {
     gitStatus,
     refreshGitStatus,
@@ -73,32 +76,31 @@ export function Backup() {
     authMethod,
     setAuthMethod,
   } = useBackupStatus();
+
   const [loading, setLoading] = useState<LoadingAction>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [recoveryReason, setRecoveryReason] = useState<RecoveryReason>("unrelated_histories");
-  const [restoreVersionTag, setRestoreVersionTag] = useState<string | null>(null);
-  const [restoringVersionTag, setRestoringVersionTag] = useState<string | null>(null);
+  const [restoreVersionTag, setRestoreVersionTag] = useState<null | string>(null);
+  const [restoringVersionTag, setRestoringVersionTag] = useState<null | string>(null);
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [githubToken, setGithubToken] = useState("");
   const [githubRepoName, setGithubRepoName] = useState(DEFAULT_GITHUB_REPO);
-  const [githubError, setGithubError] = useState<string | null>(null);
+  const [githubError, setGithubError] = useState<null | string>(null);
   const [patMode, setPatMode] = useState(false);
   const { deviceInfo, runDeviceFlow, cancelDeviceFlow: stopDeviceFlow } = useGithubDeviceFlow();
   const [autoBackupSaving, setAutoBackupSaving] = useState(false);
-  const [resolvingConflict, setResolvingConflict] = useState<string | null>(null);
+  const [resolvingConflict, setResolvingConflict] = useState<null | string>(null);
   const [revokeConfirmOpen, setRevokeConfirmOpen] = useState(false);
   const [deleteRemoteConfirmOpen, setDeleteRemoteConfirmOpen] = useState(false);
   const [reconnectMode, setReconnectMode] = useState(false);
 
-  const mapGitError = useCallback(
-    (error: unknown) => mapGitErrorMessage(error, t),
-    [t],
-  );
+  const mapGitError = useCallback((cause: unknown) => mapGitErrorMessage(cause, t), [t]);
 
   const handleToggleAutoBackup = async () => {
     const next = !autoBackupEnabled;
     setAutoBackupSaving(true);
+
     try {
       await api.setSettings("backup_auto_enabled", next ? "on" : "off");
       setAutoBackupEnabled(next);
@@ -112,14 +114,17 @@ export function Backup() {
   const handleSaveRemote = async () => {
     const trimmed = remoteInput.trim();
     setLoading("save");
+
     try {
       // Never persist credentials embedded in the URL: they go to the OS
       // keychain and only the sanitized URL is saved and shown (§3.7).
       const effective = trimmed ? await api.gitBackupSanitizeRemoteUrl(trimmed) : "";
       await api.setSettings("git_backup_remote_url", effective);
+
       if (effective && gitStatus?.is_repo) {
         await api.gitBackupSetRemote(effective);
       }
+
       setRemoteInput(effective);
       setRemoteConfig(effective);
       toast.success(t("settings.gitConfigSaved"));
@@ -133,10 +138,16 @@ export function Backup() {
 
   const handleSetupClone = async () => {
     setLoading("start");
+
     try {
       await api.gitBackupClone(remoteConfig);
       toast.success(t("settings.gitCloneSuccess"));
-      await Promise.all([refreshGitStatus(true), refreshManagedSkills(), refreshPresets(), refreshVersions()]);
+      await Promise.all([
+        refreshGitStatus(true),
+        refreshManagedSkills(),
+        refreshPresets(),
+        refreshVersions(),
+      ]);
     } catch (error) {
       toast.error(mapGitError(error));
       throw error;
@@ -147,11 +158,14 @@ export function Backup() {
 
   const handleSetupInit = async () => {
     setLoading("start");
+
     try {
       await api.gitBackupInit();
+
       if (remoteConfig) {
         await api.gitBackupSetRemote(remoteConfig);
       }
+
       toast.success(t("settings.gitInitSuccess"));
       await Promise.all([refreshGitStatus(true), refreshVersions()]);
     } catch (error) {
@@ -165,13 +179,21 @@ export function Backup() {
   const handleRecoveryReclone = async () => {
     if (!remoteConfig) {
       toast.info(t("settings.gitNeedRemoteSetup"));
+
       return;
     }
+
     setLoading("recovery");
+
     try {
       await api.gitBackupReclone(remoteConfig);
       toast.success(t("settings.gitRecoveryRecloneSuccess"));
-      await Promise.all([refreshGitStatus(true), refreshManagedSkills(), refreshPresets(), refreshVersions()]);
+      await Promise.all([
+        refreshGitStatus(true),
+        refreshManagedSkills(),
+        refreshPresets(),
+        refreshVersions(),
+      ]);
     } catch (error) {
       toast.error(mapGitError(error));
       throw error;
@@ -182,57 +204,75 @@ export function Backup() {
 
   const handleBackupNow = async () => {
     setLoading("sync");
+
     try {
       let status = await api.gitBackupStatus();
+
       if (!status.is_repo) {
         setSetupOpen(true);
+
         return;
       }
+
       if (!status.remote_url && remoteConfig) {
         await api.gitBackupSetRemote(remoteConfig);
         status = await api.gitBackupStatus();
       }
+
       if (!status.remote_url) {
         toast.info(t("settings.gitNeedRemoteSetup"));
+
         return;
       }
+
       if (
-        status.upstream_health === "unrelated_histories"
-        || status.upstream_health === "detached"
+        status.upstream_health === "unrelated_histories" ||
+        status.upstream_health === "detached"
       ) {
         setRecoveryReason(status.upstream_health);
         setRecoveryOpen(true);
+
         return;
       }
+
       // One backend transaction: commit → merge → snapshot → push, retried
       // internally when another device pushes concurrently (§9 并发收敛).
       const outcome = await api.gitBackupSync(t("settings.gitCommitPlaceholder"));
       const merge = outcome.merge;
+
       if (merge && merge.engine === "object" && !merge.legacy_fallback) {
         // Object merge (merge-engine design §8): human-readable outcome.
         if (merge.new_conflicts.length > 0) {
-          toast.warning(
-            t("backup.merge.newConflicts", { count: merge.new_conflicts.length }),
-            { duration: 10000 },
-          );
+          toast.warning(t("backup.merge.newConflicts", { count: merge.new_conflicts.length }), {
+            duration: 10000,
+          });
         } else {
           toast.success(t("backup.merge.applied", { count: merge.updated.length }));
         }
+
         if (merge.old_client_warning) {
           toast.warning(merge.old_client_warning, { duration: 12000 });
         }
+
         void refreshPendingConflicts();
       } else if (merge) {
         toast.success(t("settings.gitPullSuccess"));
       }
+
       if (merge) {
         await Promise.all([refreshManagedSkills(), refreshPresets()]);
       }
+
       if (outcome.pushed && outcome.snapshot_tag) {
-        toast.success(t("mySkills.gitSyncSuccessWithVersion", { tag: displaySnapshotLabel(outcome.snapshot_tag) }));
+        toast.success(
+          t("mySkills.gitSyncSuccessWithVersion", {
+            tag: displaySnapshotLabel(outcome.snapshot_tag),
+          }),
+        );
       } else if (!merge) {
         toast.success(t("settings.gitUpToDate"));
       }
+
       setBackupError(null);
       setBackupErrorRaw("");
       await Promise.all([refreshGitStatus(true), refreshVersions()]);
@@ -240,6 +280,7 @@ export function Backup() {
       setBackupError(mapGitError(error));
       setBackupErrorRaw(getErrorMessage(error, ""));
       const message = getErrorMessage(error, "");
+
       if (message.includes("pending on both devices")) {
         // Object-merge block (§4 双侧声明): the fix is resolving the pending
         // conflict on one device — reclone/recovery would be wrong advice.
@@ -247,7 +288,11 @@ export function Backup() {
       } else if (isRecoverableSetupError(error)) {
         toast.error(mapGitError(error));
         const latest = await refreshGitStatus();
-        setRecoveryReason(isSyncConflictError(error) ? "conflict" : (latest?.upstream_health ?? "unrelated_histories"));
+        setRecoveryReason(
+          isSyncConflictError(error)
+            ? "conflict"
+            : (latest?.upstream_health ?? "unrelated_histories"),
+        );
         setRecoveryOpen(true);
       } else {
         toast.error(mapGitError(error));
@@ -257,16 +302,12 @@ export function Backup() {
     }
   };
 
-  const handleResolveConflict = async (
-    skillId: string,
-    action: api.ResolveConflictAction,
-  ) => {
+  const handleResolveConflict = async (skillId: string, action: api.ResolveConflictAction) => {
     setResolvingConflict(skillId);
+
     try {
       const safetyTag = await api.gitBackupResolveConflict(skillId, action);
-      toast.success(
-        t("backup.conflicts.resolved", { tag: displaySnapshotLabel(safetyTag) }),
-      );
+      toast.success(t("backup.conflicts.resolved", { tag: displaySnapshotLabel(safetyTag) }));
       await Promise.all([
         refreshPendingConflicts(),
         refreshGitStatus(),
@@ -283,7 +324,7 @@ export function Backup() {
     }
   };
 
-  const mapGithubError = (error: unknown) => mapGithubErrorMessage(error, t);
+  const mapGithubError = (cause: unknown) => mapGithubErrorMessage(cause, t);
 
   /** Shared tail of both connect paths: wire the repo locally and either
    * restore the existing backup or push the first one. */
@@ -291,20 +332,25 @@ export function Backup() {
     setReconnectMode(false);
     setBackupError(null);
     setBackupErrorRaw("");
-    api.getSettings("github_auth_method")
+    api
+      .getSettings("github_auth_method")
       .then((v) => setAuthMethod((v ?? "").trim()))
       .catch(() => {});
     setRemoteInput(res.url);
     setRemoteConfig(res.url);
+
     if (res.repo_created) {
       const repo = res.url.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
       toast.success(t("backup.github.repoCreated", { repo }));
     }
+
     if (!res.repo_private) {
       // Connecting a backup to a PUBLIC repo is almost never intentional.
       toast.warning(t("backup.github.publicRepoWarning"), { duration: 15000 });
     }
+
     const status = await api.gitBackupStatus();
+
     if (res.remote_has_content) {
       // Existing backup: restore it (or just rewire when a repo already exists).
       if (!status.is_repo) {
@@ -312,13 +358,20 @@ export function Backup() {
       } else {
         await api.gitBackupSetRemote(res.url);
       }
+
       toast.success(t("backup.github.connectedRestored"));
-      await Promise.all([refreshGitStatus(true), refreshManagedSkills(), refreshPresets(), refreshVersions()]);
+      await Promise.all([
+        refreshGitStatus(true),
+        refreshManagedSkills(),
+        refreshPresets(),
+        refreshVersions(),
+      ]);
     } else {
       // Fresh backup: initialize if needed, wire the remote, run the first backup.
       if (!status.is_repo) {
         await api.gitBackupInit();
       }
+
       await api.gitBackupSetRemote(res.url);
       await refreshGitStatus();
       await handleBackupNow();
@@ -327,14 +380,17 @@ export function Backup() {
 
   const handleGithubConnect = async () => {
     const token = githubToken.trim();
+
     if (!token) return;
     setLoading("github");
     setGithubError(null);
+
     try {
       const res = await api.githubBackupConnect(
         token,
         githubRepoName.trim() || DEFAULT_GITHUB_REPO,
       );
+
       // Token is in the OS keychain now; drop it from component state.
       setGithubToken("");
       await finishGithubConnect(res);
@@ -348,8 +404,10 @@ export function Backup() {
   const handleDeviceFlow = async () => {
     setLoading("github");
     setGithubError(null);
+
     try {
       const outcome = await runDeviceFlow(githubRepoName.trim() || DEFAULT_GITHUB_REPO);
+
       if (outcome === "expired") {
         setGithubError(t("backup.github.deviceExpired"));
       } else if (outcome) {
@@ -370,11 +428,19 @@ export function Backup() {
   const handleRestoreVersion = async () => {
     if (!restoreVersionTag) return;
     setRestoringVersionTag(restoreVersionTag);
+
     try {
       const safetyTag = await api.gitBackupRestoreVersion(restoreVersionTag);
-      toast.success(t("mySkills.gitVersionRestoreSuccess", { tag: displaySnapshotLabel(restoreVersionTag) }));
+      toast.success(
+        t("mySkills.gitVersionRestoreSuccess", { tag: displaySnapshotLabel(restoreVersionTag) }),
+      );
       toast.info(t("backup.restoreSafetyPoint", { tag: displaySnapshotLabel(safetyTag) }));
-      await Promise.all([refreshGitStatus(), refreshVersions(), refreshManagedSkills(), refreshPresets()]);
+      await Promise.all([
+        refreshGitStatus(),
+        refreshVersions(),
+        refreshManagedSkills(),
+        refreshPresets(),
+      ]);
       setRestoreVersionTag(null);
     } catch (error) {
       toast.error(mapGitError(error));
@@ -385,6 +451,7 @@ export function Backup() {
 
   const handleDisconnect = async () => {
     setLoading("disconnect");
+
     try {
       await api.gitBackupRemoveRemote();
       setRemoteInput("");
@@ -415,6 +482,7 @@ export function Backup() {
     setRevokeConfirmOpen(false);
     const oauthUrl = `https://github.com/settings/connections/applications/${GITHUB_OAUTH_CLIENT_ID}`;
     const patUrl = "https://github.com/settings/tokens";
+
     if (authMethod === "pat") {
       openUrl(patUrl).catch(() => {});
     } else if (authMethod === "oauth") {
@@ -426,6 +494,7 @@ export function Backup() {
       openUrl(oauthUrl).catch(() => {});
       openUrl(patUrl).catch(() => {});
     }
+
     await handleDisconnect();
   };
 
@@ -434,6 +503,7 @@ export function Backup() {
   // repo-name confirmation) is the safe double-confirm path.
   const handleOpenDeleteRemote = async () => {
     setDeleteRemoteConfirmOpen(false);
+
     if (githubRepoWebUrl) {
       await openUrl(`${githubRepoWebUrl}/settings#danger-zone`).catch(() => {});
       toast.info(t("backup.disconnect.deleteRemoteOpened"), { duration: 12000 });
@@ -442,7 +512,7 @@ export function Backup() {
 
   return (
     <div className="app-page">
-      <div className="app-page-header pr-2 pb-1 flex items-center justify-between gap-3">
+      <div className="app-page-header flex items-center justify-between gap-3 pb-1 pr-2">
         <div>
           <h1 className="app-page-title">{t("backup.title")}</h1>
           <p className="mt-1 text-[13px] text-muted">{t("backup.subtitle")}</p>
@@ -510,7 +580,9 @@ export function Backup() {
           <section className="app-panel p-4">
             <div className="mb-3 flex items-center gap-2">
               <Cloud className="h-4 w-4 text-muted" />
-              <h2 className="text-[14px] font-semibold text-secondary">{t("backup.connection.title")}</h2>
+              <h2 className="text-[14px] font-semibold text-secondary">
+                {t("backup.connection.title")}
+              </h2>
             </div>
             <p className="mb-3 text-[13px] leading-5 text-muted">{t("backup.connection.desc")}</p>
             <div className="flex flex-wrap items-center gap-2">
@@ -530,7 +602,11 @@ export function Backup() {
                 disabled={loading === "save"}
                 className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-hover px-2.5 text-[13px] font-medium text-tertiary transition-colors hover:bg-surface-active disabled:opacity-50"
               >
-                {loading === "save" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {loading === "save" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Save className="h-3.5 w-3.5" />
+                )}
                 {t("common.save")}
               </button>
             </div>
@@ -550,7 +626,9 @@ export function Backup() {
           <section className="app-panel p-4">
             <div className="mb-3 flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-muted" />
-              <h2 className="text-[14px] font-semibold text-secondary">{t("backup.scope.title")}</h2>
+              <h2 className="text-[14px] font-semibold text-secondary">
+                {t("backup.scope.title")}
+              </h2>
             </div>
             <div className="space-y-2 text-[13px]">
               {["skills", "metadata"].map((key) => (
@@ -566,16 +644,26 @@ export function Backup() {
                 </div>
               ))}
             </div>
-            {sizeReport && (sizeReport.oversized.length > 0 || sizeReport.total_bytes > sizeReport.repo_warn_bytes) ? (
+            {sizeReport &&
+            (sizeReport.oversized.length > 0 ||
+              sizeReport.total_bytes > sizeReport.repo_warn_bytes) ? (
               <div className="mt-3 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-700 dark:text-amber-300">
                 {sizeReport.total_bytes > sizeReport.repo_warn_bytes && (
-                  <div>{t("backup.scope.repoTooLarge", { size: formatBytes(sizeReport.total_bytes) })}</div>
+                  <div>
+                    {t("backup.scope.repoTooLarge", { size: formatBytes(sizeReport.total_bytes) })}
+                  </div>
                 )}
                 {sizeReport.oversized.map((skill) => (
                   <div key={skill.name}>
                     {skill.excluded
-                      ? t("backup.scope.oversizedExcluded", { name: skill.name, size: formatBytes(skill.bytes) })
-                      : t("backup.scope.oversizedSkill", { name: skill.name, size: formatBytes(skill.bytes) })}
+                      ? t("backup.scope.oversizedExcluded", {
+                          name: skill.name,
+                          size: formatBytes(skill.bytes),
+                        })
+                      : t("backup.scope.oversizedSkill", {
+                          name: skill.name,
+                          size: formatBytes(skill.bytes),
+                        })}
                   </div>
                 ))}
               </div>
@@ -589,7 +677,9 @@ export function Backup() {
           <section className="app-panel p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h2 className="text-[14px] font-semibold text-secondary">{t("backup.auto.title")}</h2>
+                <h2 className="text-[14px] font-semibold text-secondary">
+                  {t("backup.auto.title")}
+                </h2>
                 <p className="mt-1 text-[12px] leading-5 text-muted">{t("backup.auto.desc")}</p>
               </div>
               <ToggleSwitch
@@ -605,7 +695,9 @@ export function Backup() {
           <section className="app-panel p-4">
             <div className="mb-3 flex items-center gap-2">
               <Unlink className="h-4 w-4 text-muted" />
-              <h2 className="text-[14px] font-semibold text-secondary">{t("backup.disconnect.title")}</h2>
+              <h2 className="text-[14px] font-semibold text-secondary">
+                {t("backup.disconnect.title")}
+              </h2>
             </div>
             <p className="text-[13px] leading-5 text-muted">{t("backup.disconnect.desc")}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -615,7 +707,11 @@ export function Backup() {
                 disabled={loading === "disconnect" || (!remoteConfig && !gitStatus?.remote_url)}
                 className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-hover px-2.5 text-[13px] font-medium text-tertiary transition-colors hover:bg-surface-active disabled:opacity-50"
               >
-                {loading === "disconnect" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
+                {loading === "disconnect" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Unlink className="h-3.5 w-3.5" />
+                )}
                 {t("settings.gitDisconnect")}
               </button>
               {isGithubRemote && (
@@ -660,12 +756,16 @@ export function Backup() {
           </section>
 
           <section className="app-panel p-4">
-            <h2 className="text-[14px] font-semibold text-secondary">{t("backup.summary.title")}</h2>
+            <h2 className="text-[14px] font-semibold text-secondary">
+              {t("backup.summary.title")}
+            </h2>
             <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
               {localSkills && (
                 <div className="rounded-md border border-border-subtle bg-bg-secondary px-3 py-2">
                   <div className="text-faint">{t("backup.summary.skills")}</div>
-                  <div className="mt-1 text-[18px] font-semibold text-primary">{localSkills.length}</div>
+                  <div className="mt-1 text-[18px] font-semibold text-primary">
+                    {localSkills.length}
+                  </div>
                 </div>
               )}
               <div className="rounded-md border border-border-subtle bg-bg-secondary px-3 py-2">
@@ -680,7 +780,9 @@ export function Backup() {
       <ConfirmDialog
         open={restoreVersionTag !== null}
         title={t("mySkills.gitVersionRestoreTitle")}
-        message={t("mySkills.gitVersionRestoreConfirm", { tag: displaySnapshotLabel(restoreVersionTag || "") })}
+        message={t("mySkills.gitVersionRestoreConfirm", {
+          tag: displaySnapshotLabel(restoreVersionTag || ""),
+        })}
         tone="warning"
         confirmLabel={t("mySkills.gitVersionRestore")}
         onClose={() => setRestoreVersionTag(null)}
@@ -698,11 +800,13 @@ export function Backup() {
       <ConfirmDialog
         open={revokeConfirmOpen}
         title={t("backup.disconnect.revokeConfirmTitle")}
-        message={authMethod === "pat"
-          ? t("backup.disconnect.revokeConfirmPat")
-          : authMethod === "oauth"
-            ? t("backup.disconnect.revokeConfirmOauth")
-            : t("backup.disconnect.revokeConfirmUnknown")}
+        message={
+          authMethod === "pat"
+            ? t("backup.disconnect.revokeConfirmPat")
+            : authMethod === "oauth"
+              ? t("backup.disconnect.revokeConfirmOauth")
+              : t("backup.disconnect.revokeConfirmUnknown")
+        }
         tone="warning"
         confirmLabel={t("backup.disconnect.revoke")}
         onClose={() => setRevokeConfirmOpen(false)}

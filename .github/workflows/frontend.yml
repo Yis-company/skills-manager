@@ -4,14 +4,14 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'src-tauri/**'
-      - '**/*.md'
-      - 'docs/**'
+      - "src-tauri/**"
+      - "**/*.md"
+      - "docs/**"
   pull_request:
     paths-ignore:
-      - 'src-tauri/**'
-      - '**/*.md'
-      - 'docs/**'
+      - "src-tauri/**"
+      - "**/*.md"
+      - "docs/**"
 
 permissions:
   contents: read
@@ -40,6 +40,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Format
+        run: pnpm format:check
 
       - name: Lint
         run: pnpm lint

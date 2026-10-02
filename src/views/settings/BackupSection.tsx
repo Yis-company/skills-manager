@@ -1,12 +1,13 @@
-import { useState, useEffect } from "react";
-import { Link as LinkIcon, Unlink, Loader2, ExternalLink } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { ExternalLink, Link as LinkIcon, Loader2, Unlink } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { useNavigate } from "@tanstack/react-router";
+
+import { LocalBackupNotice } from "../../components/LocalBackupNotice";
 import { ToggleSwitch } from "../../components/ToggleSwitch";
 import * as api from "../../lib/tauri";
 import { ACTION_BUTTON_CLASS, FIELD_CLASS } from "./shared";
-import { LocalBackupNotice } from "../../components/LocalBackupNotice";
 
 export function BackupSection() {
   const { t } = useTranslation();
@@ -21,19 +22,29 @@ export function BackupSection() {
   useEffect(() => {
     // The saved setting is the single source of truth. Do not backfill from
     // `.git/config` — that made a cleared URL reappear on reopen (#260).
-    api.getSettings("git_backup_remote_url").then((v) => {
-      setGitRemoteInput(v?.trim() || "");
-    }).catch(() => {});
-    api.getSettings("git_backup_engine").then((v) => {
-      setGitEngineGit2(v?.trim() === "git2");
-    }).catch(() => {});
-    api.getSettings("merge_engine").then((v) => {
-      setGitMergeEngineObject((v ?? "").trim() !== "system");
-    }).catch(() => {});
+    api
+      .getSettings("git_backup_remote_url")
+      .then((v) => {
+        setGitRemoteInput(v?.trim() || "");
+      })
+      .catch(() => {});
+    api
+      .getSettings("git_backup_engine")
+      .then((v) => {
+        setGitEngineGit2(v?.trim() === "git2");
+      })
+      .catch(() => {});
+    api
+      .getSettings("merge_engine")
+      .then((v) => {
+        setGitMergeEngineObject((v ?? "").trim() !== "system");
+      })
+      .catch(() => {});
   }, []);
 
   const handleSaveGitRemote = async () => {
     setGitRemoteSaving(true);
+
     try {
       // Credentials embedded in the URL go to the OS keychain; only the
       // sanitized URL is persisted (backup redesign §3.7).
@@ -51,6 +62,7 @@ export function BackupSection() {
 
   const handleDisconnectGitRemote = async () => {
     setGitRemoteDisconnecting(true);
+
     try {
       await api.gitBackupRemoveRemote();
       setGitRemoteInput("");
@@ -64,11 +76,9 @@ export function BackupSection() {
 
   return (
     <section>
-      <h2 className="app-section-title mb-3">
-        {t("settings.gitSyncConfig")}
-      </h2>
+      <h2 className="app-section-title mb-3">{t("settings.gitSyncConfig")}</h2>
       <LocalBackupNotice className="mb-3" />
-      <div className="app-panel overflow-hidden divide-y divide-border-faint">
+      <div className="app-panel divide-y divide-border-faint overflow-hidden">
         <div className="px-4 py-3">
           <h3 className="text-[14px] font-semibold text-primary">{t("settings.gitRemoteUrl")}</h3>
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -76,9 +86,9 @@ export function BackupSection() {
             <button
               type="button"
               onClick={() => navigate({ to: "/backup" })}
-              className={`${ACTION_BUTTON_CLASS} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+              className={`${ACTION_BUTTON_CLASS} border-border bg-surface-hover text-tertiary hover:bg-surface-active`}
             >
-              <ExternalLink className="w-3 h-3" />
+              <ExternalLink className="h-3 w-3" />
               {t("settings.openBackupPage")}
             </button>
           </div>
@@ -93,32 +103,34 @@ export function BackupSection() {
             <button
               onClick={handleSaveGitRemote}
               disabled={gitRemoteSaving}
-              className={`${ACTION_BUTTON_CLASS} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+              className={`${ACTION_BUTTON_CLASS} border-border bg-surface-hover text-tertiary hover:bg-surface-active`}
             >
               {gitRemoteSaving ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
+                <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
-                <LinkIcon className="w-3 h-3" />
+                <LinkIcon className="h-3 w-3" />
               )}
               {t("common.save")}
             </button>
             <button
               onClick={handleDisconnectGitRemote}
               disabled={gitRemoteDisconnecting}
-              className={`${ACTION_BUTTON_CLASS} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+              className={`${ACTION_BUTTON_CLASS} border-border bg-surface-hover text-tertiary hover:bg-surface-active`}
             >
               {gitRemoteDisconnecting ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
+                <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
-                <Unlink className="w-3 h-3" />
+                <Unlink className="h-3 w-3" />
               )}
               {t("settings.gitDisconnect")}
             </button>
           </div>
-          <p className="text-[12px] text-muted mt-2">{t("settings.gitDisconnectHint")}</p>
+          <p className="mt-2 text-[12px] text-muted">{t("settings.gitDisconnectHint")}</p>
           <div className="mt-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-[14px] font-semibold text-primary">{t("settings.gitEngineGit2")}</div>
+              <div className="text-[14px] font-semibold text-primary">
+                {t("settings.gitEngineGit2")}
+              </div>
               <p className="mt-0.5 text-[12px] text-muted">{t("settings.gitEngineGit2Desc")}</p>
             </div>
             <ToggleSwitch
@@ -128,6 +140,7 @@ export function BackupSection() {
               onChange={async () => {
                 const next = !gitEngineGit2;
                 setGitEngineGit2(next);
+
                 try {
                   await api.setSettings("git_backup_engine", next ? "git2" : "system");
                   toast.success(t("common.success"));
@@ -140,8 +153,12 @@ export function BackupSection() {
           </div>
           <div className="mt-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-[14px] font-semibold text-primary">{t("settings.gitMergeEngineObject")}</div>
-              <p className="mt-0.5 text-[12px] text-muted">{t("settings.gitMergeEngineObjectDesc")}</p>
+              <div className="text-[14px] font-semibold text-primary">
+                {t("settings.gitMergeEngineObject")}
+              </div>
+              <p className="mt-0.5 text-[12px] text-muted">
+                {t("settings.gitMergeEngineObjectDesc")}
+              </p>
             </div>
             <ToggleSwitch
               className="mt-1"
@@ -150,6 +167,7 @@ export function BackupSection() {
               onChange={async () => {
                 const next = !gitMergeEngineObject;
                 setGitMergeEngineObject(next);
+
                 try {
                   await api.setSettings("merge_engine", next ? "object" : "system");
                   toast.success(t("common.success"));

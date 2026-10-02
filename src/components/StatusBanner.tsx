@@ -1,4 +1,5 @@
 import { AlertTriangle, RefreshCw } from "lucide-react";
+
 import { cn } from "../utils";
 
 interface StatusBannerProps {
@@ -6,7 +7,7 @@ interface StatusBannerProps {
   description?: string;
   actionLabel?: string;
   onAction?: () => void;
-  tone?: "warning" | "danger";
+  tone?: "danger" | "warning";
   compact?: boolean;
 }
 
@@ -30,7 +31,7 @@ export function StatusBanner({
       className={cn(
         "rounded-xl border px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
         toneClass,
-        compact && "px-3.5 py-3"
+        compact && "px-3.5 py-3",
       )}
     >
       <div className="flex items-start justify-between gap-3">

@@ -1,14 +1,15 @@
 import { Check, DownloadCloud, Github, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
+
 import type { ManagedSkill } from "../lib/tauri";
+import { cn } from "../utils";
 
 interface GitInstallTabProps {
   gitUrl: string;
   /** Clone and preview in flight. */
   gitLoading: boolean;
   /** Key to cancel the clone in flight with. */
-  gitCancelKey: string | null;
+  gitCancelKey: null | string;
   findInstalledByGitUrl: (url: string) => ManagedSkill | undefined;
   onGitUrlChange: (url: string) => void;
   onPreview: () => void;
@@ -45,7 +46,9 @@ export function GitInstallTab({
               type="text"
               value={gitUrl}
               onChange={(e) => onGitUrlChange(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !gitLoading && gitUrl.trim()) onPreview(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !gitLoading && gitUrl.trim()) onPreview();
+              }}
               placeholder={t("install.repoUrlPlaceholder")}
               disabled={gitLoading}
               className="app-input w-full bg-background"
@@ -77,7 +80,7 @@ export function GitInstallTab({
                   "flex w-full",
                   gitUrl.trim() && findInstalledByGitUrl(gitUrl)
                     ? "app-button-secondary bg-background"
-                    : "app-button-primary"
+                    : "app-button-primary",
                 )}
               >
                 <DownloadCloud className="h-3.5 w-3.5" />

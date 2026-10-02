@@ -1,22 +1,27 @@
 import { Loader2, Monitor, RefreshCw, Server, WifiOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
+
 import { useApp } from "../context/AppContext";
+import { cn } from "../utils";
 
 /** Strip under the title bar saying which machine the app is changing. */
 export function RemoteBanner() {
   const { t } = useTranslation();
   const { activeHost, hostSession, connectingHostId, switchHost } = useApp();
+
   if (!activeHost) return null;
 
   const lost = hostSession?.lostMessage != null;
   const info = hostSession?.info;
+
   const detail = lost
     ? hostSession?.lostMessage || undefined
     : info && `Agents Manager ${info.version} · ${info.os}/${info.arch} · ${info.base_dir}`;
+
   const reconnecting = connectingHostId === activeHost.id;
   // Nothing else may start while a switch is connecting.
   const busy = connectingHostId !== null;
+
   const buttonClass =
     "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium transition-colors disabled:opacity-60";
 
@@ -27,7 +32,7 @@ export function RemoteBanner() {
         "flex shrink-0 items-center gap-2.5 border-b px-5 py-1.5 text-[12px]",
         lost
           ? "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200"
-          : "border-accent-border bg-accent-bg text-secondary"
+          : "border-accent-border bg-accent-bg text-secondary",
       )}
     >
       {lost ? (

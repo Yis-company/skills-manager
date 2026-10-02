@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectSkill } from "./tauri";
+
 import {
   filterProjectSkillGroups,
-  getProjectUpdateCandidates,
-  getProjectUpdateReviewCount,
   getAgentDotTargets,
   getAssignedAgents,
+  getProjectUpdateCandidates,
+  getProjectUpdateReviewCount,
   groupProjectSkills,
   isCenterUpdatable,
   isProjectUpdatable,
@@ -15,8 +15,13 @@ import {
   type ProjectSkillFilter,
 } from "./projectSkillGroups";
 import { UNTAGGED_FILTER } from "./skillTags";
+import type { ProjectSkill } from "./tauri";
 
-function variant(agent: string, displayName: string, overrides: Partial<ProjectSkill> = {}): ProjectSkill {
+function variant(
+  agent: string,
+  displayName: string,
+  overrides: Partial<ProjectSkill> = {},
+): ProjectSkill {
   return {
     name: "Review",
     dir_name: "review",
@@ -39,8 +44,13 @@ function variant(agent: string, displayName: string, overrides: Partial<ProjectS
   };
 }
 
-const vendored = variant("cline", "Cline / Warp", { path: "/p/.agents/skills/review", vendored: true });
+const vendored = variant("cline", "Cline / Warp", {
+  path: "/p/.agents/skills/review",
+  vendored: true,
+});
+
 const claudeLink = variant("claude_code", "Claude Code", { alias_of: "review" });
+
 const cursorLink = variant("cursor", "Cursor", { alias_of: "review" });
 
 describe("groupProjectSkills", () => {
@@ -71,9 +81,11 @@ describe("groupProjectSkills", () => {
   });
 
   it("reports the most pressing status of any copy", () => {
-    const [group] = groupProjectSkills(
-      [vendored, variant("cursor", "Cursor", { sync_status: "center_newer" }), variant("pi", "Pi", { sync_status: "project_newer" })]
-    );
+    const [group] = groupProjectSkills([
+      vendored,
+      variant("cursor", "Cursor", { sync_status: "center_newer" }),
+      variant("pi", "Pi", { sync_status: "project_newer" }),
+    ]);
 
     expect(group.status).toBe("project_newer");
     expect(group.totalCount).toBe(3);
@@ -88,9 +100,17 @@ describe("groupProjectSkills", () => {
 
   it("groups by relative path regardless of case and sorts skills by name", () => {
     const other = variant("claude_code", "Claude Code", { name: "api", relative_path: "api" });
-    const groups = groupProjectSkills([vendored, variant("cursor", "Cursor", { relative_path: "Review" }), other]);
 
-    expect(groups.map((group) => [group.name, group.totalCount])).toEqual([["api", 1], ["Review", 2]]);
+    const groups = groupProjectSkills([
+      vendored,
+      variant("cursor", "Cursor", { relative_path: "Review" }),
+      other,
+    ]);
+
+    expect(groups.map((group) => [group.name, group.totalCount])).toEqual([
+      ["api", 1],
+      ["Review", 2],
+    ]);
   });
 });
 
@@ -132,7 +152,11 @@ describe("project update candidates", () => {
 
   it("excludes unlinked and project-only copies", () => {
     const [group] = groupProjectSkills([
-      variant("claude_code", "Claude Code", { in_center: false, center_skill_id: null, sync_status: "center_newer" }),
+      variant("claude_code", "Claude Code", {
+        in_center: false,
+        center_skill_id: null,
+        sync_status: "center_newer",
+      }),
       variant("cursor", "Cursor", { sync_status: "project_only" }),
     ]);
 
@@ -162,7 +186,11 @@ describe("getAssignedAgents / getAgentDotTargets", () => {
 
 describe("filterProjectSkillGroups", () => {
   const groups = groupProjectSkills([
-    variant("claude_code", "Claude Code", { name: "Review", relative_path: "review", tags: ["code"] }),
+    variant("claude_code", "Claude Code", {
+      name: "Review",
+      relative_path: "review",
+      tags: ["code"],
+    }),
     variant("claude_code", "Claude Code", {
       name: "Docs",
       relative_path: "docs",
@@ -170,8 +198,11 @@ describe("filterProjectSkillGroups", () => {
       enabled: false,
     }),
   ]);
+
   const names = (filter: Partial<ProjectSkillFilter>) =>
-    filterProjectSkillGroups(groups, { search: "", tags: new Set(), mode: "all", ...filter }).map((g) => g.name);
+    filterProjectSkillGroups(groups, { search: "", tags: new Set(), mode: "all", ...filter }).map(
+      (g) => g.name,
+    );
 
   it("searches name and description ignoring case", () => {
     expect(names({ search: "Review" })).toEqual(["Docs", "Review"]);
@@ -210,15 +241,21 @@ describe("pickInitialAgents", () => {
   const available = new Set(["claude_code", "cursor", "cline"]);
 
   it("uses the last-used agents that are still available when the project never chose", () => {
-    expect(pickInitialAgents(available, ["claude_code"], ["cursor", "gone"], false)).toEqual(["cursor"]);
+    expect(pickInitialAgents(available, ["claude_code"], ["cursor", "gone"], false)).toEqual([
+      "cursor",
+    ]);
   });
 
   it("keeps the project's own selection when it has one", () => {
-    expect(pickInitialAgents(available, ["claude_code"], ["cursor"], true)).toEqual(["claude_code"]);
+    expect(pickInitialAgents(available, ["claude_code"], ["cursor"], true)).toEqual([
+      "claude_code",
+    ]);
   });
 
   it("falls back to the selection when no last-used agent is available", () => {
-    expect(pickInitialAgents(available, ["claude_code", "gone"], ["gone"], false)).toEqual(["claude_code"]);
+    expect(pickInitialAgents(available, ["claude_code", "gone"], ["gone"], false)).toEqual([
+      "claude_code",
+    ]);
     expect(pickInitialAgents(available, ["cline"], null, false)).toEqual(["cline"]);
   });
 });

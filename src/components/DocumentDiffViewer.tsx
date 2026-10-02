@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+
 import { cn } from "../utils";
 
 interface DocumentDiffViewerProps {
@@ -8,9 +9,21 @@ interface DocumentDiffViewerProps {
 }
 
 type DiffRow =
-  | { type: "context"; leftNumber: number; rightNumber: number; leftContent: string; rightContent: string }
-  | { type: "removed"; leftNumber: number; rightNumber: null; leftContent: string; rightContent: "" }
-  | { type: "added"; leftNumber: null; rightNumber: number; leftContent: ""; rightContent: string };
+  | { type: "added"; leftNumber: null; rightNumber: number; leftContent: ""; rightContent: string }
+  | {
+      type: "context";
+      leftNumber: number;
+      rightNumber: number;
+      leftContent: string;
+      rightContent: string;
+    }
+  | {
+      type: "removed";
+      leftNumber: number;
+      rightNumber: null;
+      leftContent: string;
+      rightContent: "";
+    };
 
 interface DiffHunk {
   id: string;
@@ -108,10 +121,7 @@ function buildDiffRows(original: string, updated: string): DiffRow[] {
 }
 
 function buildHunks(rows: DiffRow[]): DiffHunk[] {
-  const changedIndexes = rows
-    .map((row, index) => ({ row, index }))
-    .filter(({ row }) => row.type !== "context")
-    .map(({ index }) => index);
+  const changedIndexes = rows.flatMap((row, index) => (row.type === "context" ? [] : [index]));
 
   if (changedIndexes.length === 0) return [];
 
@@ -122,6 +132,7 @@ function buildHunks(rows: DiffRow[]): DiffHunk[] {
   for (let i = 1; i < changedIndexes.length; i += 1) {
     const nextStart = Math.max(0, changedIndexes[i] - CONTEXT_LINES);
     const nextEnd = Math.min(rows.length - 1, changedIndexes[i] + CONTEXT_LINES);
+
     if (nextStart <= end + 1) {
       end = Math.max(end, nextEnd);
     } else {
@@ -132,13 +143,17 @@ function buildHunks(rows: DiffRow[]): DiffHunk[] {
   }
 
   hunks.push(createHunk(rows, start, end, hunks.length));
+
   return hunks;
 }
 
 function createHunk(rows: DiffRow[], start: number, end: number, index: number): DiffHunk {
   const hunkRows = rows.slice(start, end + 1);
   const leftNumbers = hunkRows.flatMap((row) => (row.leftNumber == null ? [] : [row.leftNumber]));
-  const rightNumbers = hunkRows.flatMap((row) => (row.rightNumber == null ? [] : [row.rightNumber]));
+
+  const rightNumbers = hunkRows.flatMap((row) =>
+    row.rightNumber == null ? [] : [row.rightNumber],
+  );
 
   return {
     id: `hunk-${index}-${start}-${end}`,
@@ -160,6 +175,7 @@ function cellTone(type: DiffRow["type"], side: "left" | "right") {
       markerClass: "text-red-700 dark:text-red-300",
     };
   }
+
   if (type === "added" && side === "right") {
     return {
       lineNoClass: "text-emerald-900 dark:text-emerald-200",
@@ -169,6 +185,7 @@ function cellTone(type: DiffRow["type"], side: "left" | "right") {
       markerClass: "text-emerald-700 dark:text-emerald-300",
     };
   }
+
   return {
     lineNoClass: "text-faint",
     lineNoStyle: { backgroundColor: "var(--color-surface-hover)" },
@@ -184,27 +201,38 @@ function DiffCell({
   type,
   side,
 }: {
-  number: number | null;
+  number: null | number;
   content: string;
   type: DiffRow["type"];
   side: "left" | "right";
 }) {
   const tone = cellTone(type, side);
-  const marker = side === "left" ? (type === "removed" ? "-" : " ") : (type === "added" ? "+" : " ");
+  const marker = side === "left" ? (type === "removed" ? "-" : " ") : type === "added" ? "+" : " ";
 
   return (
     <>
       <td
-        className={cn("w-14 select-none border-r border-border-subtle px-3 text-right font-mono text-[12px]", tone.lineNoClass)}
+        className={cn(
+          "w-14 select-none border-r border-border-subtle px-3 text-right font-mono text-[12px]",
+          tone.lineNoClass,
+        )}
         style={tone.lineNoStyle}
       >
         {number ?? ""}
       </td>
       <td
-        className={cn("border-r border-border-subtle px-3 font-mono text-[12.5px] leading-6", tone.codeClass)}
+        className={cn(
+          "border-r border-border-subtle px-3 font-mono text-[12.5px] leading-6",
+          tone.codeClass,
+        )}
         style={tone.codeStyle}
       >
-        <span className={cn("mr-3 inline-block w-3 select-none text-center font-semibold", tone.markerClass)}>
+        <span
+          className={cn(
+            "mr-3 inline-block w-3 select-none text-center font-semibold",
+            tone.markerClass,
+          )}
+        >
           {marker}
         </span>
         <span className="whitespace-pre-wrap break-words">{content || " "}</span>
@@ -219,7 +247,12 @@ export function DocumentDiffViewer({ original, updated, className }: DocumentDif
 
   if (hunks.length === 0) {
     return (
-      <div className={cn("rounded-xl border border-border-subtle bg-bg-secondary px-4 py-6 text-center", className)}>
+      <div
+        className={cn(
+          "rounded-xl border border-border-subtle bg-bg-secondary px-4 py-6 text-center",
+          className,
+        )}
+      >
         <div className="text-[13px] font-medium text-secondary">No content changes</div>
       </div>
     );
@@ -228,8 +261,14 @@ export function DocumentDiffViewer({ original, updated, className }: DocumentDif
   return (
     <div className={cn("space-y-4", className)}>
       {hunks.map((hunk) => (
-        <div key={hunk.id} className="overflow-hidden rounded-xl border border-border-subtle bg-bg-secondary">
-          <div className="grid grid-cols-2 border-b border-border-subtle" style={{ backgroundColor: "#ddf4ff" }}>
+        <div
+          key={hunk.id}
+          className="overflow-hidden rounded-xl border border-border-subtle bg-bg-secondary"
+        >
+          <div
+            className="grid grid-cols-2 border-b border-border-subtle"
+            style={{ backgroundColor: "#ddf4ff" }}
+          >
             <div className="border-r border-border-subtle px-3 py-2 font-mono text-[11px] text-sky-800">
               @@ -{hunk.leftStart},{hunk.leftCount}
             </div>
@@ -242,7 +281,10 @@ export function DocumentDiffViewer({ original, updated, className }: DocumentDif
             <table className="min-w-full border-collapse">
               <tbody>
                 {hunk.rows.map((row, index) => (
-                  <tr key={`${hunk.id}-${index}`} className="border-b border-border-subtle/80 last:border-b-0">
+                  <tr
+                    key={`${hunk.id}-${index}`}
+                    className="border-border-subtle/80 border-b last:border-b-0"
+                  >
                     <DiffCell
                       number={row.leftNumber}
                       content={row.leftContent}

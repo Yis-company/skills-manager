@@ -1,96 +1,109 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Search,
-  LayoutGrid,
-  List,
-  CheckCircle2,
-  Layers,
-  RefreshCw,
-  RotateCcw,
-  GitBranch,
-  ArrowUpCircle,
-  Wrench,
-  Loader2,
-  SquareCheck,
-  CircleSlash,
-  Circle,
-  Share2,
-  Tag,
-  Trash2,
-} from "lucide-react";
-import { pickPath } from "../lib/pickPath";
-import { useNavigate } from "@tanstack/react-router";
-import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
-import { cn } from "../utils";
-import { useApp } from "../context/AppContext";
-import { useMultiSelect } from "../hooks/useMultiSelect";
-import { useLibraryViewPrefs } from "../hooks/useLibraryViewPrefs";
-import { usePresetSkillOrder } from "../hooks/usePresetSkillOrder";
-import { useGitToolbarStatus } from "../hooks/useGitToolbarStatus";
-import { ConfirmDialog } from "../components/ConfirmDialog";
-import { TagRenameDialog } from "../components/TagRenameDialog";
-import { TagContextMenu, type TagMenuState } from "../components/TagContextMenu";
-import { SkillDetailPanel } from "../components/SkillDetailPanel";
-import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
-import { ResourceWorkspace } from "../components/ResourceWorkspace";
-import { BatchTagDialog } from "../components/BatchTagDialog";
-import { LibrarySkillCard } from "../components/LibrarySkillCard";
-import { LibrarySkillRow } from "../components/LibrarySkillRow";
-import { sourceIcon, type LibrarySkillItemProps } from "../components/librarySkillItem";
-import { BatchSyncAgentDialog } from "../components/BatchSyncAgentDialog";
-import { CreatorBadge } from "../components/CreatorBadge";
-import { AgentIcon } from "../components/AgentIcon";
-import { LibraryFilterChips, LibraryFilterPopover, type FilterCategory } from "../components/LibraryFilters";
-import * as api from "../lib/tauri";
-import { getTagActiveColor, pruneStaleTagFilters, UNTAGGED_FILTER } from "../lib/skillTags";
-import { replaceTagInFilters } from "../lib/tagFilter";
-import {
-  canRefreshSkill,
-  filterLibrarySkills,
-  groupLibrarySkills,
-  libraryCreators,
-  libraryFilterCounts,
-  skillDisplayNames,
-  sortLibrarySkills,
-  togglableSkills,
-  LIBRARY_GROUP_BY_OPTIONS,
-  LIBRARY_SORT_BY_OPTIONS,
-  LIBRARY_UPDATE_FILTERS,
-  NO_TAG_GROUP,
-  NOT_DEPLOYED,
-  type LibraryGroupBy,
-  type LibraryQuery,
-  type LibrarySortBy,
-  type LibraryUpdateFilter,
-} from "../lib/librarySkillQuery";
-import { creatorLabel, LOCAL_CREATOR, skillCreator } from "../lib/skillCreator";
-import type {
-  ManagedSkill,
-  ToolInfo,
-  SkillToolToggle,
-  BatchDeleteSkillsResult,
-} from "../lib/tauri";
-import { getErrorMessage } from "../lib/error";
-import { invokeHost } from "../lib/hostCall";
-import { managedSkillsQueryOptions, presetsQueryOptions, projectsQueryOptions, queryKeys, refreshQuery } from "../lib/appQueries";
-import { gitBackupMode, type GitBackupMode } from "../lib/gitBackupMode";
-import {
-  DndContext,
   closestCenter,
+  DndContext,
+  type DragEndEvent,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
-  type DragEndEvent,
 } from "@dnd-kit/core";
 import {
+  rectSortingStrategy,
   SortableContext,
   sortableKeyboardCoordinates,
-  rectSortingStrategy,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  ArrowUpCircle,
+  CheckCircle2,
+  Circle,
+  CircleSlash,
+  GitBranch,
+  Layers,
+  LayoutGrid,
+  List,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Share2,
+  SquareCheck,
+  Tag,
+  Trash2,
+  Wrench,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
+
+import { AgentIcon } from "../components/AgentIcon";
+import { BatchSyncAgentDialog } from "../components/BatchSyncAgentDialog";
+import { BatchTagDialog } from "../components/BatchTagDialog";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { CreatorBadge } from "../components/CreatorBadge";
+import {
+  type FilterCategory,
+  LibraryFilterChips,
+  LibraryFilterPopover,
+} from "../components/LibraryFilters";
+import { LibrarySkillCard } from "../components/LibrarySkillCard";
+import { type LibrarySkillItemProps, sourceIcon } from "../components/librarySkillItem";
+import { LibrarySkillRow } from "../components/LibrarySkillRow";
+import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
+import { ResourceWorkspace } from "../components/ResourceWorkspace";
+import { SkillDetailPanel } from "../components/SkillDetailPanel";
+import { TagContextMenu, type TagMenuState } from "../components/TagContextMenu";
+import { TagRenameDialog } from "../components/TagRenameDialog";
+import { useApp } from "../context/AppContext";
+import { useGitToolbarStatus } from "../hooks/useGitToolbarStatus";
+import {
+  isLibraryGroupBy,
+  isLibrarySortBy,
+  useLibraryViewPrefs,
+} from "../hooks/useLibraryViewPrefs";
+import { useMultiSelect } from "../hooks/useMultiSelect";
+import { usePresetSkillOrder } from "../hooks/usePresetSkillOrder";
+import {
+  managedSkillsQueryOptions,
+  presetsQueryOptions,
+  projectsQueryOptions,
+  queryKeys,
+  refreshQuery,
+} from "../lib/appQueries";
+import { getErrorMessage } from "../lib/error";
+import { gitBackupMode, type GitBackupMode } from "../lib/gitBackupMode";
+import { invokeHost } from "../lib/hostCall";
+import {
+  canRefreshSkill,
+  filterLibrarySkills,
+  groupLibrarySkills,
+  LIBRARY_GROUP_BY_OPTIONS,
+  LIBRARY_SORT_BY_OPTIONS,
+  LIBRARY_UPDATE_FILTERS,
+  libraryCreators,
+  libraryFilterCounts,
+  type LibraryQuery,
+  type LibraryUpdateFilter,
+  NO_TAG_GROUP,
+  NOT_DEPLOYED,
+  skillDisplayNames,
+  sortLibrarySkills,
+  togglableSkills,
+} from "../lib/librarySkillQuery";
+import { pickPath } from "../lib/pickPath";
+import { creatorLabel, LOCAL_CREATOR, skillCreator } from "../lib/skillCreator";
+import { getTagActiveColor, pruneStaleTagFilters, UNTAGGED_FILTER } from "../lib/skillTags";
+import { replaceTagInFilters } from "../lib/tagFilter";
+import * as api from "../lib/tauri";
+import type {
+  BatchDeleteSkillsResult,
+  ManagedSkill,
+  SkillToolToggle,
+  ToolInfo,
+} from "../lib/tauri";
+import { cn } from "../utils";
 
 function getToolDisplayName(toolKey: string, tools: ToolInfo[]) {
   return tools.find((tool) => tool.key === toolKey)?.display_name || toolKey;
@@ -99,6 +112,7 @@ function getToolDisplayName(toolKey: string, tools: ToolInfo[]) {
 export function MySkills() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+
   const {
     viewedPreset,
     tools,
@@ -114,27 +128,37 @@ export function MySkills() {
     activeHost,
     activeHostId,
   } = useApp();
+
+  // Async delete handlers check the detail that is open when they finish.
   const detailSkillIdRef = useRef(detailSkillId);
-  detailSkillIdRef.current = detailSkillId;
+  useEffect(() => {
+    detailSkillIdRef.current = detailSkillId;
+  }, [detailSkillId]);
   const queryClient = useQueryClient();
+
   const deleteManagedSkill = useMutation({
-    mutationFn: ({ hostId, skillId }: { hostId: string | null; skillId: string }) =>
+    mutationFn: ({ hostId, skillId }: { hostId: null | string; skillId: string }) =>
       invokeHost<void>(hostId, "delete_managed_skill", { skillId }),
   });
+
   const deleteManagedSkills = useMutation({
-    mutationFn: ({ hostId, skillIds }: { hostId: string | null; skillIds: string[] }) =>
+    mutationFn: ({ hostId, skillIds }: { hostId: null | string; skillIds: string[] }) =>
       invokeHost<BatchDeleteSkillsResult>(hostId, "delete_managed_skills", { skillIds }),
   });
+
   const viewMountedRef = useRef(true);
   useEffect(() => {
     viewMountedRef.current = true;
-    return () => { viewMountedRef.current = false; };
+
+    return () => {
+      viewMountedRef.current = false;
+    };
   }, []);
   // Backup is this computer's (it never follows a host), so its status and
   // conflicts don't describe a remote library.
   const onRemote = activeHost !== null;
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [filterMode, setFilterMode] = useState<"all" | "enabled" | "available">("all");
+  const [filterMode, setFilterMode] = useState<"all" | "available" | "enabled">("all");
   const [sourceFilters, setSourceFilters] = useState<Set<string>>(new Set());
   const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
   const [agentFilters, setAgentFilters] = useState<Set<string>>(new Set());
@@ -144,9 +168,9 @@ export function MySkills() {
   const [allTags, setAllTags] = useState<string[]>([]);
   // Tag management from the filter popover (#233): right-click a tag to
   // rename (dialog) or delete (confirm). Left-click stays "filter only".
-  const [tagMenu, setTagMenu] = useState<TagMenuState | null>(null);
-  const [tagToRename, setTagToRename] = useState<string | null>(null);
-  const [tagToDelete, setTagToDelete] = useState<string | null>(null);
+  const [tagMenu, setTagMenu] = useState<null | TagMenuState>(null);
+  const [tagToRename, setTagToRename] = useState<null | string>(null);
+  const [tagToDelete, setTagToDelete] = useState<null | string>(null);
   const [search, setSearch] = useState("");
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
@@ -154,18 +178,25 @@ export function MySkills() {
   const [batchSyncDialogOpen, setBatchSyncDialogOpen] = useState(false);
   const [batchToggling, setBatchToggling] = useState(false);
   const [checkingAll, setCheckingAll] = useState(false);
-  const [checkingSkillId, setCheckingSkillId] = useState<string | null>(null);
-  const [updatingSkillId, setUpdatingSkillId] = useState<string | null>(null);
+  const [checkingSkillId, setCheckingSkillId] = useState<null | string>(null);
+  const [updatingSkillId, setUpdatingSkillId] = useState<null | string>(null);
   const [batchUpdating, setBatchUpdating] = useState(false);
-  const [toolToggles, setToolToggles] = useState<SkillToolToggle[] | null>(null);
-  const [togglingToolKey, setTogglingToolKey] = useState<string | null>(null);
-  const [togglingTarget, setTogglingTarget] = useState<{ skillId: string; tool: string } | null>(null);
-  const [tagEditSkillId, setTagEditSkillId] = useState<string | null>(null);
-  const [menuSkillId, setMenuSkillId] = useState<string | null>(null);
+  const [toolToggles, setToolToggles] = useState<null | SkillToolToggle[]>(null);
+  const [togglingToolKey, setTogglingToolKey] = useState<null | string>(null);
+
+  const [togglingTarget, setTogglingTarget] = useState<{ skillId: string; tool: string } | null>(
+    null,
+  );
+
+  const [tagEditSkillId, setTagEditSkillId] = useState<null | string>(null);
+  const [menuSkillId, setMenuSkillId] = useState<null | string>(null);
   const [skillToDelete, setSkillToDelete] = useState<ManagedSkill | null>(null);
   const [tagInput, setTagInput] = useState("");
 
-  const { presetSkillOrder, reorder: reorderPresetSkills } = usePresetSkillOrder(viewedPreset, skills);
+  const { presetSkillOrder, reorder: reorderPresetSkills } = usePresetSkillOrder(
+    viewedPreset,
+    skills,
+  );
 
   const { gitStatus, gitRemoteConfig } = useGitToolbarStatus(onRemote, skills);
 
@@ -176,28 +207,29 @@ export function MySkills() {
   const [conflictIds, setConflictIds] = useState<Set<string>>(new Set());
   useEffect(() => {
     if (onRemote) return;
-    api.gitBackupPendingConflicts()
+    api
+      .gitBackupPendingConflicts()
       .then((rows) => setConflictIds(new Set(rows.map((row) => row.skill_id))))
       .catch(() => setConflictIds(new Set()));
   }, [skills, onRemote]);
 
   const groupLabel = (key: string) => {
     if (groupBy === "tag") return key === NO_TAG_GROUP ? t("mySkills.tags.untagged") : key;
+
     if (groupBy === "source") return t(`mySkills.sourceFilter.${key}`, { defaultValue: key });
-    return key === NOT_DEPLOYED ? t("mySkills.agentFilter.notDeployed") : getToolDisplayName(key, tools);
+
+    return key === NOT_DEPLOYED
+      ? t("mySkills.agentFilter.notDeployed")
+      : getToolDisplayName(key, tools);
   };
 
-  const refreshAllTags = async () => {
-    try {
-      const tags = await api.getAllTags();
-      setAllTags(tags);
-    } catch {
+  const refreshAllTags = () =>
+    api.getAllTags().then(setAllTags, () => {
       // not critical
-    }
-  };
+    });
 
   useEffect(() => {
-    refreshAllTags();
+    void refreshAllTags();
   }, [skills]);
 
   // Prune tag filters whose pill disappeared (e.g. its last skill was deleted),
@@ -207,20 +239,27 @@ export function MySkills() {
   // missing from `allTags`: that list is refetched asynchronously and lags
   // `skills`, and in that window a rename would otherwise drop the filter that
   // `replaceTagInFilters` just moved onto the new name.
-  useEffect(() => {
-    if (skills.length === 0) return;
-    const hasUntagged = skills.some((skill) => skill.tags.length === 0);
-    const available = [...allTags, ...skills.flatMap((skill) => skill.tags)];
-    setTagFilters((prev) => pruneStaleTagFilters(prev, available, hasUntagged));
-  }, [allTags, skills]);
+  const [prunedFor, setPrunedFor] = useState({ allTags, skills });
+
+  if (prunedFor.allTags !== allTags || prunedFor.skills !== skills) {
+    setPrunedFor({ allTags, skills });
+
+    if (skills.length > 0) {
+      const hasUntagged = skills.some((skill) => skill.tags.length === 0);
+      const available = [...allTags, ...skills.flatMap((skill) => skill.tags)];
+      setTagFilters((prev) => pruneStaleTagFilters(prev, available, hasUntagged));
+    }
+  }
 
   // Stable, so the open menu's Escape listener is not re-attached on every render.
   const closeTagMenu = useCallback(() => setTagMenu(null), []);
 
-  const toggleFilter = (set: Set<string>, value: string): Set<string> => {
+  const toggleFilter = <T,>(set: Set<T>, value: T): Set<T> => {
     const next = new Set(set);
+
     if (next.has(value)) next.delete(value);
     else next.add(value);
+
     return next;
   };
 
@@ -236,6 +275,7 @@ export function MySkills() {
     creatorFilters.size > 0 ||
     updateFilters.size > 0 ||
     filterMode !== "all";
+
   // The chip row's "Clear" drops the filter categories but keeps search and
   // All/Enabled/Available, which have their own controls in the toolbar.
   const clearFilterCategories = () => {
@@ -245,6 +285,7 @@ export function MySkills() {
     setCreatorFilters(new Set());
     setUpdateFilters(new Set());
   };
+
   const clearFilters = () => {
     setSearch("");
     clearFilterCategories();
@@ -253,36 +294,56 @@ export function MySkills() {
 
   const displayNames = useMemo(() => skillDisplayNames(skills), [skills]);
 
-  const libraryQuery = useMemo<LibraryQuery>(() => ({
-    search: search.toLowerCase(),
-    sources: sourceFilters,
-    tags: tagFilters,
-    agents: agentFilters,
-    creators: creatorFilters,
-    updates: updateFilters,
-    sortBy,
-    groupBy,
-    preset: viewedPreset
-      ? { id: viewedPreset.id, order: presetSkillOrder, mode: filterMode }
-      : undefined,
-  }), [search, sourceFilters, tagFilters, agentFilters, creatorFilters, updateFilters, sortBy, groupBy, filterMode, viewedPreset, presetSkillOrder]);
+  const libraryQuery = useMemo<LibraryQuery>(
+    () => ({
+      search: search.toLowerCase(),
+      sources: sourceFilters,
+      tags: tagFilters,
+      agents: agentFilters,
+      creators: creatorFilters,
+      updates: updateFilters,
+      sortBy,
+      groupBy,
+      preset: viewedPreset
+        ? { id: viewedPreset.id, order: presetSkillOrder, mode: filterMode }
+        : undefined,
+    }),
+    [
+      search,
+      sourceFilters,
+      tagFilters,
+      agentFilters,
+      creatorFilters,
+      updateFilters,
+      sortBy,
+      groupBy,
+      filterMode,
+      viewedPreset,
+      presetSkillOrder,
+    ],
+  );
+
   const displayNameOf = useCallback(
     (skill: ManagedSkill) => displayNames.get(skill.id) || skill.name,
-    [displayNames]
+    [displayNames],
   );
+
   const filtered = useMemo(
     () => sortLibrarySkills(filterLibrarySkills(skills, libraryQuery, displayNameOf), libraryQuery),
-    [skills, libraryQuery, displayNameOf]
+    [skills, libraryQuery, displayNameOf],
   );
+
   const filterCounts = useMemo(
     () => libraryFilterCounts(skills, libraryQuery, displayNameOf),
-    [skills, libraryQuery, displayNameOf]
+    [skills, libraryQuery, displayNameOf],
   );
+
   const groups = useMemo(() => groupLibrarySkills(filtered, groupBy), [filtered, groupBy]);
   const creatorOptions = useMemo(() => libraryCreators(skills), [skills]);
 
   const {
-    isMultiSelect, setIsMultiSelect,
+    isMultiSelect,
+    setIsMultiSelect,
     selectedIds,
     toggleSelect,
     isAllSelected,
@@ -293,7 +354,7 @@ export function MySkills() {
     items: skills,
     filtered,
     getKey: (s) => s.id,
-    isItemActive: (s) => viewedPreset ? s.preset_ids.includes(viewedPreset.id) : true,
+    isItemActive: (s) => (viewedPreset ? s.preset_ids.includes(viewedPreset.id) : true),
     filterSignal: JSON.stringify([
       search,
       [...sourceFilters].sort(),
@@ -309,7 +370,7 @@ export function MySkills() {
 
   const selectedSkill = useMemo(
     () => skills.find((skill) => skill.id === detailSkillId) || null,
-    [detailSkillId, skills]
+    [detailSkillId, skills],
   );
 
   const sensors = useSensors(
@@ -320,21 +381,26 @@ export function MySkills() {
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const { active, over } = event;
+
       if (!over || active.id === over.id || !viewedPreset) return;
 
       // Only reorder enabled skills (they are always at the front)
       const enabledSkills = filtered.filter((s) => s.preset_ids.includes(viewedPreset.id));
       const oldIndex = enabledSkills.findIndex((s) => s.id === active.id);
       const newIndex = enabledSkills.findIndex((s) => s.id === over.id);
+
       if (oldIndex === -1 || newIndex === -1) return;
 
       const reordered = [...enabledSkills];
       const [moved] = reordered.splice(oldIndex, 1);
       reordered.splice(newIndex, 0, moved);
 
-      await reorderPresetSkills(viewedPreset.id, reordered.map((s) => s.id));
+      await reorderPresetSkills(
+        viewedPreset.id,
+        reordered.map((s) => s.id),
+      );
     },
-    [filtered, viewedPreset, reorderPresetSkills]
+    [filtered, viewedPreset, reorderPresetSkills],
   );
 
   // Reordering only makes sense in the flat preset view: grouped cards can
@@ -343,23 +409,31 @@ export function MySkills() {
 
   useEffect(() => {
     let cancelled = false;
+
     const loadToggles = async () => {
       if (!selectedSkill || !viewedPreset) {
         setToolToggles(null);
+
         return;
       }
+
       if (!selectedSkill.preset_ids.includes(viewedPreset.id)) {
         setToolToggles(null);
+
         return;
       }
+
       try {
         const toggles = await api.getSkillToolToggles(selectedSkill.id, viewedPreset.id);
+
         if (!cancelled) setToolToggles(toggles);
       } catch {
         if (!cancelled) setToolToggles(null);
       }
     };
+
     loadToggles();
+
     return () => {
       cancelled = true;
     };
@@ -368,18 +442,21 @@ export function MySkills() {
   const handleToggleSkillTool = async (toolKey: string, enabled: boolean) => {
     if (!selectedSkill || !viewedPreset) return;
     setTogglingToolKey(toolKey);
+
     try {
       await api.setSkillToolToggle(selectedSkill.id, viewedPreset.id, toolKey, enabled);
       const displayName = getToolDisplayName(toolKey, tools);
       toast.success(
         enabled
           ? t("mySkills.agentToggleEnabled", { agent: displayName })
-          : t("mySkills.agentToggleDisabled", { agent: displayName })
+          : t("mySkills.agentToggleDisabled", { agent: displayName }),
       );
+
       const [, toggles] = await Promise.all([
         refreshManagedSkills(),
         api.getSkillToolToggles(selectedSkill.id, viewedPreset.id),
       ]);
+
       setToolToggles(toggles);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
@@ -394,6 +471,7 @@ export function MySkills() {
       if (togglingTarget) return;
       setTogglingTarget({ skillId: skill.id, tool: toolKey });
       const displayName = getToolDisplayName(toolKey, tools);
+
       try {
         if (enabled) {
           await api.syncSkillToTool(skill.id, toolKey);
@@ -402,6 +480,7 @@ export function MySkills() {
           await api.unsyncSkillFromTool(skill.id, toolKey);
           toast.success(t("mySkills.targetUninstalled", { name: skill.name, agent: displayName }));
         }
+
         await refreshManagedSkills();
       } catch (error: unknown) {
         toast.error(getErrorMessage(error, t("common.error")));
@@ -410,24 +489,32 @@ export function MySkills() {
         setTogglingTarget(null);
       }
     },
-    [togglingTarget, tools, t, refreshManagedSkills]
+    [togglingTarget, tools, t, refreshManagedSkills],
   );
 
-  const removeConfirmedManagedSkills = useCallback(async (hostId: string | null, ids: string[]) => {
-    if (ids.length === 0) return;
-    const key = queryKeys.managedSkills(hostId);
-    await queryClient.cancelQueries({ queryKey: key, exact: true });
-    const removed = new Set(ids);
-    queryClient.setQueryData<ManagedSkill[]>(key, (current) => current?.filter((skill) => !removed.has(skill.id)));
-  }, [queryClient]);
+  const removeConfirmedManagedSkills = useCallback(
+    async (hostId: null | string, ids: string[]) => {
+      if (ids.length === 0) return;
+      const key = queryKeys.managedSkills(hostId);
+      await queryClient.cancelQueries({ queryKey: key, exact: true });
+      const removed = new Set(ids);
+      queryClient.setQueryData<ManagedSkill[]>(key, (current) =>
+        current?.filter((skill) => !removed.has(skill.id)),
+      );
+    },
+    [queryClient],
+  );
 
-  const refreshAfterManagedDelete = useCallback(async (hostId: string | null) => {
-    await Promise.allSettled([
-      refreshQuery(queryClient, managedSkillsQueryOptions(hostId)),
-      refreshQuery(queryClient, presetsQueryOptions(hostId)),
-      refreshQuery(queryClient, projectsQueryOptions(hostId)),
-    ]);
-  }, [queryClient]);
+  const refreshAfterManagedDelete = useCallback(
+    async (hostId: null | string) => {
+      await Promise.allSettled([
+        refreshQuery(queryClient, managedSkillsQueryOptions(hostId)),
+        refreshQuery(queryClient, presetsQueryOptions(hostId)),
+        refreshQuery(queryClient, projectsQueryOptions(hostId)),
+      ]);
+    },
+    [queryClient],
+  );
 
   const handleDeleteSkill = useCallback(
     async (skill: ManagedSkill) => {
@@ -436,12 +523,16 @@ export function MySkills() {
         if (prev.has(skill.id)) return prev;
         const next = new Set(prev);
         next.add(skill.id);
+
         return next;
       });
+
       try {
         await deleteManagedSkill.mutateAsync({ hostId, skillId: skill.id });
         await removeConfirmedManagedSkills(hostId, [skill.id]);
+
         if (viewMountedRef.current && detailSkillIdRef.current === skill.id) closeSkillDetail();
+
         if (viewMountedRef.current) toast.success(`${skill.name} ${t("mySkills.deleted")}`);
       } catch (error: unknown) {
         if (viewMountedRef.current) toast.error(getErrorMessage(error, t("common.error")));
@@ -451,27 +542,42 @@ export function MySkills() {
           if (!prev.has(skill.id)) return prev;
           const next = new Set(prev);
           next.delete(skill.id);
+
           return next;
         });
         void refreshAfterManagedDelete(hostId);
       }
     },
-    [activeHostId, closeSkillDetail, deleteManagedSkill, refreshAfterManagedDelete, removeConfirmedManagedSkills, t]
+    [
+      activeHostId,
+      closeSkillDetail,
+      deleteManagedSkill,
+      refreshAfterManagedDelete,
+      removeConfirmedManagedSkills,
+      t,
+    ],
   );
 
   const handleBatchDelete = async () => {
     const ids = Array.from(selectedIds);
     const hostId = activeHostId;
+
     try {
       const result = await deleteManagedSkills.mutateAsync({ hostId, skillIds: ids });
       const confirmed = ids.filter((id) => !result.failed.includes(id));
       await removeConfirmedManagedSkills(hostId, confirmed);
-      if (ids.includes(detailSkillIdRef.current ?? "") && !result.failed.includes(detailSkillIdRef.current ?? "")) {
+
+      if (
+        ids.includes(detailSkillIdRef.current ?? "") &&
+        !result.failed.includes(detailSkillIdRef.current ?? "")
+      ) {
         if (viewMountedRef.current) closeSkillDetail();
       }
+
       if (result.deleted > 0 && viewMountedRef.current) {
         toast.success(t("mySkills.batchDeleted", { count: result.deleted }));
       }
+
       if (result.failed.length > 0 && viewMountedRef.current) {
         toast.error(t("mySkills.batchDeleteFailed", { count: result.failed.length }));
       }
@@ -488,17 +594,21 @@ export function MySkills() {
     const selectedSkillsList = skills.filter((s) => selectedIds.has(s.id));
     let updated = 0;
     let failed = 0;
+
     for (const skill of selectedSkillsList) {
       const removeSet = new Set(removes);
       const remaining = skill.tags.filter((tag) => !removeSet.has(tag));
       const merged = [...remaining];
+
       for (const tag of adds) {
         if (!merged.includes(tag)) merged.push(tag);
       }
+
       const changed =
-        merged.length !== skill.tags.length ||
-        merged.some((tag, i) => tag !== skill.tags[i]);
+        merged.length !== skill.tags.length || merged.some((tag, i) => tag !== skill.tags[i]);
+
       if (!changed) continue;
+
       try {
         await api.setSkillTags(skill.id, merged);
         updated++;
@@ -506,15 +616,27 @@ export function MySkills() {
         failed++;
       }
     }
+
     if (updated > 0) {
       toast.success(t("mySkills.batchTagsUpdated", { count: updated }));
     }
+
     if (failed > 0) {
       toast.error(t("mySkills.batchTagsFailed", { count: failed }));
     }
+
     await refreshManagedSkills();
     await refreshAllTags();
   };
+
+  /**
+   * Only the selected skills the toggle would actually change — a mixed selection
+   * enables the ones that are off, so the button must not count the rest.
+   */
+  const togglableSelectedSkills = useMemo(
+    () => (viewedPreset ? togglableSkills(skills, selectedIds, viewedPreset.id, anyDisabled) : []),
+    [skills, selectedIds, viewedPreset, anyDisabled],
+  );
 
   const handleBatchTogglePreset = async () => {
     if (!viewedPreset || batchToggling) return;
@@ -522,6 +644,7 @@ export function MySkills() {
     let count = 0;
     let failed = 0;
     setBatchToggling(true);
+
     try {
       for (const skill of togglableSelectedSkills) {
         try {
@@ -530,20 +653,24 @@ export function MySkills() {
           } else {
             await api.removeSkillFromPreset(skill.id, viewedPreset.id);
           }
+
           count++;
         } catch {
           failed++;
           // continue with remaining
         }
       }
+
       if (count > 0) {
-        toast.success(enabling
-          ? t("mySkills.batchEnabled", { count })
-          : t("mySkills.batchDisabled", { count }));
+        toast.success(
+          enabling ? t("mySkills.batchEnabled", { count }) : t("mySkills.batchDisabled", { count }),
+        );
       }
+
       if (failed > 0) {
         toast.error(t("mySkills.batchToggleFailed", { count: failed }));
       }
+
       await Promise.all([refreshManagedSkills(), refreshPresets()]);
     } finally {
       setBatchToggling(false);
@@ -554,9 +681,11 @@ export function MySkills() {
     const selectedSkillsList = skills.filter((s) => selectedIds.has(s.id));
     let synced = 0;
     let failed = 0;
+
     for (const skill of selectedSkillsList) {
       for (const agentKey of agentKeys) {
         if (skill.targets.some((target) => target.tool === agentKey)) continue;
+
         try {
           await api.syncSkillToTool(skill.id, agentKey);
           synced++;
@@ -565,36 +694,47 @@ export function MySkills() {
         }
       }
     }
+
     if (synced > 0) {
       toast.success(t("mySkills.batchSynced", { count: synced }));
     }
+
     if (failed > 0) {
       toast.error(t("mySkills.batchSyncFailed", { count: failed }));
     }
+
     await Promise.all([refreshManagedSkills(), refreshTools()]);
   };
 
   const handleBatchRefresh = async () => {
-    const refreshableSkills = skills.filter((skill) => selectedIds.has(skill.id) && canRefreshSkill(skill));
+    const refreshableSkills = skills.filter(
+      (skill) => selectedIds.has(skill.id) && canRefreshSkill(skill),
+    );
+
     if (refreshableSkills.length === 0) return;
 
     setBatchUpdating(true);
+
     try {
       const result = await api.batchUpdateSkills(refreshableSkills.map((skill) => skill.id));
+
       if (result.refreshed > 0) {
         toast.success(t("mySkills.batchUpdated", { count: result.refreshed }));
       }
+
       if (result.unchanged > 0) {
         toast.info(t("mySkills.batchAlreadyUpToDate", { count: result.unchanged }));
       }
+
       if (result.held_back.length > 0) {
         toast.warning(
           t("mySkills.batchHeldBack", {
             count: result.held_back.length,
             names: result.held_back.slice(0, 3).join("、"),
-          })
+          }),
         );
       }
+
       if (result.failed.length > 0) {
         toast.error(t("mySkills.batchUpdateFailed", { count: result.failed.length }));
       }
@@ -610,7 +750,7 @@ export function MySkills() {
   const [pendingRemoval, setPendingRemoval] = useState<{
     skill: ManagedSkill;
     removals: api.PendingRemoval[];
-    approval: string | null;
+    approval: null | string;
     /** Set when the pending replacement is a relink, so confirming re-uses the
      *  directory the user already chose instead of asking for it again. */
     relinkSource?: string;
@@ -618,27 +758,33 @@ export function MySkills() {
 
   const handleUpdateAvailableSkills = async () => {
     const updatableSkills = skills.filter(
-      (skill) => skill.update_status === "update_available" && canRefreshSkill(skill)
+      (skill) => skill.update_status === "update_available" && canRefreshSkill(skill),
     );
+
     if (updatableSkills.length === 0) return;
 
     setBatchUpdating(true);
+
     try {
       const result = await api.batchUpdateSkills(updatableSkills.map((skill) => skill.id));
+
       if (result.refreshed > 0) {
         toast.success(t("mySkills.batchUpdated", { count: result.refreshed }));
       }
+
       if (result.unchanged > 0) {
         toast.info(t("mySkills.batchAlreadyUpToDate", { count: result.unchanged }));
       }
+
       if (result.held_back.length > 0) {
         toast.warning(
           t("mySkills.batchHeldBack", {
             count: result.held_back.length,
             names: result.held_back.slice(0, 3).join("、"),
-          })
+          }),
         );
       }
+
       if (result.failed.length > 0) {
         toast.error(t("mySkills.batchUpdateFailed", { count: result.failed.length }));
       }
@@ -653,6 +799,7 @@ export function MySkills() {
   const handleTogglePreset = async (skill: ManagedSkill) => {
     if (!viewedPreset) return;
     const enabledInPreset = skill.preset_ids.includes(viewedPreset.id);
+
     if (enabledInPreset) {
       await api.removeSkillFromPreset(skill.id, viewedPreset.id);
       toast.success(`${skill.name} ${t("mySkills.disabledInPreset")}`);
@@ -660,11 +807,13 @@ export function MySkills() {
       await api.addSkillToPreset(skill.id, viewedPreset.id);
       toast.success(`${skill.name} ${t("mySkills.enabledInPreset")}`);
     }
+
     await Promise.all([refreshManagedSkills(), refreshPresets()]);
   };
 
   const handleCheckAllUpdates = async () => {
     setCheckingAll(true);
+
     try {
       await api.checkAllSkillUpdates(true);
       toast.success(t("mySkills.updateActions.checkedAll"));
@@ -678,6 +827,7 @@ export function MySkills() {
 
   const handleCheckUpdate = async (skill: ManagedSkill) => {
     setCheckingSkillId(skill.id);
+
     try {
       await api.checkSkillUpdate(skill.id, true);
       await refreshManagedSkills();
@@ -691,20 +841,25 @@ export function MySkills() {
 
   const handleRefreshSkill = async (skill: ManagedSkill, approvedRemovals?: string) => {
     setUpdatingSkillId(skill.id);
+
     try {
       if (skill.source_type === "local" || skill.source_type === "import") {
         const result = await api.reimportLocalSkill(skill.id, approvedRemovals);
+
         if (result.pending_removals.length > 0) {
           setPendingRemoval({
             skill,
             removals: result.pending_removals,
             approval: result.removal_approval,
           });
+
           return;
         }
+
         toast.success(t("mySkills.updateActions.reimported"));
       } else {
         const result = await api.updateSkill(skill.id, approvedRemovals);
+
         // Nothing was changed: the update would have taken away files the new
         // version does not have. Show them and let the user decide (#256).
         if (result.pending_removals.length > 0) {
@@ -713,14 +868,17 @@ export function MySkills() {
             removals: result.pending_removals,
             approval: result.removal_approval,
           });
+
           return;
         }
+
         if (result.content_changed) {
           toast.success(t("mySkills.updateActions.updated"));
         } else {
           toast.info(t("mySkills.updateActions.alreadyUpToDate"));
         }
       }
+
       await refreshManagedSkills();
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
@@ -736,16 +894,16 @@ export function MySkills() {
     approvedRemovals?: string,
   ) => {
     const selected =
-      presetSource ?? (await pickPath({ directory: true }, { startPath: skill.source_ref ?? undefined }));
+      presetSource ??
+      (await pickPath({ directory: true }, { startPath: skill.source_ref ?? undefined }));
+
     if (!selected) return;
 
     setUpdatingSkillId(skill.id);
+
     try {
-      const result = await api.relinkLocalSkillSource(
-        skill.id,
-        selected,
-        approvedRemovals,
-      );
+      const result = await api.relinkLocalSkillSource(skill.id, selected, approvedRemovals);
+
       if (result.pending_removals.length > 0) {
         setPendingRemoval({
           skill,
@@ -753,8 +911,10 @@ export function MySkills() {
           approval: result.removal_approval,
           relinkSource: selected,
         });
+
         return;
       }
+
       toast.success(t("mySkills.updateActions.relinked"));
       await refreshManagedSkills();
     } catch (error: unknown) {
@@ -767,6 +927,7 @@ export function MySkills() {
 
   const handleDetachSource = async (skill: ManagedSkill) => {
     setUpdatingSkillId(skill.id);
+
     try {
       await api.detachLocalSkillSource(skill.id);
       toast.success(t("mySkills.updateActions.detachedSource"));
@@ -781,10 +942,13 @@ export function MySkills() {
 
   const handleAddTag = async (skill: ManagedSkill, inputValue?: string) => {
     const trimmed = (inputValue ?? tagInput).trim();
+
     if (!trimmed || skill.tags.includes(trimmed)) {
       setTagInput("");
+
       return;
     }
+
     try {
       await api.setSkillTags(skill.id, [...skill.tags, trimmed]);
       toast.success(t("mySkills.tags.tagAdded"));
@@ -798,7 +962,10 @@ export function MySkills() {
 
   const handleRemoveTag = async (skill: ManagedSkill, tagToRemove: string) => {
     try {
-      await api.setSkillTags(skill.id, skill.tags.filter((t) => t !== tagToRemove));
+      await api.setSkillTags(
+        skill.id,
+        skill.tags.filter((t) => t !== tagToRemove),
+      );
       toast.success(t("mySkills.tags.tagsUpdated"));
       await refreshManagedSkills();
     } catch (error: unknown) {
@@ -810,9 +977,12 @@ export function MySkills() {
   // resolved onRename), matching how RenamePresetDialog behaves.
   const handleRenameTag = async (newName: string) => {
     const oldName = tagToRename;
+
     if (oldName === null) return;
     const trimmed = newName.trim();
+
     if (!trimmed || trimmed === oldName) return;
+
     try {
       await api.renameTag(oldName, trimmed);
       setTagFilters((prev) => replaceTagInFilters(prev, oldName, trimmed));
@@ -826,7 +996,9 @@ export function MySkills() {
 
   const handleDeleteTag = async () => {
     const tag = tagToDelete;
+
     if (tag === null) return;
+
     try {
       await api.deleteTag(tag);
       setTagFilters((prev) => replaceTagInFilters(prev, tag));
@@ -846,6 +1018,7 @@ export function MySkills() {
         iconClassName: "animate-spin",
       };
     }
+
     if (mode === "uninitialized" || mode === "needs_remote") {
       return {
         icon: GitBranch,
@@ -854,6 +1027,7 @@ export function MySkills() {
         iconClassName: "",
       };
     }
+
     if (mode === "needs_fix") {
       return {
         icon: Wrench,
@@ -862,6 +1036,7 @@ export function MySkills() {
         iconClassName: "",
       };
     }
+
     if (mode === "pending_changes") {
       return {
         icon: ArrowUpCircle,
@@ -870,6 +1045,7 @@ export function MySkills() {
         iconClassName: "",
       };
     }
+
     return {
       icon: CheckCircle2,
       label: t("backup.status.synced"),
@@ -880,23 +1056,19 @@ export function MySkills() {
 
   const anyRefreshableSelected = useMemo(
     () => skills.some((skill) => selectedIds.has(skill.id) && canRefreshSkill(skill)),
-    [skills, selectedIds]
+    [skills, selectedIds],
   );
+
   const availableUpdateCount = useMemo(
-    () => skills.filter((skill) => skill.update_status === "update_available" && canRefreshSkill(skill)).length,
-    [skills]
+    () =>
+      skills.filter((skill) => skill.update_status === "update_available" && canRefreshSkill(skill))
+        .length,
+    [skills],
   );
+
   const refreshableSelectedCount = useMemo(
     () => skills.filter((skill) => selectedIds.has(skill.id) && canRefreshSkill(skill)).length,
-    [skills, selectedIds]
-  );
-  /**
-   * Only the selected skills the toggle would actually change — a mixed selection
-   * enables the ones that are off, so the button must not count the rest.
-   */
-  const togglableSelectedSkills = useMemo(
-    () => (viewedPreset ? togglableSkills(skills, selectedIds, viewedPreset.id, anyDisabled) : []),
-    [skills, selectedIds, viewedPreset, anyDisabled]
+    [skills, selectedIds],
   );
 
   const filterCategories: FilterCategory[] = [
@@ -921,7 +1093,9 @@ export function MySkills() {
         key,
         label: key === LOCAL_CREATOR ? t("mySkills.creator.local") : creatorLabel(creator),
         count: filterCounts.creators.get(key) ?? 0,
-        badge: <CreatorBadge creator={creator} linked={false} size="md" className="text-secondary" />,
+        badge: (
+          <CreatorBadge creator={creator} linked={false} size="md" className="text-secondary" />
+        ),
       })),
       selected: creatorFilters,
       onToggle: (key) => setCreatorFilters((prev) => toggleFilter(prev, key)),
@@ -933,18 +1107,24 @@ export function MySkills() {
       hidden: allTags.length === 0,
       options: [
         ...(skills.some((s) => s.tags.length === 0)
-          ? [{
-              key: UNTAGGED_FILTER,
-              label: t("mySkills.tags.untagged"),
-              count: filterCounts.tags.get(UNTAGGED_FILTER) ?? 0,
-              icon: <CircleSlash className="h-3 w-3 shrink-0 text-muted" />,
-            }]
+          ? [
+              {
+                key: UNTAGGED_FILTER,
+                label: t("mySkills.tags.untagged"),
+                count: filterCounts.tags.get(UNTAGGED_FILTER) ?? 0,
+                icon: <CircleSlash className="h-3 w-3 shrink-0 text-muted" />,
+              },
+            ]
           : []),
         ...allTags.map((tag) => ({
           key: tag,
           label: tag,
           count: filterCounts.tags.get(tag) ?? 0,
-          icon: <span className={cn("h-2 w-2 shrink-0 rounded-full", getTagActiveColor(tag, allTags))} />,
+          icon: (
+            <span
+              className={cn("h-2 w-2 shrink-0 rounded-full", getTagActiveColor(tag, allTags))}
+            />
+          ),
           title: t("mySkills.tags.manageHint"),
           onContextMenu: (e: React.MouseEvent) => {
             e.preventDefault();
@@ -964,12 +1144,20 @@ export function MySkills() {
       key: "agent",
       label: t("mySkills.filterPopover.categories.agent"),
       options: [
-        ...tools.filter((tool) => tool.installed).map((tool) => ({
-          key: tool.key,
-          label: tool.display_name,
-          count: filterCounts.agents.get(tool.key) ?? 0,
-          icon: <AgentIcon agentKey={tool.key} displayName={tool.display_name} className="h-4 w-4 rounded-[3px]" />,
-        })),
+        ...tools
+          .filter((tool) => tool.installed)
+          .map((tool) => ({
+            key: tool.key,
+            label: tool.display_name,
+            count: filterCounts.agents.get(tool.key) ?? 0,
+            icon: (
+              <AgentIcon
+                agentKey={tool.key}
+                displayName={tool.display_name}
+                className="h-4 w-4 rounded-[3px]"
+              />
+            ),
+          })),
         {
           key: NOT_DEPLOYED,
           label: t("mySkills.agentFilter.notDeployed"),
@@ -990,428 +1178,464 @@ export function MySkills() {
         count: filterCounts.updates.get(bucket) ?? 0,
       })),
       selected: updateFilters,
-      onToggle: (key) => setUpdateFilters((prev) => toggleFilter(prev, key) as Set<LibraryUpdateFilter>),
+      onToggle: (key) => {
+        const bucket = LIBRARY_UPDATE_FILTERS.find((known) => known === key);
+
+        if (bucket) setUpdateFilters((prev) => toggleFilter(prev, bucket));
+      },
       onClear: () => setUpdateFilters(new Set()),
     },
   ];
 
   return (
-    <ResourceWorkspace scope={{ kind: "library" }} skills={
-    <div className="app-page">
-      <div className="app-page-header pr-2 pb-1 flex items-center justify-between gap-3">
-        <h1 className="app-page-title flex items-center gap-2">
-          {t("mySkills.title")}
-          <span className="app-badge">
-            {skills.length}
-          </span>
-        </h1>
-
-      </div>
-
-      <div className="app-toolbar">
-        <div className="flex flex-1 items-center gap-3">
-          <div className="relative w-full min-w-[200px] max-w-[280px]">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t("mySkills.searchPlaceholder")}
-              className="app-input w-full pl-9 font-medium"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
+    <ResourceWorkspace
+      scope={{ kind: "library" }}
+      skills={
+        <div className="app-page">
+          <div className="app-page-header flex items-center justify-between gap-3 pb-1 pr-2">
+            <h1 className="app-page-title flex items-center gap-2">
+              {t("mySkills.title")}
+              <span className="app-badge">{skills.length}</span>
+            </h1>
           </div>
 
-          <div className="app-segmented app-toolbar-segmented shrink-0">
-            {(["all", "enabled", "available"] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setFilterMode(mode)}
-                className={cn(
-                  "app-segmented-button",
-                  filterMode === mode && "app-segmented-button-active"
-                )}
+          <div className="app-toolbar">
+            <div className="flex flex-1 items-center gap-3">
+              <div className="relative w-full min-w-[200px] max-w-[280px]">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t("mySkills.searchPlaceholder")}
+                  className="app-input w-full pl-9 font-medium"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </div>
+
+              <div className="app-segmented app-toolbar-segmented shrink-0">
+                {(["all", "enabled", "available"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setFilterMode(mode)}
+                    className={cn(
+                      "app-segmented-button",
+                      filterMode === mode && "app-segmented-button-active",
+                    )}
+                  >
+                    {t(`mySkills.filters.${mode}`)}
+                  </button>
+                ))}
+              </div>
+
+              <LibraryFilterPopover
+                categories={filterCategories}
+                onClearAll={clearFilterCategories}
+                holdOpen={tagMenu !== null || tagToRename !== null || tagToDelete !== null}
+              />
+
+              <select
+                value={groupBy}
+                onChange={(e) => {
+                  if (isLibraryGroupBy(e.target.value)) chooseGroupBy(e.target.value);
+                }}
+                className="app-input shrink-0 py-2 font-medium"
+                title={t("mySkills.groupBy.label")}
               >
-                {t(`mySkills.filters.${mode}`)}
-              </button>
-            ))}
-          </div>
+                {LIBRARY_GROUP_BY_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {t(`mySkills.groupBy.${option}`)}
+                  </option>
+                ))}
+              </select>
 
-          <LibraryFilterPopover
-            categories={filterCategories}
-            onClearAll={clearFilterCategories}
-            holdOpen={tagMenu !== null || tagToRename !== null || tagToDelete !== null}
-          />
+              <select
+                value={sortBy}
+                onChange={(e) => {
+                  if (isLibrarySortBy(e.target.value)) chooseSortBy(e.target.value);
+                }}
+                className="app-input shrink-0 py-2 font-medium"
+                title={t("mySkills.sortBy.label")}
+              >
+                {LIBRARY_SORT_BY_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {t(`mySkills.sortBy.${option}`)}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <select
-            value={groupBy}
-            onChange={(e) => chooseGroupBy(e.target.value as LibraryGroupBy)}
-            className="app-input shrink-0 py-2 font-medium"
-            title={t("mySkills.groupBy.label")}
-          >
-            {LIBRARY_GROUP_BY_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {t(`mySkills.groupBy.${option}`)}
-              </option>
-            ))}
-          </select>
+            {/* Keep all library actions in one toolbar so they wrap together. */}
+            <div className="flex items-center gap-3">
+              <div className="app-segmented app-toolbar-segmented shrink-0">
+                {!onRemote &&
+                  (() => {
+                    const mode = gitBackupMode(gitStatus, gitRemoteConfig);
+                    const meta = getGitStatusMeta(mode);
+                    const Icon = meta.icon;
 
-          <select
-            value={sortBy}
-            onChange={(e) => chooseSortBy(e.target.value as LibrarySortBy)}
-            className="app-input shrink-0 py-2 font-medium"
-            title={t("mySkills.sortBy.label")}
-          >
-            {LIBRARY_SORT_BY_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {t(`mySkills.sortBy.${option}`)}
-              </option>
-            ))}
-          </select>
-        </div>
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => navigate({ to: "/backup" })}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium transition-colors hover:bg-surface-hover hover:text-secondary",
+                          meta.className,
+                        )}
+                        title={t("sidebar.backup")}
+                      >
+                        <Icon className={cn("h-3.5 w-3.5", meta.iconClassName)} />
+                        {meta.label}
+                      </button>
+                    );
+                  })()}
+                <button
+                  onClick={handleCheckAllUpdates}
+                  disabled={checkingAll}
+                  className={cn(
+                    "mr-2 inline-flex items-center gap-1 rounded-md pr-3 py-2 text-[13px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50",
+                    onRemote ? "pl-3" : "ml-2 border-l border-border-subtle pl-4",
+                  )}
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", checkingAll && "animate-spin")} />
+                  {t("mySkills.updateActions.checkAll")}
+                </button>
+                <button
+                  onClick={handleUpdateAvailableSkills}
+                  disabled={batchUpdating || availableUpdateCount === 0}
+                  className="mr-2 inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium text-accent-light transition-colors hover:bg-accent-bg disabled:opacity-50"
+                >
+                  <RotateCcw className={cn("h-3.5 w-3.5", batchUpdating && "animate-spin")} />
+                  {t("mySkills.updateActions.updateAvailable", { count: availableUpdateCount })}
+                </button>
+                <span
+                  aria-hidden="true"
+                  className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle"
+                />
+                <button
+                  onClick={() => setViewMode("grid")}
+                  data-testid="view-grid"
+                  className={cn(
+                    "rounded-md p-2 transition-colors outline-none",
+                    viewMode === "grid"
+                      ? "bg-surface-active text-secondary"
+                      : "text-muted hover:text-tertiary",
+                  )}
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode("list")}
+                  data-testid="view-list"
+                  className={cn(
+                    "rounded-md p-2 transition-colors outline-none",
+                    viewMode === "list"
+                      ? "bg-surface-active text-secondary"
+                      : "text-muted hover:text-tertiary",
+                  )}
+                >
+                  <List className="h-4 w-4" />
+                </button>
 
-        {/* Keep all library actions in one toolbar so they wrap together. */}
-        <div className="flex items-center gap-3">
-          <div className="app-segmented app-toolbar-segmented shrink-0">
-            {!onRemote && (() => {
-              const mode = gitBackupMode(gitStatus, gitRemoteConfig);
-              const meta = getGitStatusMeta(mode);
-              const Icon = meta.icon;
-              return (
+                {/* Selection can stay active in either view. */}
+                <span
+                  aria-hidden="true"
+                  className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle"
+                />
                 <button
                   type="button"
-                  onClick={() => navigate({ to: "/backup" })}
+                  aria-pressed={isMultiSelect}
+                  onClick={() => (isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true))}
                   className={cn(
-                    "inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium transition-colors hover:bg-surface-hover hover:text-secondary",
-                    meta.className
+                    "app-segmented-button inline-flex items-center gap-1.5 hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-border",
+                    isMultiSelect &&
+                      "app-segmented-button-active hover:bg-surface-active hover:text-secondary",
                   )}
-                  title={t("sidebar.backup")}
                 >
-                  <Icon className={cn("h-3.5 w-3.5", meta.iconClassName)} />
-                  {meta.label}
+                  <SquareCheck className="h-4 w-4" />
+                  {isMultiSelect ? t("mySkills.cancelSelect") : t("mySkills.selectMode")}
                 </button>
-              );
-            })()}
-            <button
-              onClick={handleCheckAllUpdates}
-              disabled={checkingAll}
-              className={cn(
-                "mr-2 inline-flex items-center gap-1 rounded-md pr-3 py-2 text-[13px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50",
-                onRemote ? "pl-3" : "ml-2 border-l border-border-subtle pl-4"
-              )}
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", checkingAll && "animate-spin")} />
-              {t("mySkills.updateActions.checkAll")}
-            </button>
-            <button
-              onClick={handleUpdateAvailableSkills}
-              disabled={batchUpdating || availableUpdateCount === 0}
-              className="mr-2 inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium text-accent-light transition-colors hover:bg-accent-bg disabled:opacity-50"
-            >
-              <RotateCcw className={cn("h-3.5 w-3.5", batchUpdating && "animate-spin")} />
-              {t("mySkills.updateActions.updateAvailable", { count: availableUpdateCount })}
-            </button>
-            <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle" />
-            <button
-              onClick={() => setViewMode("grid")}
-              data-testid="view-grid"
-              className={cn(
-                "rounded-md p-2 transition-colors outline-none",
-                viewMode === "grid" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
-              )}
-            >
-              <LayoutGrid className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setViewMode("list")}
-              data-testid="view-list"
-              className={cn(
-                "rounded-md p-2 transition-colors outline-none",
-                viewMode === "list" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
-              )}
-            >
-              <List className="h-4 w-4" />
-            </button>
-
-            {/* Selection can stay active in either view. */}
-            <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle" />
-            <button
-              type="button"
-              aria-pressed={isMultiSelect}
-              onClick={() => isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true)}
-              className={cn(
-                "app-segmented-button inline-flex items-center gap-1.5 hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-border",
-                isMultiSelect && "app-segmented-button-active hover:bg-surface-active hover:text-secondary"
-              )}
-            >
-              <SquareCheck className="h-4 w-4" />
-              {isMultiSelect ? t("mySkills.cancelSelect") : t("mySkills.selectMode")}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <LibraryFilterChips
-        categories={filterCategories}
-        onClearAll={clearFilterCategories}
-        className="-mt-3 -mb-2 px-1"
-      />
-
-      {isMultiSelect && (
-        <MultiSelectToolbar
-          selectedCount={selectedIds.size}
-          isAllSelected={isAllSelected}
-          actions={[
-            ...(viewedPreset && togglableSelectedSkills.length > 0
-              ? [{
-                  key: "toggle",
-                  tone: "primary" as const,
-                  label: anyDisabled
-                    ? t("mySkills.batchEnable", { count: togglableSelectedSkills.length })
-                    : t("mySkills.batchDisable", { count: togglableSelectedSkills.length }),
-                  icon: anyDisabled
-                    ? <CheckCircle2 className="h-3.5 w-3.5" />
-                    : <Circle className="h-3.5 w-3.5" />,
-                  busy: batchToggling,
-                  onSelect: handleBatchTogglePreset,
-                }]
-              : []),
-            {
-              key: "sync",
-              label: t("mySkills.batchSyncAgents", { count: selectedIds.size }),
-              icon: <Share2 className="h-3.5 w-3.5" />,
-              onSelect: () => setBatchSyncDialogOpen(true),
-            },
-            {
-              key: "tags",
-              label: t("mySkills.batchEditTags", { count: selectedIds.size }),
-              icon: <Tag className="h-3.5 w-3.5" />,
-              onSelect: () => setBatchTagDialogOpen(true),
-            },
-          ]}
-          overflowActions={[
-            ...(anyRefreshableSelected
-              ? [{
-                  key: "update",
-                  label: t("mySkills.batchUpdate", { count: refreshableSelectedCount }),
-                  icon: <RotateCcw className="h-3.5 w-3.5" />,
-                  busy: batchUpdating,
-                  onSelect: handleBatchRefresh,
-                }]
-              : []),
-            {
-              key: "delete",
-              tone: "danger" as const,
-              label: t("mySkills.deleteSelected", { count: selectedIds.size }),
-              icon: <Trash2 className="h-3.5 w-3.5" />,
-              onSelect: () => setBatchDeleteConfirm(true),
-            },
-          ]}
-          labels={{
-            hint: t("mySkills.selectHint"),
-            selected: t("mySkills.selectedCount", { count: selectedIds.size }),
-            selectAll: t("mySkills.selectAll"),
-            deselectAll: t("mySkills.deselectAll"),
-            cancel: t("common.cancel"),
-            more: t("mySkills.moreActions"),
-          }}
-          onSelectAll={handleSelectAll}
-          onCancel={exitMultiSelect}
-        />
-      )}
-
-      {filtered.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
-          <Layers className="mb-4 h-12 w-12 text-faint" />
-          <h3 className="mb-1.5 text-[14px] font-semibold text-tertiary">{t("mySkills.noSkills")}</h3>
-          <p className="text-[13px] text-muted">
-            {skills.length === 0 ? t("mySkills.addFirst") : t("mySkills.noMatch")}
-          </p>
-          {hasActiveFilters && (
-            <button onClick={clearFilters} className="app-button-secondary mt-4">
-              {t("mySkills.clearFilters")}
-            </button>
-          )}
-        </div>
-      ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext
-            items={filtered.map((s) => s.id)}
-            strategy={viewMode === "grid" ? rectSortingStrategy : verticalListSortingStrategy}
-          >
-          <div className="flex flex-col gap-6 pb-8">
-          {groups.map((group) => (
-            <section key={group.key || "all"}>
-              {groupBy !== "none" && (
-                <h3 className="mb-2 flex items-baseline gap-2 text-[12px] font-semibold uppercase tracking-wide text-muted">
-                  {groupBy === "creator" ? (
-                    <CreatorBadge
-                      creator={skillCreator(group.skills[0])}
-                      className="self-center normal-case tracking-normal"
-                    />
-                  ) : (
-                    groupLabel(group.key)
-                  )}
-                  <span className="font-normal text-faint">{group.skills.length}</span>
-                </h3>
-              )}
-              <div
-                className={cn(
-                  viewMode === "grid"
-                    ? "grid grid-cols-2 gap-3 lg:grid-cols-3"
-                    : "flex flex-col gap-0.5"
-                )}
-              >
-              {group.skills.map((skill) => {
-                const itemProps: LibrarySkillItemProps = {
-                  skill,
-                  displayName: displayNames.get(skill.id) || skill.name,
-                  enabledInPreset: viewedPreset
-                    ? skill.preset_ids.includes(viewedPreset.id)
-                    : false,
-                  hasViewedPreset: !!viewedPreset,
-                  viewedPresetName,
-                  tools,
-                  allTags,
-                  isMultiSelect,
-                  selected: selectedIds.has(skill.id),
-                  canDrag,
-                  deleting: deletingIds.has(skill.id),
-                  hasConflict: conflictIds.has(skill.id),
-                  checking: checkingSkillId === skill.id,
-                  updating: updatingSkillId === skill.id,
-                  menuOpen: menuSkillId === skill.id,
-                  pendingTool: togglingTarget?.skillId === skill.id ? togglingTarget.tool : null,
-                  onToggleSelect: toggleSelect,
-                  onOpenDetail: openSkillDetailById,
-                  onOpenBackup: () => navigate({ to: "/backup" }),
-                  onMenuSkillChange: setMenuSkillId,
-                  onCheckUpdate: handleCheckUpdate,
-                  onRefresh: handleRefreshSkill,
-                  onRelinkSource: handleRelinkSource,
-                  onDetachSource: handleDetachSource,
-                  onDelete: setSkillToDelete,
-                  onTogglePreset: handleTogglePreset,
-                  onToggleTarget: handleToggleSkillTarget,
-                };
-
-                return viewMode === "grid" ? (
-                  <LibrarySkillCard
-                    key={skill.id}
-                    {...itemProps}
-                    tagEditing={tagEditSkillId === skill.id}
-                    tagInput={tagInput}
-                    onTagInputChange={setTagInput}
-                    onTagEditSkillChange={setTagEditSkillId}
-                    onAddTag={handleAddTag}
-                    onRemoveTag={handleRemoveTag}
-                  />
-                ) : (
-                  <LibrarySkillRow key={skill.id} {...itemProps} />
-                );
-              })}
               </div>
-            </section>
-          ))}
+            </div>
           </div>
-          </SortableContext>
-        </DndContext>
-      )}
 
-      <SkillDetailPanel
-        key={selectedSkill?.id ?? "skill-detail-empty"}
-        skill={selectedSkill}
-        onClose={closeSkillDetail}
-        tools={tools}
-        toolToggles={toolToggles}
-        togglingTool={togglingToolKey}
-        onToggleTool={handleToggleSkillTool}
-        projects={projects}
-        onProjectsChanged={refreshProjects}
-      />
+          <LibraryFilterChips
+            categories={filterCategories}
+            onClearAll={clearFilterCategories}
+            className="-mb-2 -mt-3 px-1"
+          />
 
-      <ConfirmDialog
-        open={pendingRemoval !== null}
-        tone="warning"
-        title={t("mySkills.updateActions.removalTitle")}
-        message={t("mySkills.updateActions.removalMessage", {
-          name: pendingRemoval?.skill.name ?? "",
-          count: pendingRemoval?.removals.length ?? 0,
-        })}
-        // Every path, never a truncated sample: recognising one's own file is
-        // the whole point, and it might be the twenty-first.
-        details={pendingRemoval?.removals.map((r) =>
-          r.location === "library" ? r.path : `${r.location}: ${r.path}`
-        )}
-        confirmLabel={t("mySkills.updateActions.removalConfirm")}
-        onClose={() => setPendingRemoval(null)}
-        onConfirm={async () => {
-          const target = pendingRemoval?.skill;
-          const approval = pendingRemoval?.approval ?? undefined;
-          const relinkSource = pendingRemoval?.relinkSource;
-          setPendingRemoval(null);
-          if (!target) return;
-          if (relinkSource) {
-            await handleRelinkSource(target, relinkSource, approval);
-          } else {
-            await handleRefreshSkill(target, approval);
-          }
-        }}
-      />
-      <ConfirmDialog
-        open={batchDeleteConfirm}
-        message={t("mySkills.batchDeleteConfirm", { count: selectedIds.size })}
-        onClose={() => setBatchDeleteConfirm(false)}
-        onConfirm={handleBatchDelete}
-      />
-      <ConfirmDialog
-        open={skillToDelete !== null}
-        title={t("mySkills.delete")}
-        message={t("mySkills.deleteConfirm", { name: skillToDelete?.name || "" })}
-        onClose={() => setSkillToDelete(null)}
-        onConfirm={async () => {
-          if (skillToDelete) await handleDeleteSkill(skillToDelete);
-        }}
-      />
-      <ConfirmDialog
-        open={tagToDelete !== null}
-        title={t("mySkills.tags.deleteTag")}
-        message={t("mySkills.tags.deleteConfirm", { tag: tagToDelete || "" })}
-        onClose={() => setTagToDelete(null)}
-        onConfirm={handleDeleteTag}
-      />
-      <TagRenameDialog
-        open={tagToRename !== null}
-        currentName={tagToRename || ""}
-        onClose={() => setTagToRename(null)}
-        onRename={handleRenameTag}
-      />
-      {tagMenu && (
-        <TagContextMenu
-          menu={tagMenu}
-          onClose={closeTagMenu}
-          onRename={setTagToRename}
-          onDelete={setTagToDelete}
-        />
-      )}
-      <BatchTagDialog
-        open={batchTagDialogOpen}
-        skills={skills.filter((s) => selectedIds.has(s.id))}
-        allTags={allTags}
-        onClose={() => setBatchTagDialogOpen(false)}
-        onApply={handleBatchEditTags}
-      />
+          {isMultiSelect && (
+            <MultiSelectToolbar
+              selectedCount={selectedIds.size}
+              isAllSelected={isAllSelected}
+              actions={[
+                ...(viewedPreset && togglableSelectedSkills.length > 0
+                  ? [
+                      {
+                        key: "toggle",
+                        tone: "primary" as const,
+                        label: anyDisabled
+                          ? t("mySkills.batchEnable", { count: togglableSelectedSkills.length })
+                          : t("mySkills.batchDisable", { count: togglableSelectedSkills.length }),
+                        icon: anyDisabled ? (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <Circle className="h-3.5 w-3.5" />
+                        ),
+                        busy: batchToggling,
+                        onSelect: handleBatchTogglePreset,
+                      },
+                    ]
+                  : []),
+                {
+                  key: "sync",
+                  label: t("mySkills.batchSyncAgents", { count: selectedIds.size }),
+                  icon: <Share2 className="h-3.5 w-3.5" />,
+                  onSelect: () => setBatchSyncDialogOpen(true),
+                },
+                {
+                  key: "tags",
+                  label: t("mySkills.batchEditTags", { count: selectedIds.size }),
+                  icon: <Tag className="h-3.5 w-3.5" />,
+                  onSelect: () => setBatchTagDialogOpen(true),
+                },
+              ]}
+              overflowActions={[
+                ...(anyRefreshableSelected
+                  ? [
+                      {
+                        key: "update",
+                        label: t("mySkills.batchUpdate", { count: refreshableSelectedCount }),
+                        icon: <RotateCcw className="h-3.5 w-3.5" />,
+                        busy: batchUpdating,
+                        onSelect: handleBatchRefresh,
+                      },
+                    ]
+                  : []),
+                {
+                  key: "delete",
+                  tone: "danger" as const,
+                  label: t("mySkills.deleteSelected", { count: selectedIds.size }),
+                  icon: <Trash2 className="h-3.5 w-3.5" />,
+                  onSelect: () => setBatchDeleteConfirm(true),
+                },
+              ]}
+              labels={{
+                hint: t("mySkills.selectHint"),
+                selected: t("mySkills.selectedCount", { count: selectedIds.size }),
+                selectAll: t("mySkills.selectAll"),
+                deselectAll: t("mySkills.deselectAll"),
+                cancel: t("common.cancel"),
+                more: t("mySkills.moreActions"),
+              }}
+              onSelectAll={handleSelectAll}
+              onCancel={exitMultiSelect}
+            />
+          )}
 
-      <BatchSyncAgentDialog
-        open={batchSyncDialogOpen}
-        skills={skills.filter((s) => selectedIds.has(s.id))}
-        tools={tools}
-        onClose={() => setBatchSyncDialogOpen(false)}
-        onApply={handleBatchSyncAgents}
-      />
-    </div>
-    } />
+          {filtered.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
+              <Layers className="mb-4 h-12 w-12 text-faint" />
+              <h3 className="mb-1.5 text-[14px] font-semibold text-tertiary">
+                {t("mySkills.noSkills")}
+              </h3>
+              <p className="text-[13px] text-muted">
+                {skills.length === 0 ? t("mySkills.addFirst") : t("mySkills.noMatch")}
+              </p>
+              {hasActiveFilters && (
+                <button onClick={clearFilters} className="app-button-secondary mt-4">
+                  {t("mySkills.clearFilters")}
+                </button>
+              )}
+            </div>
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={filtered.map((s) => s.id)}
+                strategy={viewMode === "grid" ? rectSortingStrategy : verticalListSortingStrategy}
+              >
+                <div className="flex flex-col gap-6 pb-8">
+                  {groups.map((group) => (
+                    <section key={group.key || "all"}>
+                      {groupBy !== "none" && (
+                        <h3 className="mb-2 flex items-baseline gap-2 text-[12px] font-semibold uppercase tracking-wide text-muted">
+                          {groupBy === "creator" ? (
+                            <CreatorBadge
+                              creator={skillCreator(group.skills[0])}
+                              className="self-center normal-case tracking-normal"
+                            />
+                          ) : (
+                            groupLabel(group.key)
+                          )}
+                          <span className="font-normal text-faint">{group.skills.length}</span>
+                        </h3>
+                      )}
+                      <div
+                        className={cn(
+                          viewMode === "grid"
+                            ? "grid grid-cols-2 gap-3 lg:grid-cols-3"
+                            : "flex flex-col gap-0.5",
+                        )}
+                      >
+                        {group.skills.map((skill) => {
+                          const itemProps: LibrarySkillItemProps = {
+                            skill,
+                            displayName: displayNames.get(skill.id) || skill.name,
+                            enabledInPreset: viewedPreset
+                              ? skill.preset_ids.includes(viewedPreset.id)
+                              : false,
+                            hasViewedPreset: !!viewedPreset,
+                            viewedPresetName,
+                            tools,
+                            allTags,
+                            isMultiSelect,
+                            selected: selectedIds.has(skill.id),
+                            canDrag,
+                            deleting: deletingIds.has(skill.id),
+                            hasConflict: conflictIds.has(skill.id),
+                            checking: checkingSkillId === skill.id,
+                            updating: updatingSkillId === skill.id,
+                            menuOpen: menuSkillId === skill.id,
+                            pendingTool:
+                              togglingTarget?.skillId === skill.id ? togglingTarget.tool : null,
+                            onToggleSelect: toggleSelect,
+                            onOpenDetail: openSkillDetailById,
+                            onOpenBackup: () => navigate({ to: "/backup" }),
+                            onMenuSkillChange: setMenuSkillId,
+                            onCheckUpdate: handleCheckUpdate,
+                            onRefresh: handleRefreshSkill,
+                            onRelinkSource: handleRelinkSource,
+                            onDetachSource: handleDetachSource,
+                            onDelete: setSkillToDelete,
+                            onTogglePreset: handleTogglePreset,
+                            onToggleTarget: handleToggleSkillTarget,
+                          };
+
+                          return viewMode === "grid" ? (
+                            <LibrarySkillCard
+                              key={skill.id}
+                              {...itemProps}
+                              tagEditing={tagEditSkillId === skill.id}
+                              tagInput={tagInput}
+                              onTagInputChange={setTagInput}
+                              onTagEditSkillChange={setTagEditSkillId}
+                              onAddTag={handleAddTag}
+                              onRemoveTag={handleRemoveTag}
+                            />
+                          ) : (
+                            <LibrarySkillRow key={skill.id} {...itemProps} />
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )}
+
+          <SkillDetailPanel
+            key={selectedSkill?.id ?? "skill-detail-empty"}
+            skill={selectedSkill}
+            onClose={closeSkillDetail}
+            tools={tools}
+            toolToggles={toolToggles}
+            togglingTool={togglingToolKey}
+            onToggleTool={handleToggleSkillTool}
+            projects={projects}
+            onProjectsChanged={refreshProjects}
+          />
+
+          <ConfirmDialog
+            open={pendingRemoval !== null}
+            tone="warning"
+            title={t("mySkills.updateActions.removalTitle")}
+            message={t("mySkills.updateActions.removalMessage", {
+              name: pendingRemoval?.skill.name ?? "",
+              count: pendingRemoval?.removals.length ?? 0,
+            })}
+            // Every path, never a truncated sample: recognising one's own file is
+            // the whole point, and it might be the twenty-first.
+            details={pendingRemoval?.removals.map((r) =>
+              r.location === "library" ? r.path : `${r.location}: ${r.path}`,
+            )}
+            confirmLabel={t("mySkills.updateActions.removalConfirm")}
+            onClose={() => setPendingRemoval(null)}
+            onConfirm={async () => {
+              const target = pendingRemoval?.skill;
+              const approval = pendingRemoval?.approval ?? undefined;
+              const relinkSource = pendingRemoval?.relinkSource;
+              setPendingRemoval(null);
+
+              if (!target) return;
+
+              if (relinkSource) {
+                await handleRelinkSource(target, relinkSource, approval);
+              } else {
+                await handleRefreshSkill(target, approval);
+              }
+            }}
+          />
+          <ConfirmDialog
+            open={batchDeleteConfirm}
+            message={t("mySkills.batchDeleteConfirm", { count: selectedIds.size })}
+            onClose={() => setBatchDeleteConfirm(false)}
+            onConfirm={handleBatchDelete}
+          />
+          <ConfirmDialog
+            open={skillToDelete !== null}
+            title={t("mySkills.delete")}
+            message={t("mySkills.deleteConfirm", { name: skillToDelete?.name || "" })}
+            onClose={() => setSkillToDelete(null)}
+            onConfirm={async () => {
+              if (skillToDelete) await handleDeleteSkill(skillToDelete);
+            }}
+          />
+          <ConfirmDialog
+            open={tagToDelete !== null}
+            title={t("mySkills.tags.deleteTag")}
+            message={t("mySkills.tags.deleteConfirm", { tag: tagToDelete || "" })}
+            onClose={() => setTagToDelete(null)}
+            onConfirm={handleDeleteTag}
+          />
+          <TagRenameDialog
+            open={tagToRename !== null}
+            currentName={tagToRename || ""}
+            onClose={() => setTagToRename(null)}
+            onRename={handleRenameTag}
+          />
+          {tagMenu && (
+            <TagContextMenu
+              menu={tagMenu}
+              onClose={closeTagMenu}
+              onRename={setTagToRename}
+              onDelete={setTagToDelete}
+            />
+          )}
+          <BatchTagDialog
+            open={batchTagDialogOpen}
+            skills={skills.filter((s) => selectedIds.has(s.id))}
+            allTags={allTags}
+            onClose={() => setBatchTagDialogOpen(false)}
+            onApply={handleBatchEditTags}
+          />
+
+          <BatchSyncAgentDialog
+            open={batchSyncDialogOpen}
+            skills={skills.filter((s) => selectedIds.has(s.id))}
+            tools={tools}
+            onClose={() => setBatchSyncDialogOpen(false)}
+            onApply={handleBatchSyncAgents}
+          />
+        </div>
+      }
+    />
   );
 }

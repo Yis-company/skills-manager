@@ -1,5 +1,5 @@
-import { useCallback, type MouseEventHandler } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { type MouseEventHandler, useCallback } from "react";
 
 /**
  * Returns a mousedown handler that initiates window dragging via Tauri API.

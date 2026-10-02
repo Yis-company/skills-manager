@@ -1,41 +1,35 @@
+import { ChevronDown, ChevronUp, Folder, Github, Globe, HardDrive } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import {
-  Folder,
-  ChevronDown,
-  ChevronUp,
-  Github,
-  HardDrive,
-  Globe,
-} from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
+
+import { creatorLabel, skillCreator } from "../lib/skillCreator";
 import {
   getSkillDocument,
-  getSourceSkillDocument,
   getSkillSourceDiff,
+  getSourceSkillDocument,
   type ManagedSkill,
   type Project,
   type SkillDocument,
-  type SourceSkillDocument,
   type SkillSourceDiff,
   type SkillToolToggle,
+  type SourceSkillDocument,
   type ToolInfo,
 } from "../lib/tauri";
-import { SkillSourceDiffViewer } from "./SkillSourceDiffViewer";
+import { cn } from "../utils";
+import { type AgentToggleItem, AgentToggleSection } from "./AgentToggleSection";
+import { CreatorBadge } from "./CreatorBadge";
 import { DetailSheet } from "./DetailSheet";
 import { SkillMarkdown } from "./SkillMarkdown";
-import { AgentToggleSection, type AgentToggleItem } from "./AgentToggleSection";
 import { SkillProjectsSection } from "./SkillProjectsSection";
+import { SkillSourceDiffViewer } from "./SkillSourceDiffViewer";
 import { SyncDots } from "./SyncDots";
-import { CreatorBadge } from "./CreatorBadge";
-import { creatorLabel, skillCreator } from "../lib/skillCreator";
 
 interface Props {
   skill: ManagedSkill | null;
   onClose: () => void;
   tools?: ToolInfo[];
-  toolToggles?: SkillToolToggle[] | null;
-  togglingTool?: string | null;
+  toolToggles?: null | SkillToolToggle[];
+  togglingTool?: null | string;
   onToggleTool?: (tool: string, enabled: boolean) => void;
   projects?: Project[];
   onProjectsChanged?: () => void;
@@ -90,30 +84,33 @@ function SkillDetailPanelContent({
   skill: ManagedSkill;
   onClose: () => void;
   tools?: ToolInfo[];
-  toolToggles?: SkillToolToggle[] | null;
-  togglingTool?: string | null;
+  toolToggles?: null | SkillToolToggle[];
+  togglingTool?: null | string;
   onToggleTool?: (tool: string, enabled: boolean) => void;
   projects?: Project[];
   onProjectsChanged?: () => void;
 }) {
   const { t } = useTranslation();
-  const [doc, setDoc] = useState<SkillDocument | null>(null);
-  const [sourceDoc, setSourceDoc] = useState<SourceSkillDocument | null>(null);
-  const [sourceDiff, setSourceDiff] = useState<SkillSourceDiff | null>(null);
+  const [doc, setDoc] = useState<null | SkillDocument>(null);
+  const [sourceDoc, setSourceDoc] = useState<null | SourceSkillDocument>(null);
+  const [sourceDiff, setSourceDiff] = useState<null | SkillSourceDiff>(null);
   const [sourceDiffFailed, setSourceDiffFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isMetadataExpanded, setIsMetadataExpanded] = useState(false);
-  const [contentTab, setContentTab] = useState<"local" | "diff" | "source">("local");
+  const [contentTab, setContentTab] = useState<"diff" | "local" | "source">("local");
   const localRequestIdRef = useRef(0);
   const sourceRequestIdRef = useRef(0);
   const diffRequestedRef = useRef(false);
   const skillId = skill.id;
+
   const supportsSourceDiff =
-    skill.source_type === "git"
-    || skill.source_type === "skillssh"
-    || ((skill.source_type === "local" || skill.source_type === "import") && !!skill.source_ref);
+    skill.source_type === "git" ||
+    skill.source_type === "skillssh" ||
+    ((skill.source_type === "local" || skill.source_type === "import") && !!skill.source_ref);
+
   const [sourceLoading, setSourceLoading] = useState(supportsSourceDiff);
   const localDocVersion = `${skill.id}:${skill.updated_at}`;
+
   const sourceDocVersion = [
     skill.id,
     skill.source_type,
@@ -176,6 +173,7 @@ function SkillDetailPanelContent({
   // that cost (and a second clone alongside the source doc) up front.
   useEffect(() => {
     if (contentTab !== "diff" || !supportsSourceDiff) return;
+
     if (diffRequestedRef.current) return;
     diffRequestedRef.current = true;
 
@@ -200,9 +198,13 @@ function SkillDetailPanelContent({
   const sourceTypeLabel = (type: string) => (type === "skillssh" ? "skills.sh" : type);
 
   const creator = skillCreator(skill);
+
   const metadataItems = [
     { label: t("mySkills.sourceType"), value: sourceTypeLabel(skill.source_type) },
-    { label: t("mySkills.creator.label"), value: creatorLabel(creator) || t("mySkills.creator.local") },
+    {
+      label: t("mySkills.creator.label"),
+      value: creatorLabel(creator) || t("mySkills.creator.local"),
+    },
     { label: t("mySkills.sourceRef"), value: skill.source_ref },
     { label: t("mySkills.sourceResolved"), value: skill.source_ref_resolved },
     { label: t("mySkills.sourceBranch"), value: skill.source_branch },
@@ -213,8 +215,10 @@ function SkillDetailPanelContent({
   const activeDoc = doc?.skill_id === skill.id ? doc : null;
   const activeSourceDoc = sourceDoc?.skill_id === skill.id ? sourceDoc : null;
   const activeSourceDiff = sourceDiff?.skill_id === skill.id ? sourceDiff : null;
+
   const sourceDiffLoading =
     contentTab === "diff" && supportsSourceDiff && !activeSourceDiff && !sourceDiffFailed;
+
   const toggleItems: AgentToggleItem[] = (toolToggles ?? []).map((toggle) => ({
     key: toggle.tool,
     displayName: toggle.display_name,
@@ -254,12 +258,12 @@ function SkillDetailPanelContent({
       </div>
       <div className="mt-3 flex min-w-0 items-center gap-2 text-[13px] text-muted">
         <Folder className="h-3.5 w-3.5 shrink-0" />
-        <span className="font-mono truncate" title={skill.central_path}>
+        <span className="truncate font-mono" title={skill.central_path}>
           {skill.central_path}
         </span>
       </div>
       {metadataItems.length > 0 && (
-        <div className="mt-4 rounded-xl border border-border-subtle bg-surface/70">
+        <div className="bg-surface/70 mt-4 rounded-xl border border-border-subtle">
           <button
             type="button"
             onClick={() => setIsMetadataExpanded((prev) => !prev)}
@@ -317,7 +321,9 @@ function SkillDetailPanelContent({
     <DetailSheet
       open={true}
       title={skill.name}
-      description={skill.description ? <p className="line-clamp-3">{skill.description}</p> : undefined}
+      description={
+        skill.description ? <p className="line-clamp-3">{skill.description}</p> : undefined
+      }
       meta={meta}
       onClose={onClose}
     >
@@ -331,11 +337,7 @@ function SkillDetailPanelContent({
       )}
 
       {projects && projects.length > 0 && (
-        <SkillProjectsSection
-          skill={skill}
-          projects={projects}
-          onChanged={onProjectsChanged}
-        />
+        <SkillProjectsSection skill={skill} projects={projects} onChanged={onProjectsChanged} />
       )}
 
       {supportsSourceDiff && (
@@ -349,7 +351,7 @@ function SkillDetailPanelContent({
                 "rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors",
                 contentTab === tab
                   ? "bg-accent text-white"
-                  : "bg-surface-hover text-muted hover:text-secondary"
+                  : "bg-surface-hover text-muted hover:text-secondary",
               )}
               disabled={tab === "source" && sourceLoading}
             >
@@ -376,7 +378,9 @@ function SkillDetailPanelContent({
         ) : activeSourceDiff ? (
           <SkillSourceDiffViewer entries={activeSourceDiff.entries} />
         ) : sourceDiffFailed ? (
-          <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
+          <div className="mt-12 text-center text-[13px] text-muted">
+            {t("mySkills.sourceDiffUnavailable")}
+          </div>
         ) : (
           <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
         )
@@ -386,12 +390,16 @@ function SkillDetailPanelContent({
         ) : activeSourceDoc ? (
           <SkillMarkdown content={activeSourceDoc.content} />
         ) : (
-          <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
+          <div className="mt-12 text-center text-[13px] text-muted">
+            {t("mySkills.sourceDiffUnavailable")}
+          </div>
         )
       ) : activeDoc ? (
         <SkillMarkdown content={activeDoc.content} />
       ) : (
-        <div className="mt-12 text-center text-[13px] text-muted">{t("common.documentMissing")}</div>
+        <div className="mt-12 text-center text-[13px] text-muted">
+          {t("common.documentMissing")}
+        </div>
       )}
     </DetailSheet>
   );

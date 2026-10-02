@@ -1,23 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
-import * as api from "../lib/tauri";
+
 import { parseLastUsedAgents } from "../lib/projectSkillGroups";
+import * as api from "../lib/tauri";
 
 const projectLastUsedAgentsKey = (projectId: string) =>
   `project_last_used_export_agents:${projectId}`;
 
 /** The agents last used to add skills to project `id`, remembered per project. */
 export function useLastUsedExportAgents(id: string | undefined) {
-  const [lastUsedExportAgents, setLastUsedExportAgents] = useState<string[] | null>(null);
+  const [lastUsedExportAgents, setLastUsedExportAgents] = useState<null | string[]>(null);
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-    api.getSettings(projectLastUsedAgentsKey(id))
+    api
+      .getSettings(projectLastUsedAgentsKey(id))
       .then((raw) => {
         if (!cancelled) setLastUsedExportAgents(parseLastUsedAgents(raw));
       })
       .catch(() => {
         if (!cancelled) setLastUsedExportAgents(null);
       });
+
     return () => {
       cancelled = true;
     };
@@ -26,6 +29,7 @@ export function useLastUsedExportAgents(id: string | undefined) {
   const handlePersistLastUsedAgents = useCallback(
     (agents: string[]) => {
       setLastUsedExportAgents(agents);
+
       if (id) {
         void api.setSettings(projectLastUsedAgentsKey(id), JSON.stringify(agents)).catch(() => {});
       }

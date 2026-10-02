@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { ManagedSkill } from "./tauri";
+
 import { findInstalledByGitUrl, githubRepoWebUrl } from "./gitUrl";
 
-function skill(id: string, source_ref: string | null): ManagedSkill {
-  return { id, name: id, source_ref } as ManagedSkill;
+function skill(id: string, source_ref: null | string) {
+  return { id, source_ref };
 }
 
 describe("githubRepoWebUrl", () => {
   it("builds the page URL from ssh and https remotes", () => {
     expect(githubRepoWebUrl("git@github.com:me/backup.git")).toBe("https://github.com/me/backup");
-    expect(githubRepoWebUrl("https://github.com/me/backup.git")).toBe("https://github.com/me/backup");
+    expect(githubRepoWebUrl("https://github.com/me/backup.git")).toBe(
+      "https://github.com/me/backup",
+    );
     expect(githubRepoWebUrl("https://github.com/me/backup")).toBe("https://github.com/me/backup");
   });
 
@@ -32,7 +34,9 @@ describe("findInstalledByGitUrl", () => {
 
   it("matches a source ending in the same owner/repo", () => {
     expect(findInstalledByGitUrl(skills, "acme/skills")?.id).toBe("https");
-    expect(findInstalledByGitUrl(skills, "https://mirror.example.com/acme/skills.git")?.id).toBe("https");
+    expect(findInstalledByGitUrl(skills, "https://mirror.example.com/acme/skills.git")?.id).toBe(
+      "https",
+    );
   });
 
   it("matches ssh sources by the full URL", () => {

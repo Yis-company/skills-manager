@@ -1,11 +1,12 @@
-import type { MouseEvent } from "react";
 import { Loader2 } from "lucide-react";
+import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
-import type { ManagedSkill } from "../lib/tauri";
+
+import { skillCreator } from "../lib/skillCreator";
 import type { PickerStatus } from "../lib/skillPickerStatus";
 import { getTagColor } from "../lib/skillTags";
-import { skillCreator } from "../lib/skillCreator";
+import type { ManagedSkill } from "../lib/tauri";
+import { cn } from "../utils";
 import { CreatorBadge } from "./CreatorBadge";
 
 interface Props {
@@ -46,7 +47,7 @@ export function SkillPickerRow({
       : status === "installed"
         ? t("addFromLibrary.tooltip.installed")
         : status === "unavailable"
-          ? unavailableReason ?? t("addFromLibrary.tooltip.unavailable")
+          ? (unavailableReason ?? t("addFromLibrary.tooltip.unavailable"))
           : undefined;
 
   return (
@@ -83,7 +84,11 @@ export function SkillPickerRow({
           <span className="shrink-0 rounded-full bg-surface-hover px-1.5 py-0.5 text-[11px] font-medium text-muted">
             {sourceLabel}
           </span>
-          <CreatorBadge creator={skillCreator(skill)} hideLocal className="max-w-[160px] shrink-0" />
+          <CreatorBadge
+            creator={skillCreator(skill)}
+            hideLocal
+            className="max-w-[160px] shrink-0"
+          />
         </div>
         {skill.description && (
           <div className="mt-0.5 truncate text-[12px] text-muted">{skill.description}</div>

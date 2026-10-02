@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { SkillsShSkill } from "./tauri";
+
 import {
-  MARKET_SEARCH_CACHE_MAX_ENTRIES,
-  MARKET_SEARCH_CACHE_TTL_MS,
   filterMarketSkills,
   isLoadMoreRequest,
+  MARKET_SEARCH_CACHE_MAX_ENTRIES,
+  MARKET_SEARCH_CACHE_TTL_MS,
+  type MarketSearchCacheEntry,
   marketSearchCacheKey,
   paginateMarketSkills,
   pruneMarketSearchCache,
-  type MarketSearchCacheEntry,
 } from "./marketSearch";
+import type { SkillsShSkill } from "./tauri";
 
 function skill(id: string, overrides: Partial<SkillsShSkill> = {}): SkillsShSkill {
   return { id, skill_id: id, name: id, source: "acme/skills", installs: 0, ...overrides };
@@ -27,16 +28,19 @@ describe("pruneMarketSearchCache", () => {
       ["old", { timestamp: NOW - MARKET_SEARCH_CACHE_TTL_MS, data: [] }],
       ["fresh", { timestamp: NOW - 1, data: [] }],
     ]);
+
     pruneMarketSearchCache(cache, NOW);
     expect([...cache.keys()]).toEqual(["fresh"]);
   });
 
   it("evicts the oldest entries down to the cap", () => {
     const cache = new Map<string, MarketSearchCacheEntry>();
+
     for (let i = 0; i < MARKET_SEARCH_CACHE_MAX_ENTRIES + 2; i++) {
       // Insert newest first so eviction follows timestamps, not insertion order.
       cache.set(`q${i}`, { timestamp: NOW - i, data: [] });
     }
+
     pruneMarketSearchCache(cache, NOW);
     expect(cache.size).toBe(MARKET_SEARCH_CACHE_MAX_ENTRIES);
     expect(cache.has(`q${MARKET_SEARCH_CACHE_MAX_ENTRIES + 1}`)).toBe(false);
@@ -86,7 +90,18 @@ describe("filterMarketSkills", () => {
 describe("paginateMarketSkills", () => {
   it("returns the requested page", () => {
     const page = paginateMarketSkills(skills(25), 2, 10);
-    expect(page.items.map((s) => s.id)).toEqual(["s11", "s12", "s13", "s14", "s15", "s16", "s17", "s18", "s19", "s20"]);
+    expect(page.items.map((s) => s.id)).toEqual([
+      "s11",
+      "s12",
+      "s13",
+      "s14",
+      "s15",
+      "s16",
+      "s17",
+      "s18",
+      "s19",
+      "s20",
+    ]);
     expect(page.totalPages).toBe(3);
   });
 

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
 import { Link2Off, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import * as api from "../lib/tauri";
+
 import { getErrorMessage } from "../lib/error";
+import * as api from "../lib/tauri";
 
 interface RetiredLinksBannerProps {
   projectId: string;
@@ -25,24 +26,30 @@ export function RetiredLinksBanner({ projectId, refreshKey }: RetiredLinksBanner
         if (!cancelled) setLinks(found);
       })
       .catch((error) => console.error("Failed to check old skill links:", error));
+
     return () => {
       cancelled = true;
     };
   }, [projectId, refreshKey]);
 
   const ours = links.filter((link) => link.ours);
+
   if (ours.length === 0) return null;
 
   const remove = async () => {
     setRemoving(true);
+
     try {
       const left = await api.applyProjectRetiredLinks(projectId);
       const failed = left.filter((link) => link.ours).length;
       const kept = left.length - failed;
+
       if (ours.length > failed) {
         toast.success(t("project.retiredLinks.removed", { count: ours.length - failed }));
       }
+
       if (failed > 0) toast.error(t("project.retiredLinks.failed", { count: failed }));
+
       if (kept > 0) toast.message(t("project.retiredLinks.kept", { count: kept }));
       setLinks(left);
     } catch (error) {
@@ -59,7 +66,10 @@ export function RetiredLinksBanner({ projectId, refreshKey }: RetiredLinksBanner
         <p className="text-[13px] font-medium text-secondary">
           {t("project.retiredLinks.title", { count: ours.length })}
         </p>
-        <p className="text-[12px] leading-5 text-muted" title={ours.map((link) => link.path).join("\n")}>
+        <p
+          className="text-[12px] leading-5 text-muted"
+          title={ours.map((link) => link.path).join("\n")}
+        >
           {t("project.retiredLinks.hint")}
         </p>
       </div>

@@ -1,5 +1,6 @@
-import { Github, Globe, GripVertical, HardDrive } from "lucide-react";
 import type { TFunction } from "i18next";
+import { Github, Globe, GripVertical, HardDrive } from "lucide-react";
+
 import type { ManagedSkill, ToolInfo } from "../lib/tauri";
 import type { SortableHandleProps } from "./SortableItem";
 
@@ -21,11 +22,11 @@ export interface LibrarySkillItemProps {
   updating: boolean;
   menuOpen: boolean;
   /** Agent whose deploy toggle is in flight for this skill. */
-  pendingTool: string | null;
+  pendingTool: null | string;
   onToggleSelect: (skillId: string) => void;
   onOpenDetail: (skillId: string) => void;
   onOpenBackup: () => void;
-  onMenuSkillChange: (skillId: string | null) => void;
+  onMenuSkillChange: (skillId: null | string) => void;
   onCheckUpdate: (skill: ManagedSkill) => void;
   onRefresh: (skill: ManagedSkill) => void;
   onRelinkSource: (skill: ManagedSkill) => void;
@@ -63,18 +64,21 @@ export const statusBadge = (skill: ManagedSkill, t: TFunction) => {
       className: "bg-amber-500/12 text-amber-600 dark:text-amber-400",
     };
   }
+
   if (skill.update_status === "source_missing") {
     return {
       label: t("mySkills.updateStatus.sourceMissing"),
       className: "bg-red-500/10 text-red-600 dark:text-red-300",
     };
   }
+
   if (skill.update_status === "error") {
     return {
       label: t("mySkills.updateStatus.error"),
       className: "bg-red-500/10 text-red-600 dark:text-red-300",
     };
   }
+
   return null;
 };
 
@@ -82,7 +86,7 @@ export const renderDragHandle = (handleProps: SortableHandleProps, title: string
   <div
     {...handleProps}
     title={title}
-    className="absolute inset-0 flex cursor-grab items-center justify-center rounded text-faint opacity-0 transition-opacity hover:text-muted group-hover:opacity-100 active:cursor-grabbing"
+    className="absolute inset-0 flex cursor-grab items-center justify-center rounded text-faint opacity-0 transition-opacity hover:text-muted active:cursor-grabbing group-hover:opacity-100"
   >
     <GripVertical className="h-4 w-4" />
   </div>

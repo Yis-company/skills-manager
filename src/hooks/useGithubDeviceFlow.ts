@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useEffect, useRef, useState } from "react";
+
 import * as api from "../lib/tauri";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -14,16 +15,20 @@ export function useGithubDeviceFlow() {
   const deviceCancelRef = useRef(false);
 
   // Abandon an in-flight device-flow poll loop when leaving the page.
-  useEffect(() => () => {
-    deviceCancelRef.current = true;
-  }, []);
+  useEffect(
+    () => () => {
+      deviceCancelRef.current = true;
+    },
+    [],
+  );
 
   /** Resolves with the connect result, `"expired"` when the code ran out, or
    * `null` when cancelled. Throws on start or poll failure. */
   const runDeviceFlow = async (
     repoName: string,
-  ): Promise<api.GithubBackupConnectResult | "expired" | null> => {
+  ): Promise<"expired" | api.GithubBackupConnectResult | null> => {
     deviceCancelRef.current = false;
+
     try {
       const info = await api.githubDeviceFlowStart();
       setDeviceInfo(info);
@@ -31,20 +36,26 @@ export function useGithubDeviceFlow() {
 
       let intervalSec = Math.max(info.interval, 5);
       const deadline = Date.now() + info.expires_in * 1000;
+
       while (!deviceCancelRef.current && Date.now() < deadline) {
         await sleep(intervalSec * 1000);
+
         if (deviceCancelRef.current) return null;
         const poll = await api.githubDeviceFlowPoll(info.device_code, repoName);
+
         if (poll.status === "slow_down") {
           intervalSec += 5;
           continue;
         }
+
         if (poll.status === "connected" && poll.result) {
           setDeviceInfo(null);
+
           return poll.result;
         }
         // "pending" → keep polling.
       }
+
       return deviceCancelRef.current ? null : "expired";
     } finally {
       setDeviceInfo(null);

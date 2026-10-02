@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { GitBackupStatus } from "./tauri";
+
 import { gitBackupMode, pendingBreakdown } from "./gitBackupMode";
+import type { GitBackupStatus } from "./tauri";
 
 function status(overrides: Partial<GitBackupStatus> = {}): GitBackupStatus {
   return {
@@ -34,7 +35,9 @@ describe("gitBackupMode", () => {
   });
 
   it("accepts the saved remote config in place of git's remote", () => {
-    expect(gitBackupMode(status({ remote_url: null }), "git@example.com:me/b.git")).toBe("up_to_date");
+    expect(gitBackupMode(status({ remote_url: null }), "git@example.com:me/b.git")).toBe(
+      "up_to_date",
+    );
   });
 
   it("needs a fix for unrelated or detached histories", () => {
@@ -64,7 +67,10 @@ describe("pendingBreakdown", () => {
 
   it("counts uncommitted changes as at least one local change", () => {
     expect(pendingBreakdown(status({ has_changes: true }))).toEqual({ local: 1, remote: 0 });
-    expect(pendingBreakdown(status({ has_changes: true, ahead: 4 }))).toEqual({ local: 4, remote: 0 });
+    expect(pendingBreakdown(status({ has_changes: true, ahead: 4 }))).toEqual({
+      local: 4,
+      remote: 0,
+    });
   });
 
   it("is zero without a status", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectAgentTarget } from "./tauri";
+
 import { getDefaultExportAgents } from "./exportAgents";
+import type { ProjectAgentTarget } from "./tauri";
 
 function target(key: string, overrides: Partial<ProjectAgentTarget> = {}): ProjectAgentTarget {
   return {
@@ -24,7 +25,11 @@ describe("getDefaultExportAgents", () => {
   });
 
   it("uses only the agents the project selected", () => {
-    const targets = [target("claude_code"), target("cursor", { selected: false }), target("pi", { selected: false })];
+    const targets = [
+      target("claude_code"),
+      target("cursor", { selected: false }),
+      target("pi", { selected: false }),
+    ];
 
     expect(getDefaultExportAgents(targets)).toEqual(["claude_code"]);
   });

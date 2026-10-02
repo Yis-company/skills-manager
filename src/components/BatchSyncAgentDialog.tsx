@@ -1,9 +1,10 @@
+import { Share2, Square, SquareCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Square, SquareCheck, X, Share2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+
+import type { ManagedSkill, ToolInfo } from "../lib/tauri";
 import { cn } from "../utils";
 import { AgentIcon } from "./AgentIcon";
-import type { ManagedSkill, ToolInfo } from "../lib/tauri";
 
 interface Props {
   open: boolean;
@@ -19,31 +20,37 @@ interface Props {
  * control where one click could either install or remove would make a bulk action
  * ambiguous. Removing stays a per-skill action on the card's agent dots.
  */
-export function BatchSyncAgentDialog({ open, skills, tools, onClose, onApply }: Props) {
+export function BatchSyncAgentDialog({ open, ...props }: Props) {
+  if (!open) return null;
+
+  return <BatchSyncAgentDialogContent {...props} />;
+}
+
+function BatchSyncAgentDialogContent({ skills, tools, onClose, onApply }: Omit<Props, "open">) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (open) setSelected(new Set());
-  }, [open]);
+    if (loading) return;
 
-  useEffect(() => {
-    if (!open || loading) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, loading, onClose]);
+  }, [loading, onClose]);
 
   const rows = useMemo(() => {
     return tools
       .filter((tool) => tool.installed && tool.enabled)
       .map((tool) => {
         const synced = skills.filter((skill) =>
-          skill.targets.some((target) => target.tool === tool.key)
+          skill.targets.some((target) => target.tool === tool.key),
         ).length;
+
         return {
           key: tool.key,
           displayName: tool.display_name,
@@ -55,16 +62,16 @@ export function BatchSyncAgentDialog({ open, skills, tools, onClose, onApply }: 
 
   const pendingCount = useMemo(
     () => rows.filter((row) => selected.has(row.key)).reduce((sum, row) => sum + row.missing, 0),
-    [rows, selected]
+    [rows, selected],
   );
-
-  if (!open) return null;
 
   const toggle = (key: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
+
       if (next.has(key)) next.delete(key);
       else next.add(key);
+
       return next;
     });
   };
@@ -72,6 +79,7 @@ export function BatchSyncAgentDialog({ open, skills, tools, onClose, onApply }: 
   const handleApply = async () => {
     if (selected.size === 0) return;
     setLoading(true);
+
     try {
       await onApply(Array.from(selected));
       onClose();
@@ -97,9 +105,7 @@ export function BatchSyncAgentDialog({ open, skills, tools, onClose, onApply }: 
           </button>
         </div>
 
-        <p className="mb-3 text-[12px] text-muted">
-          {t("mySkills.batchSyncDialog.description")}
-        </p>
+        <p className="mb-3 text-[12px] text-muted">{t("mySkills.batchSyncDialog.description")}</p>
 
         {rows.length === 0 ? (
           <p className="text-[12px] text-faint">{t("mySkills.batchSyncDialog.noAgents")}</p>
@@ -108,6 +114,7 @@ export function BatchSyncAgentDialog({ open, skills, tools, onClose, onApply }: 
             {rows.map((row) => {
               const checked = selected.has(row.key);
               const allSynced = row.missing === 0;
+
               return (
                 <button
                   key={row.key}
@@ -117,14 +124,16 @@ export function BatchSyncAgentDialog({ open, skills, tools, onClose, onApply }: 
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-[12px] transition-colors",
                     checked ? "border-border bg-surface" : "border-border-subtle bg-bg-secondary",
-                    allSynced ? "opacity-55" : "hover:bg-surface-hover"
+                    allSynced ? "opacity-55" : "hover:bg-surface-hover",
                   )}
                   title={allSynced ? t("mySkills.batchSyncDialog.allSynced") : undefined}
                 >
                   <span className="shrink-0">
-                    {checked
-                      ? <SquareCheck className="h-3.5 w-3.5 text-accent" />
-                      : <Square className="h-3.5 w-3.5 text-faint" />}
+                    {checked ? (
+                      <SquareCheck className="h-3.5 w-3.5 text-accent" />
+                    ) : (
+                      <Square className="h-3.5 w-3.5 text-faint" />
+                    )}
                   </span>
                   <AgentIcon
                     agentKey={row.key}
@@ -134,7 +143,7 @@ export function BatchSyncAgentDialog({ open, skills, tools, onClose, onApply }: 
                   <span className="min-w-0 flex-1 truncate font-medium text-secondary">
                     {row.displayName}
                   </span>
-                  <span className="shrink-0 tabular-nums text-[11px] text-muted">
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted">
                     {t("mySkills.syncSummary", { synced: row.synced, total: skills.length })}
                   </span>
                 </button>

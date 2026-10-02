@@ -1,6 +1,6 @@
-import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 const IS_MACOS = navigator.userAgent.includes("Mac");
 
@@ -24,7 +24,7 @@ export function DetailSheet({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed top-[28px] right-0 bottom-0 left-[220px] z-40 isolate">
+    <div className="fixed bottom-0 left-[220px] right-0 top-[28px] isolate z-40">
       <div
         className={
           IS_MACOS
@@ -36,11 +36,11 @@ export function DetailSheet({
       <div className="absolute inset-0 z-10 flex min-h-0 flex-col overflow-hidden border-l border-border-subtle bg-bg-secondary">
         <button
           onClick={onClose}
-          className="absolute top-4 right-5 z-10 shrink-0 rounded-md p-1.5 text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary"
+          className="absolute right-5 top-4 z-10 shrink-0 rounded-md p-1.5 text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary"
         >
           <X className="h-4 w-4" />
         </button>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-5 pb-6 scrollbar-hide">
+        <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-5">
           <h2 className="mb-3 min-w-0 pr-10 text-[28px] font-semibold leading-tight tracking-tight text-primary">
             <span className="block">{title}</span>
           </h2>
@@ -52,6 +52,6 @@ export function DetailSheet({
         </div>
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }

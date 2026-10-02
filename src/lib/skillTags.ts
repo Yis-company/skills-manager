@@ -14,12 +14,14 @@ export const UNTAGGED_FILTER = "__untagged__";
 export function pruneStaleTagFilters(
   prev: Set<string>,
   availableTags: string[],
-  hasUntagged: boolean
+  hasUntagged: boolean,
 ): Set<string> {
   if (prev.size === 0) return prev;
   const available = new Set(availableTags);
+
   if (hasUntagged) available.add(UNTAGGED_FILTER);
   const cleaned = new Set([...prev].filter((tag) => available.has(tag)));
+
   return cleaned.size === prev.size ? prev : cleaned;
 }
 
@@ -47,6 +49,7 @@ const TAG_ACTIVE_CLASSES = [
 
 function resolveColorIndex(tag: string, allTags: string[]) {
   const idx = allTags.indexOf(tag);
+
   return (idx === -1 ? 0 : idx) % TAG_COLOR_CLASSES.length;
 }
 

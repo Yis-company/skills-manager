@@ -1,6 +1,6 @@
-import { expect, test } from "../fixtures";
-import { agentTarget, project, projectSkill, skill, tool } from "../fake-backend/state";
 import type { ProjectSkill, RemoteHost, SkillTarget } from "../../src/lib/tauri";
+import { agentTarget, project, projectSkill, skill, tool } from "../fake-backend/state";
+import { expect, test } from "../fixtures";
 
 const skillTarget = (skillId: string, agent: string): SkillTarget => ({
   id: `${skillId}-${agent}`,
@@ -12,7 +12,11 @@ const skillTarget = (skillId: string, agent: string): SkillTarget => ({
   synced_at: null,
 });
 
-const localSkill = (name: string, agent: string, centerSkillId: string | null = null): ProjectSkill =>
+const localSkill = (
+  name: string,
+  agent: string,
+  centerSkillId: null | string = null,
+): ProjectSkill =>
   projectSkill(name, agent, {
     agent_display_name: agent === "claude_code" ? "Claude Code" : "Codex",
     center_skill_id: centerSkillId,
@@ -22,7 +26,10 @@ const localSkill = (name: string, agent: string, centerSkillId: string | null = 
 
 const workspaceTools = [tool("claude_code", "Claude Code"), tool("codex", "Codex")];
 
-test("project bulk removal is visible, scoped to the project, and cancelable", async ({ page, backend }) => {
+test("project bulk removal is visible, scoped to the project, and cancelable", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({
     projects: [project("p1", "webapp", 0)],
     projectAgentTargets: { p1: [agentTarget("claude_code", "Claude Code")] },
@@ -49,13 +56,19 @@ test("project bulk removal is visible, scoped to the project, and cancelable", a
   ]);
 });
 
-test("mixed workspace removal keeps the library and other selected category, then deletes only local files", async ({ page, backend }) => {
+test("mixed workspace removal keeps the library and other selected category, then deletes only local files", async ({
+  page,
+  backend,
+}) => {
   const targets = [skillTarget("managed-a", "claude_code"), skillTarget("managed-a", "codex")];
   await backend.seed({
     tools: workspaceTools,
     skills: [skill("managed-a", "Managed A", { targets })],
     globalLocalSkills: {
-      claude_code: [localSkill("Managed A", "claude_code", "managed-a"), localSkill("Loose file", "claude_code")],
+      claude_code: [
+        localSkill("Managed A", "claude_code", "managed-a"),
+        localSkill("Loose file", "claude_code"),
+      ],
       codex: [localSkill("Managed A", "codex", "managed-a")],
     },
   });
@@ -99,12 +112,19 @@ test("mixed workspace removal keeps the library and other selected category, the
   await expect(page.getByRole("heading", { name: "Managed A", level: 3 })).toBeVisible();
 });
 
-test("a partial workspace failure keeps only failed skills selected for retry", async ({ page, backend }) => {
+test("a partial workspace failure keeps only failed skills selected for retry", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({
     tools: workspaceTools,
     skills: [
-      skill("managed-fail", "Alpha failure", { targets: [skillTarget("managed-fail", "claude_code")] }),
-      skill("managed-success", "Beta success", { targets: [skillTarget("managed-success", "claude_code")] }),
+      skill("managed-fail", "Alpha failure", {
+        targets: [skillTarget("managed-fail", "claude_code")],
+      }),
+      skill("managed-success", "Beta success", {
+        targets: [skillTarget("managed-success", "claude_code")],
+      }),
     ],
     globalLocalSkills: {
       claude_code: [
@@ -137,7 +157,10 @@ test("a partial workspace failure keeps only failed skills selected for retry", 
   ]);
 });
 
-test("a delayed local batch stays on its captured host when the host changes", async ({ page, backend }) => {
+test("a delayed local batch stays on its captured host when the host changes", async ({
+  page,
+  backend,
+}) => {
   const remoteHost: RemoteHost = {
     id: "batch-remote",
     name: "Batch remote",
@@ -145,6 +168,7 @@ test("a delayed local batch stays on its captured host when the host changes", a
     cli_path: "/opt/agents-manager/bin/agents-manager",
     created_at: 1,
   };
+
   await backend.seed({
     tools: workspaceTools,
     globalLocalSkills: { claude_code: [localSkill("Same path", "claude_code")] },
@@ -169,16 +193,14 @@ test("a delayed local batch stays on its captured host when the host changes", a
 
   // Exercise the global host switch while the local delete invoke is held.
   await page.getByRole("button", { name: "Local", exact: true }).evaluate((element) => {
-    (element as HTMLButtonElement).click();
+    if (element instanceof HTMLElement) element.click();
   });
   await page.getByRole("menuitemradio", { name: /Batch remote/ }).evaluate((element) => {
-    (element as HTMLButtonElement).click();
+    if (element instanceof HTMLElement) element.click();
   });
   await expect(page.getByRole("button", { name: "Batch remote", exact: true })).toBeVisible();
   await backend.release("delete_global_local_skill");
-  await expect
-    .poll(async () => (await backend.calls("delete_global_local_skill")).length)
-    .toBe(1);
+  await expect.poll(async () => (await backend.calls("delete_global_local_skill")).length).toBe(1);
   await expect(skillHeading).toBeVisible();
   expect(await backend.calls("remote_invoke")).not.toContainEqual(
     expect.objectContaining({ command: "delete_global_local_skill" }),

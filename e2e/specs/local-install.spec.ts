@@ -1,5 +1,5 @@
-import { expect, test } from "../fixtures";
 import { skill } from "../fake-backend/state";
+import { expect, test } from "../fixtures";
 
 // F5: batch import from a folder picked in the native dialog, with progress
 // from `batch-import-progress` events.
@@ -15,8 +15,12 @@ test("batch imports a folder and shows its progress", async ({ page, backend }) 
 
   await page.getByRole("button", { name: "Batch import from folder" }).click();
   await expect(page.getByText("Scanning for skills...")).toBeVisible();
-  expect(await backend.calls("plugin:dialog|open")).toEqual([{ options: { directory: true, multiple: false } }]);
-  await expect.poll(() => backend.calls("batch_import_folder")).toEqual([{ folderPath: "/home/e2e/team-skills" }]);
+  expect(await backend.calls("plugin:dialog|open")).toEqual([
+    { options: { directory: true, multiple: false } },
+  ]);
+  await expect
+    .poll(() => backend.calls("batch_import_folder"))
+    .toEqual([{ folderPath: "/home/e2e/team-skills" }]);
 
   await backend.emit("batch-import-progress", { current: 1, total: 2, name: "changelog" });
   await expect(page.getByText("Importing 1/2: changelog...")).toBeVisible();

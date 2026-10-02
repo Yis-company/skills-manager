@@ -1,13 +1,17 @@
-import type { RemoteHost } from "../../src/lib/tauri";
-import { expect, test } from "../fixtures";
-import { agentTarget, project, projectSkill, skill } from "../fake-backend/state";
 import type { Page } from "@playwright/test";
+
+import type { RemoteHost } from "../../src/lib/tauri";
+import { agentTarget, project, projectSkill, skill } from "../fake-backend/state";
+import { expect, test } from "../fixtures";
 
 const skillHeadings = (page: Page) => page.getByRole("heading", { level: 3 });
 
 async function openDeleteConfirm(page: Page, name: string) {
   const heading = page.getByRole("heading", { name, exact: true, level: 3 });
-  await heading.locator("xpath=../..").getByRole("button", { name: "More actions" }).click({ force: true });
+  await heading
+    .locator("xpath=../..")
+    .getByRole("button", { name: "More actions" })
+    .click({ force: true });
   await page.getByRole("button", { name: "Delete", exact: true }).click({ force: true });
   await page.getByRole("button", { name: "Delete", exact: true }).last().click();
 }
@@ -20,7 +24,10 @@ const host: RemoteHost = {
   created_at: 1_700_000_000,
 };
 
-test("confirmed managed deletion stays visible as deleted while its read is held", async ({ page, backend }) => {
+test("confirmed managed deletion stays visible as deleted while its read is held", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({ skills: [skill("s1", "alpha"), skill("s2", "beta")] });
   await page.goto("/my-skills");
   await expect(skillHeadings(page)).toHaveText(["alpha", "beta"]);
@@ -37,7 +44,10 @@ test("confirmed managed deletion stays visible as deleted while its read is held
   expect(await backend.calls("delete_managed_skill")).toEqual([{ skillId: "s1" }]);
 });
 
-test("a rejected managed deletion keeps the row and reports the failure", async ({ page, backend }) => {
+test("a rejected managed deletion keeps the row and reports the failure", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({ skills: [skill("s1", "alpha")] });
   await page.goto("/my-skills");
   await expect(skillHeadings(page)).toHaveText(["alpha"]);
@@ -49,7 +59,10 @@ test("a rejected managed deletion keeps the row and reports the failure", async 
   await expect(page.getByText("fake failure")).toBeVisible();
 });
 
-test("fulfilled batch deletion removes successful rows and keeps reported failures", async ({ page, backend }) => {
+test("fulfilled batch deletion removes successful rows and keeps reported failures", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({
     skills: [skill("s1", "alpha"), skill("s2", "beta"), skill("s3", "gamma")],
     deleteFailedIds: ["s2"],
@@ -68,7 +81,10 @@ test("fulfilled batch deletion removes successful rows and keeps reported failur
   expect(await backend.calls("delete_managed_skills")).toEqual([{ skillIds: ["s1", "s2", "s3"] }]);
 });
 
-test("a rejected batch keeps rows until a held revalidation reports partial writes", async ({ page, backend }) => {
+test("a rejected batch keeps rows until a held revalidation reports partial writes", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({
     skills: [skill("s1", "alpha"), skill("s2", "beta")],
     rejectBatchDeleteAfterPartialWrite: true,
@@ -86,15 +102,22 @@ test("a rejected batch keeps rows until a held revalidation reports partial writ
   await expect(page.getByText("fake batch delete failed after partial write")).toBeVisible();
   await expect(skillHeadings(page)).toHaveText(["alpha", "beta"]);
   await backend.release("get_managed_skills");
-  await expect(page.getByRole("heading", { name: "No skills to display", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "No skills to display", exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "alpha", exact: true, level: 3 })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "beta", exact: true, level: 3 })).toHaveCount(0);
 });
 
-test("project whole-skill deletion keeps the variant whose delete failed", async ({ page, backend }) => {
+test("project whole-skill deletion keeps the variant whose delete failed", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({
     projects: [project("p1", "webapp", 0)],
-    projectAgentTargets: { p1: [agentTarget("claude_code", "Claude Code"), agentTarget("codex", "Codex")] },
+    projectAgentTargets: {
+      p1: [agentTarget("claude_code", "Claude Code"), agentTarget("codex", "Codex")],
+    },
     projectSkills: {
       p1: [
         projectSkill("deploy", "claude_code", { in_center: true, sync_status: "project_newer" }),
@@ -112,14 +135,33 @@ test("project whole-skill deletion keeps the variant whose delete failed", async
   await expect(page.getByRole("heading", { name: "deploy", exact: true, level: 3 })).toBeVisible();
   const deletes = await backend.calls("delete_project_skill");
   expect(deletes).toHaveLength(2);
-  expect(deletes).toContainEqual({ projectId: "p1", skillRelativePath: "deploy", agent: "claude_code", wholeSkill: true });
-  expect(deletes).toContainEqual({ projectId: "p1", skillRelativePath: "deploy", agent: "codex", wholeSkill: true });
+  expect(deletes).toContainEqual({
+    projectId: "p1",
+    skillRelativePath: "deploy",
+    agent: "claude_code",
+    wholeSkill: true,
+  });
+  expect(deletes).toContainEqual({
+    projectId: "p1",
+    skillRelativePath: "deploy",
+    agent: "codex",
+    wholeSkill: true,
+  });
 });
 
-test("a failed vendored delete keeps its aliases while a successful project delete is held for refresh", async ({ page, backend }) => {
+test("a failed vendored delete keeps its aliases while a successful project delete is held for refresh", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({
     projects: [project("p1", "webapp", 0)],
-    projectAgentTargets: { p1: [agentTarget("cline", "Cline"), agentTarget("claude_code", "Claude Code"), agentTarget("codex", "Codex")] },
+    projectAgentTargets: {
+      p1: [
+        agentTarget("cline", "Cline"),
+        agentTarget("claude_code", "Claude Code"),
+        agentTarget("codex", "Codex"),
+      ],
+    },
     projectSkills: {
       p1: [
         projectSkill("a-vendored", "cline", {
@@ -147,7 +189,9 @@ test("a failed vendored delete keeps its aliases while a successful project dele
 
   await expect(page.getByRole("heading", { level: 3 })).toHaveText(["a-vendored"]);
   await expect(page.getByText("1 skills failed to delete")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Remove selected (1)", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Remove selected (1)", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.locator('[title="2/2"]')).toBeVisible();
   await backend.release("get_project_skills");
@@ -155,7 +199,10 @@ test("a failed vendored delete keeps its aliases while a successful project dele
   expect(await backend.calls("delete_project_skill")).toHaveLength(2);
 });
 
-test("old host read responses cannot replace the selected host's colliding skill", async ({ page, backend }) => {
+test("old host read responses cannot replace the selected host's colliding skill", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({
     remoteHosts: [host],
     skills: [skill("same-id", "Local copy")],
@@ -167,7 +214,9 @@ test("old host read responses cannot replace the selected host's colliding skill
   const initialReads = (await backend.calls("get_managed_skills")).length;
   await backend.holdResponse("get_managed_skills");
   await backend.emit("app-files-changed", {});
-  await expect.poll(async () => (await backend.calls("get_managed_skills")).length).toBeGreaterThan(initialReads);
+  await expect
+    .poll(async () => (await backend.calls("get_managed_skills")).length)
+    .toBeGreaterThan(initialReads);
 
   await page.getByRole("button", { name: "Local", exact: true }).click();
   await page.getByRole("menuitemradio", { name: /Remote machine/ }).click();
@@ -182,7 +231,10 @@ test("old host read responses cannot replace the selected host's colliding skill
   await expect(skillHeadings(page)).toHaveText(["Remote copy"]);
 });
 
-test("a deletion finishing after a host switch only changes its originating host", async ({ page, backend }) => {
+test("a deletion finishing after a host switch only changes its originating host", async ({
+  page,
+  backend,
+}) => {
   await backend.seed({
     remoteHosts: [host],
     skills: [skill("same-id", "Local copy")],
@@ -192,7 +244,10 @@ test("a deletion finishing after a host switch only changes its originating host
   await expect(skillHeadings(page)).toHaveText(["Local copy"]);
   await backend.hold("delete_managed_skill");
   const heading = page.getByRole("heading", { name: "Local copy", exact: true, level: 3 });
-  await heading.locator("xpath=../..").getByRole("button", { name: "More actions" }).click({ force: true });
+  await heading
+    .locator("xpath=../..")
+    .getByRole("button", { name: "More actions" })
+    .click({ force: true });
   await page.getByRole("button", { name: "Delete", exact: true }).click({ force: true });
   await page.getByRole("button", { name: "Delete", exact: true }).last().click();
   await expect.poll(async () => (await backend.calls("delete_managed_skill")).length).toBe(1);
@@ -206,12 +261,18 @@ test("a deletion finishing after a host switch only changes its originating host
   await expect(skillHeadings(page)).toHaveText(["Remote copy"]);
   await page.getByRole("button", { name: "Remote machine", exact: true }).click();
   await page.getByRole("menuitemradio", { name: /Local/ }).click();
-  await expect(page.getByRole("heading", { name: "Local copy", exact: true, level: 3 })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "No skills to display", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Local copy", exact: true, level: 3 }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "No skills to display", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Local", exact: true }).click();
   await page.getByRole("menuitemradio", { name: /Remote machine/ }).click();
   await expect(skillHeadings(page)).toHaveText(["Remote copy"]);
-  expect(await backend.calls("remote_invoke")).not.toContainEqual(expect.objectContaining({ command: "delete_managed_skill" }));
+  expect(await backend.calls("remote_invoke")).not.toContainEqual(
+    expect.objectContaining({ command: "delete_managed_skill" }),
+  );
 });
 
 test("a failed background read leaves the loaded library visible", async ({ page, backend }) => {

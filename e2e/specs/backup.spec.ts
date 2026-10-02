@@ -1,7 +1,8 @@
-import { expect, test, type FakeBackend } from "../fixtures";
-import { gitStatus } from "../fake-backend/state";
-import type { GitBackupStatus, GithubDevicePollResult } from "../../src/lib/tauri";
 import type { Page } from "@playwright/test";
+
+import type { GitBackupStatus, GithubDevicePollResult } from "../../src/lib/tauri";
+import { gitStatus } from "../fake-backend/state";
+import { expect, type FakeBackend, test } from "../fixtures";
 
 // F2 + F6: the backup page: its status states, GitHub device-flow sign-in and
 // the refresh after a background backup.
@@ -9,19 +10,48 @@ import type { Page } from "@playwright/test";
 const REMOTE = "https://github.com/octo/skills-manager-backup.git";
 
 const statusCases: { state: string; status: GitBackupStatus; title: string; detail: string }[] = [
-  { state: "no repository", status: gitStatus({ is_repo: false, remote_url: null }), title: "Not connected", detail: "Save a backup repository URL" },
-  { state: "backed up", status: gitStatus(), title: "Backed up", detail: "Latest visible snapshot: no snapshot yet." },
-  { state: "local changes", status: gitStatus({ ahead: 2 }), title: "Unbacked changes", detail: "Local changes: 2 · remote updates: 0." },
-  { state: "remote changes", status: gitStatus({ behind: 3 }), title: "Updates from your other devices", detail: "3 update(s) were pushed" },
-  { state: "unrelated histories", status: gitStatus({ upstream_health: "unrelated_histories" }), title: "Backup needs attention", detail: "cannot sync safely" },
+  {
+    state: "no repository",
+    status: gitStatus({ is_repo: false, remote_url: null }),
+    title: "Not connected",
+    detail: "Save a backup repository URL",
+  },
+  {
+    state: "backed up",
+    status: gitStatus(),
+    title: "Backed up",
+    detail: "Latest visible snapshot: no snapshot yet.",
+  },
+  {
+    state: "local changes",
+    status: gitStatus({ ahead: 2 }),
+    title: "Unbacked changes",
+    detail: "Local changes: 2 · remote updates: 0.",
+  },
+  {
+    state: "remote changes",
+    status: gitStatus({ behind: 3 }),
+    title: "Updates from your other devices",
+    detail: "3 update(s) were pushed",
+  },
+  {
+    state: "unrelated histories",
+    status: gitStatus({ upstream_health: "unrelated_histories" }),
+    title: "Backup needs attention",
+    detail: "cannot sync safely",
+  },
 ];
 
 /** The status card's headline. */
-const statusTitle = (page: Page, title: string) => page.getByRole("heading", { name: title, level: 2 });
+const statusTitle = (page: Page, title: string) =>
+  page.getByRole("heading", { name: title, level: 2 });
 
 for (const { state, status, title, detail } of statusCases) {
   test(`status: ${state}`, async ({ page, backend }) => {
-    await backend.seed({ gitStatus: status, settings: { git_backup_remote_url: status.remote_url ?? "" } });
+    await backend.seed({
+      gitStatus: status,
+      settings: { git_backup_remote_url: status.remote_url ?? "" },
+    });
     await page.goto("/backup");
     await expect(statusTitle(page, title)).toBeVisible();
     await expect(page.getByText(detail)).toBeVisible();
@@ -29,7 +59,10 @@ for (const { state, status, title, detail } of statusCases) {
 }
 
 test("refreshes when a background backup completes", async ({ page, backend }) => {
-  await backend.seed({ gitStatus: gitStatus({ ahead: 1 }), settings: { git_backup_remote_url: REMOTE } });
+  await backend.seed({
+    gitStatus: gitStatus({ ahead: 1 }),
+    settings: { git_backup_remote_url: REMOTE },
+  });
   await page.goto("/backup");
   await expect(statusTitle(page, "Unbacked changes")).toBeVisible();
 
@@ -37,7 +70,11 @@ test("refreshes when a background backup completes", async ({ page, backend }) =
   await backend.emit("backup-auto-completed", { ok: true, pending: false, error: null });
   await expect(statusTitle(page, "Backed up")).toBeVisible();
 
-  await backend.emit("backup-auto-completed", { ok: false, pending: false, error: "could not reach the remote" });
+  await backend.emit("backup-auto-completed", {
+    ok: false,
+    pending: false,
+    error: "could not reach the remote",
+  });
   await expect(statusTitle(page, "Backup failed")).toBeVisible();
 });
 
@@ -46,13 +83,30 @@ test.describe("GitHub device flow", () => {
   const userCode = (page: Page) => page.getByText("WXYZ-9876");
 
   /** A repository without a remote, so the page offers GitHub sign-in; the clock is frozen. */
-  async function open(page: Page, backend: FakeBackend, polls: GithubDevicePollResult["status"][], expiresIn = 900) {
+  async function open(
+    page: Page,
+    backend: FakeBackend,
+    polls: GithubDevicePollResult["status"][],
+    expiresIn = 900,
+  ) {
     await backend.seed({
       gitStatus: gitStatus({ remote_url: null }),
       deviceFlow: {
-        start: { device_code: "device-1", user_code: "WXYZ-9876", verification_uri: "https://github.com/login/device", expires_in: expiresIn, interval: 5 },
+        start: {
+          device_code: "device-1",
+          user_code: "WXYZ-9876",
+          verification_uri: "https://github.com/login/device",
+          expires_in: expiresIn,
+          interval: 5,
+        },
         polls,
-        result: { url: REMOTE, login: "octo", repo_created: false, repo_private: true, remote_has_content: true },
+        result: {
+          url: REMOTE,
+          login: "octo",
+          repo_created: false,
+          repo_private: true,
+          remote_has_content: true,
+        },
       },
     });
     await page.clock.install();
@@ -66,7 +120,9 @@ test.describe("GitHub device flow", () => {
   /** Let `ms` of fake time pass, then wait for the poll count to reach `count`. */
   async function advance(page: Page, backend: FakeBackend, ms: number, count: number) {
     await page.clock.runFor(ms);
-    await expect.poll(async () => (await backend.calls("github_device_flow_poll")).length).toBe(count);
+    await expect
+      .poll(async () => (await backend.calls("github_device_flow_poll")).length)
+      .toBe(count);
   }
 
   test("connects once GitHub authorizes the code", async ({ page, backend }) => {

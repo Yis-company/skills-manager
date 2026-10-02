@@ -1,10 +1,11 @@
-import { useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Layers, CheckCircle2, Bot, Plus, Download, AlertTriangle } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Download, Layers, Plus } from "lucide-react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useApp } from "../context/AppContext";
+
 import { AgentControlSetupCard } from "../components/AgentControlSetupCard";
 import { CreatorBadge } from "../components/CreatorBadge";
+import { useApp } from "../context/AppContext";
 import { skillCreator } from "../lib/skillCreator";
 
 export function Dashboard() {
@@ -14,23 +15,24 @@ export function Dashboard() {
 
   const enabledAgents = useMemo(
     () => tools.filter((tool) => tool.installed && tool.enabled),
-    [tools]
+    [tools],
   );
 
   const totalSkills = managedSkills.length;
+
   const syncedSkills = useMemo(
     () => managedSkills.filter((s) => s.targets.length > 0).length,
-    [managedSkills]
+    [managedSkills],
   );
 
   const divergedCount = useMemo(
     () => projects.reduce((acc, p) => acc + p.sync_health.diverged, 0),
-    [projects]
+    [projects],
   );
 
   const recentSkills = useMemo(
     () => [...managedSkills].sort((a, b) => b.updated_at - a.updated_at).slice(0, 5),
-    [managedSkills]
+    [managedSkills],
   );
 
   const coverageLabel = totalSkills === 0 ? "0" : `${syncedSkills}/${totalSkills}`;
@@ -79,19 +81,20 @@ export function Dashboard() {
           },
         ].map((stat, i) => {
           const Icon = stat.icon;
+
           return (
             <div
               key={i}
               className="app-panel flex items-center justify-between px-4 py-4 transition-colors hover:border-border"
             >
               <div>
-                <p className="app-section-title mb-1">
-                  {stat.title}
-                </p>
-                <h3 className="text-xl font-semibold text-primary leading-none">{stat.value}</h3>
+                <p className="app-section-title mb-1">{stat.title}</p>
+                <h3 className="text-xl font-semibold leading-none text-primary">{stat.value}</h3>
               </div>
-              <div className={`p-2 rounded-md ${stat.bg} ${stat.color} border border-border-subtle`}>
-                <Icon className="w-4 h-4" />
+              <div
+                className={`rounded-md p-2 ${stat.bg} ${stat.color} border border-border-subtle`}
+              >
+                <Icon className="h-4 w-4" />
               </div>
             </div>
           );
@@ -104,14 +107,14 @@ export function Dashboard() {
           onClick={() => navigate({ to: "/install", search: { tab: "local" } })}
           className="app-button-primary flex-1"
         >
-          <Download className="w-4 h-4" />
+          <Download className="h-4 w-4" />
           {t("dashboard.scanImport")}
         </button>
         <button
           onClick={() => navigate({ to: "/install" })}
           className="app-button-secondary flex-1"
         >
-          <Plus className="w-4 h-4 text-tertiary" />
+          <Plus className="h-4 w-4 text-tertiary" />
           {t("dashboard.installNew")}
         </button>
       </div>
@@ -119,10 +122,8 @@ export function Dashboard() {
       {/* Recent skills */}
       {recentSkills.length > 0 && (
         <div>
-          <h2 className="app-section-title mb-2.5">
-            {t("dashboard.recentActivity")}
-          </h2>
-          <div className="app-panel overflow-hidden divide-y divide-border-subtle">
+          <h2 className="app-section-title mb-2.5">{t("dashboard.recentActivity")}</h2>
+          <div className="app-panel divide-y divide-border-subtle overflow-hidden">
             {recentSkills.map((skill) => (
               <div
                 key={skill.id}
@@ -138,21 +139,25 @@ export function Dashboard() {
                     navigate({ to: "/my-skills" });
                   }
                 }}
-                className="flex items-center justify-between px-3.5 py-2.5 hover:bg-surface-hover transition-colors cursor-pointer"
+                className="flex cursor-pointer items-center justify-between px-3.5 py-2.5 transition-colors hover:bg-surface-hover"
               >
                 <div className="flex items-center gap-2.5">
-                  <div className="w-6 h-6 rounded-[4px] flex items-center justify-center text-[13px] font-semibold bg-accent-bg text-accent-light shrink-0">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] bg-accent-bg text-[13px] font-semibold text-accent-light">
                     {skill.name.charAt(0).toUpperCase()}
                   </div>
                   <div>
-                    <h4 className="text-[13px] text-secondary font-medium flex items-center gap-1.5">
+                    <h4 className="flex items-center gap-1.5 text-[13px] font-medium text-secondary">
                       {skill.name}
-                      <span className="text-[9px] px-1.5 py-px rounded bg-surface-hover text-muted border border-border font-normal">
+                      <span className="rounded border border-border bg-surface-hover px-1.5 py-px text-[9px] font-normal text-muted">
                         {skill.source_type}
                       </span>
-                      <CreatorBadge creator={skillCreator(skill)} hideLocal className="font-normal" />
+                      <CreatorBadge
+                        creator={skillCreator(skill)}
+                        hideLocal
+                        className="font-normal"
+                      />
                     </h4>
-                    <p className="text-[13px] text-muted mt-px">
+                    <p className="mt-px text-[13px] text-muted">
                       {skill.targets.length > 0
                         ? `${t("dashboard.synced")} → ${skill.targets.map((target) => target.tool).join(", ")}`
                         : t("dashboard.notSynced")}

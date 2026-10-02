@@ -1,3 +1,5 @@
+import { isString } from "../utils";
+
 /** Error kinds matching the Rust `AppError` enum. */
 export const ERROR_KINDS = [
   "database",
@@ -33,33 +35,35 @@ export interface AppError {
   details?: TargetConflictDetails;
 }
 
-const validKinds: ReadonlySet<string> = new Set(ERROR_KINDS);
-
-/** Type-guard: check if an unknown error is a structured `AppError`. */
-export function isAppError(error: unknown): error is AppError {
-  if (
-    typeof error !== "object" ||
-    error === null ||
-    typeof (error as AppError).message !== "string"
-  ) {
-    return false;
-  }
-  return validKinds.has((error as AppError).kind);
+/** Type-guard: check if a caught error is a structured `AppError`. */
+export function isAppError(cause: unknown): cause is AppError {
+  return (
+    cause instanceof Object &&
+    "kind" in cause &&
+    "message" in cause &&
+    ERROR_KINDS.some((kind) => kind === cause.kind) &&
+    typeof cause.message === "string"
+  );
 }
 
 /**
- * Extract a human-readable message from any error shape.
+ * Extract a human-readable message from any caught error.
  * Handles structured `AppError`, plain strings, and `Error` instances.
  */
-export function getErrorMessage(error: unknown, fallback: string): string {
-  if (isAppError(error)) return error.message;
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "string" && error) return error;
+export function getErrorMessage(cause: unknown, fallback: string): string {
+  if (isAppError(cause)) return cause.message;
+
+  if (cause instanceof Error && cause.message) return cause.message;
+
+  // A rejected Tauri command can carry a bare string.
+  if (isString(cause) && cause) return cause;
+
   return fallback;
 }
 
 /** Extract the error kind (or `undefined` for non-structured errors). */
-export function getErrorKind(error: unknown): ErrorKind | undefined {
-  if (isAppError(error)) return error.kind;
+export function getErrorKind(cause: unknown): ErrorKind | undefined {
+  if (isAppError(cause)) return cause.kind;
+
   return undefined;
 }

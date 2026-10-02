@@ -1,20 +1,40 @@
+import {
+  AlertTriangle,
+  ArrowUp,
+  ChevronRight,
+  File,
+  Folder,
+  Loader2,
+  Server,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowUp, ChevronRight, File, Folder, Loader2, Server, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
-import * as api from "../lib/tauri";
+
+import { useApp } from "../context/AppContext";
 import { getErrorMessage } from "../lib/error";
 import { getActiveHostId } from "../lib/hostCall";
-import { setRemotePicker, type PickOptions, type PickRequest } from "../lib/pickPath";
+import { type PickOptions, type PickRequest, setRemotePicker } from "../lib/pickPath";
 import { parentPath, pathBreadcrumbs, pickableEntries } from "../lib/remotePath";
-import { useApp } from "../context/AppContext";
+import * as api from "../lib/tauri";
+import { cn } from "../utils";
 
 interface Props {
   hostName: string;
   request: PickRequest;
   /** The host's home folder when not given. */
   startPath?: string;
-  onClose: (path: string | null) => void;
+  onClose: (path: null | string) => void;
+}
+
+/** Lists `target`; with `homeOnError`, a start path that is gone or unreadable falls back to home. */
+async function listDirectoryOrHome(target: string | undefined, homeOnError: boolean) {
+  try {
+    return await api.listDirectory(target);
+  } catch (e) {
+    if (homeOnError && target) return api.listDirectory(undefined);
+    throw e;
+  }
 }
 
 /** Browses a remote host's folders to choose a path there. */
@@ -25,32 +45,33 @@ export function RemoteDirectoryPicker({ hostName, request, startPath, onClose }:
   const [pathInput, setPathInput] = useState(startPath ?? "");
   const [listing, setListing] = useState<api.DirectoryListing | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [error, setError] = useState<null | string>(null);
+  const [selectedFile, setSelectedFile] = useState<null | string>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   // Only the latest listing is shown when folders are opened quickly.
   const loadId = useRef(0);
 
   const show = useCallback(
-    async (target: string | undefined, id: number, homeOnError: boolean): Promise<void> => {
-      try {
-        const next = await api.listDirectory(target);
-        if (id !== loadId.current) return;
-        setListing(next);
-        setPath(next.path);
-        setPathInput(next.path);
-        setError(null);
-      } catch (e) {
-        if (id !== loadId.current) return;
-        // A start path that is gone or unreadable falls back to home.
-        if (homeOnError && target) return show(undefined, id, false);
-        setListing(null);
-        setError(getErrorMessage(e, t("common.error")));
-      } finally {
-        if (id === loadId.current) setLoading(false);
-      }
-    },
-    [t]
+    (target: string | undefined, id: number, homeOnError: boolean): Promise<void> =>
+      listDirectoryOrHome(target, homeOnError)
+        .then(
+          (next) => {
+            if (id !== loadId.current) return;
+            setListing(next);
+            setPath(next.path);
+            setPathInput(next.path);
+            setError(null);
+          },
+          (e) => {
+            if (id !== loadId.current) return;
+            setListing(null);
+            setError(getErrorMessage(e, t("common.error")));
+          },
+        )
+        .finally(() => {
+          if (id === loadId.current) setLoading(false);
+        }),
+    [t],
   );
 
   useEffect(() => {
@@ -65,12 +86,15 @@ export function RemoteDirectoryPicker({ hostName, request, startPath, onClose }:
       e.stopPropagation();
       onClose(null);
     };
+
     window.addEventListener("keydown", onKey, true);
+
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
   const openFolder = (target: string) => {
     const trimmed = target.trim();
+
     if (!trimmed) return;
     setPath(trimmed);
     setPathInput(trimmed);
@@ -86,31 +110,39 @@ export function RemoteDirectoryPicker({ hostName, request, startPath, onClose }:
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => onClose(null)} />
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={() => onClose(null)}
+      />
       <div
         ref={panelRef}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="remote-picker-title"
-        className="relative bg-surface border border-border rounded-xl w-full max-w-[560px] p-5 shadow-2xl flex flex-col max-h-[calc(85vh/var(--app-scale))] outline-none"
+        className="relative flex max-h-[calc(85vh/var(--app-scale))] w-full max-w-[560px] flex-col rounded-xl border border-border bg-surface p-5 shadow-2xl outline-none"
       >
-        <div className="flex items-center justify-between mb-3">
-          <h2 id="remote-picker-title" className="text-[13px] font-semibold text-primary flex items-center gap-2">
-            <Server className="w-4 h-4 text-accent" />
-            {t(extensions ? "remotePicker.titleFile" : "remotePicker.titleFolder", { name: hostName })}
+        <div className="mb-3 flex items-center justify-between">
+          <h2
+            id="remote-picker-title"
+            className="flex items-center gap-2 text-[13px] font-semibold text-primary"
+          >
+            <Server className="h-4 w-4 text-accent" />
+            {t(extensions ? "remotePicker.titleFile" : "remotePicker.titleFolder", {
+              name: hostName,
+            })}
           </h2>
           <button
             onClick={() => onClose(null)}
             aria-label={t("common.cancel")}
-            className="text-muted hover:text-secondary p-1 rounded transition-colors outline-none"
+            className="rounded p-1 text-muted outline-none transition-colors hover:text-secondary"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
         <form
-          className="flex gap-2 mb-2"
+          className="mb-2 flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             openFolder(pathInput);
@@ -123,37 +155,40 @@ export function RemoteDirectoryPicker({ hostName, request, startPath, onClose }:
             placeholder={t("remotePicker.pathPlaceholder")}
             aria-label={t("remotePicker.pathLabel")}
             spellCheck={false}
-            className="flex-1 min-w-0 bg-background border border-border-subtle rounded-lg px-3 py-1.5 text-[13px] font-mono text-secondary focus:outline-none focus:border-border transition-all placeholder-faint"
+            className="placeholder-faint min-w-0 flex-1 rounded-lg border border-border-subtle bg-background px-3 py-1.5 font-mono text-[13px] text-secondary transition-all focus:border-border focus:outline-none"
           />
           <button
             type="submit"
             disabled={!pathInput.trim()}
-            className="px-3 rounded-lg border border-border-subtle bg-background text-[13px] font-medium text-tertiary hover:text-secondary hover:border-border transition-all outline-none disabled:opacity-50"
+            className="rounded-lg border border-border-subtle bg-background px-3 text-[13px] font-medium text-tertiary outline-none transition-all hover:border-border hover:text-secondary disabled:opacity-50"
           >
             {t("remotePicker.go")}
           </button>
         </form>
 
-        <div className="flex items-center gap-1 mb-2 min-w-0">
+        <div className="mb-2 flex min-w-0 items-center gap-1">
           <button
             onClick={() => up && openFolder(up)}
             disabled={!up}
             title={t("remotePicker.up")}
             aria-label={t("remotePicker.up")}
-            className="shrink-0 p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-hover transition-colors outline-none disabled:opacity-40"
+            className="shrink-0 rounded-md p-1.5 text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-40"
           >
-            <ArrowUp className="w-3.5 h-3.5" />
+            <ArrowUp className="h-3.5 w-3.5" />
           </button>
-          <nav aria-label={t("remotePicker.pathLabel")} className="flex min-w-0 items-center overflow-x-auto scrollbar-hide text-[12px]">
+          <nav
+            aria-label={t("remotePicker.pathLabel")}
+            className="scrollbar-hide flex min-w-0 items-center overflow-x-auto text-[12px]"
+          >
             {path &&
               pathBreadcrumbs(path).map((crumb, i, all) => (
                 <span key={crumb.path} className="flex shrink-0 items-center">
-                  {i > 1 && <ChevronRight className="w-3 h-3 text-faint" />}
+                  {i > 1 && <ChevronRight className="h-3 w-3 text-faint" />}
                   <button
                     onClick={() => openFolder(crumb.path)}
                     className={cn(
                       "rounded px-1.5 py-0.5 font-mono transition-colors outline-none hover:bg-surface-hover",
-                      i === all.length - 1 ? "text-primary" : "text-muted hover:text-secondary"
+                      i === all.length - 1 ? "text-primary" : "text-muted hover:text-secondary",
                     )}
                   >
                     {crumb.name}
@@ -166,14 +201,17 @@ export function RemoteDirectoryPicker({ hostName, request, startPath, onClose }:
         <div className="h-[300px] overflow-y-auto rounded-lg border border-border-subtle bg-background p-1">
           {loading ? (
             <div className="flex h-full items-center justify-center gap-2 text-[13px] text-muted">
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
               {t("common.loading")}
             </div>
           ) : error ? (
-            <div role="alert" className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-[13px] text-tertiary">
-              <AlertTriangle className="w-4 h-4 text-amber-500" />
+            <div
+              role="alert"
+              className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-[13px] text-tertiary"
+            >
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
               <p>{t("remotePicker.loadFailed")}</p>
-              <p className="font-mono text-[12px] text-muted break-all">{error}</p>
+              <p className="break-all font-mono text-[12px] text-muted">{error}</p>
             </div>
           ) : entries.length === 0 ? (
             <div className="flex h-full items-center justify-center text-[13px] text-muted">
@@ -182,19 +220,27 @@ export function RemoteDirectoryPicker({ hostName, request, startPath, onClose }:
           ) : (
             entries.map((entry) => {
               const Icon = entry.is_dir ? Folder : File;
+
               return (
                 <button
                   key={entry.path}
-                  onClick={() => (entry.is_dir ? openFolder(entry.path) : setSelectedFile(entry.path))}
+                  onClick={() =>
+                    entry.is_dir ? openFolder(entry.path) : setSelectedFile(entry.path)
+                  }
                   onDoubleClick={() => !entry.is_dir && onClose(entry.path)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-border",
                     selectedFile === entry.path
                       ? "bg-accent-bg text-primary"
-                      : "text-secondary hover:bg-surface-hover"
+                      : "text-secondary hover:bg-surface-hover",
                   )}
                 >
-                  <Icon className={cn("w-3.5 h-3.5 shrink-0", entry.is_dir ? "text-accent" : "text-muted")} />
+                  <Icon
+                    className={cn(
+                      "w-3.5 h-3.5 shrink-0",
+                      entry.is_dir ? "text-accent" : "text-muted",
+                    )}
+                  />
                   <span className="truncate">{entry.name}</span>
                 </button>
               );
@@ -203,20 +249,23 @@ export function RemoteDirectoryPicker({ hostName, request, startPath, onClose }:
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-3">
-          <p className="min-w-0 truncate font-mono text-[12px] text-muted" title={choice ?? undefined}>
+          <p
+            className="min-w-0 truncate font-mono text-[12px] text-muted"
+            title={choice ?? undefined}
+          >
             {choice ?? (extensions ? t("remotePicker.chooseFileHint") : "")}
           </p>
           <div className="flex shrink-0 gap-2">
             <button
               onClick={() => onClose(null)}
-              className="px-3 py-1.5 rounded-lg text-[13px] font-medium text-tertiary hover:text-secondary hover:bg-surface-hover transition-colors outline-none"
+              className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-tertiary outline-none transition-colors hover:bg-surface-hover hover:text-secondary"
             >
               {t("common.cancel")}
             </button>
             <button
               onClick={() => choice && onClose(choice)}
               disabled={!choice}
-              className="px-3 py-1.5 rounded-lg bg-accent-dark hover:bg-accent text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-accent-border outline-none"
+              className="rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
               {t("remotePicker.select")}
             </button>
@@ -228,31 +277,32 @@ export function RemoteDirectoryPicker({ hostName, request, startPath, onClose }:
 }
 
 interface PendingPick {
-  hostId: string | null;
+  hostId: null | string;
   request: PickRequest;
   opts: PickOptions;
-  resolve: (path: string | null) => void;
+  resolve: (path: null | string) => void;
 }
 
 /** Mounted once: answers `pickPath` with the browser while a host is active. */
 export function RemotePickerHost() {
   const { activeHost, hostSession } = useApp();
-  const [pending, setPending] = useState<PendingPick | null>(null);
+  const [pending, setPending] = useState<null | PendingPick>(null);
 
   useEffect(() => {
     setRemotePicker(
       (request, opts) =>
-        new Promise((resolve) => setPending({ hostId: getActiveHostId(), request, opts, resolve }))
+        new Promise((resolve) => setPending({ hostId: getActiveHostId(), request, opts, resolve })),
     );
+
     return () => setRemotePicker(null);
   }, []);
 
   const finish = useCallback(
-    (path: string | null) => {
+    (path: null | string) => {
       pending?.resolve(path);
       setPending(null);
     },
-    [pending]
+    [pending],
   );
 
   // A switch while the browser is open cancels the choice: the path would
@@ -261,10 +311,12 @@ export function RemotePickerHost() {
   if (pending && pending.hostId !== (activeHost?.id ?? null)) {
     pending.resolve(null);
     setPending(null);
+
     return null;
   }
 
   if (!pending || !activeHost) return null;
+
   return (
     <RemoteDirectoryPicker
       hostName={activeHost.name}

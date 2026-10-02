@@ -1,6 +1,7 @@
-import { expect, test } from "../fixtures";
-import { skill } from "../fake-backend/state";
 import type { Page } from "@playwright/test";
+
+import { skill } from "../fake-backend/state";
+import { expect, test } from "../fixtures";
 
 // F3: the library view: seeded skills, grid and list, and group and sort
 // preferences saved through the settings commands.
@@ -15,10 +16,12 @@ const seed = {
 
 /** Skill names and group headings, top to bottom. */
 const headings = (page: Page) => page.getByRole("heading", { level: 3 });
+
 const skillHeading = (page: Page, name: string) => page.getByRole("heading", { name, exact: true });
 
 async function topOf(page: Page, name: string) {
   const box = await skillHeading(page, name).boundingBox();
+
   return box!.y;
 }
 
@@ -38,10 +41,14 @@ test("switches between grid and list", async ({ page }) => {
   expect(await topOf(page, "beta")).toBe(await topOf(page, "alpha"));
 
   await page.getByTestId("view-list").click();
-  await expect.poll(async () => (await topOf(page, "beta")) > (await topOf(page, "alpha"))).toBe(true);
+  await expect
+    .poll(async () => (await topOf(page, "beta")) > (await topOf(page, "alpha")))
+    .toBe(true);
 
   await page.getByTestId("view-grid").click();
-  await expect.poll(async () => (await topOf(page, "beta")) === (await topOf(page, "alpha"))).toBe(true);
+  await expect
+    .poll(async () => (await topOf(page, "beta")) === (await topOf(page, "alpha")))
+    .toBe(true);
 });
 
 test("group and sort are saved and come back after a reload", async ({ page, backend }) => {

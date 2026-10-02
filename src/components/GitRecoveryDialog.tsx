@@ -1,11 +1,12 @@
+import { AlertTriangle, GitBranch, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
-import { X, AlertTriangle, RotateCcw, GitBranch } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { cn } from "../utils";
-import type { GitUpstreamHealth } from "../lib/tauri";
 
-type RecoveryReason = GitUpstreamHealth | "conflict";
+import type { GitUpstreamHealth } from "../lib/tauri";
+import { cn } from "../utils";
+
+type RecoveryReason = "conflict" | GitUpstreamHealth;
 
 interface Props {
   open: boolean;
@@ -23,6 +24,7 @@ export function GitRecoveryDialog({ open, reason, onClose, onReclone }: Props) {
   // A conflict is already aborted by the backend; re-cloning is the only safe
   // in-app fix, so we hide the "keep local" path for it.
   const isConflict = reason === "conflict";
+
   const subtitleKey =
     reason === "conflict"
       ? "settings.gitRecoverySubtitleConflict"
@@ -34,6 +36,7 @@ export function GitRecoveryDialog({ open, reason, onClose, onReclone }: Props) {
 
   const handleReclone = async () => {
     setLoading("reclone");
+
     try {
       await onReclone();
       onClose();
@@ -44,22 +47,25 @@ export function GitRecoveryDialog({ open, reason, onClose, onReclone }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => !loading && onClose()} />
-      <div className="relative bg-surface border border-border rounded-xl w-full max-w-lg p-5 shadow-2xl">
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={() => !loading && onClose()}
+      />
+      <div className="relative w-full max-w-lg rounded-xl border border-border bg-surface p-5 shadow-2xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <h2 className="flex items-center gap-2 text-[14px] font-semibold text-primary">
               <AlertTriangle className="h-4 w-4 text-red-500" />
               {t("settings.gitRecoveryTitle")}
             </h2>
-            <p className="mt-1 text-[12px] text-muted leading-relaxed">{t(subtitleKey)}</p>
+            <p className="mt-1 text-[12px] leading-relaxed text-muted">{t(subtitleKey)}</p>
           </div>
           <button
             onClick={() => !loading && onClose()}
             disabled={!!loading}
-            className="text-muted hover:text-secondary p-1 rounded transition-colors outline-none"
+            className="rounded p-1 text-muted outline-none transition-colors hover:text-secondary"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
@@ -70,11 +76,11 @@ export function GitRecoveryDialog({ open, reason, onClose, onReclone }: Props) {
             disabled={!!loading}
             className={cn(
               "w-full text-left rounded-md border border-accent bg-accent-bg px-3 py-3 transition-colors outline-none",
-              "disabled:cursor-not-allowed disabled:opacity-60 hover:bg-accent-bg/80"
+              "disabled:cursor-not-allowed disabled:opacity-60 hover:bg-accent-bg/80",
             )}
           >
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-accent/20 p-1 text-accent-light">
+              <span className="bg-accent/20 rounded-full p-1 text-accent-light">
                 <RotateCcw className="h-4 w-4" />
               </span>
               <span className="text-[13px] font-semibold text-primary">
@@ -83,7 +89,7 @@ export function GitRecoveryDialog({ open, reason, onClose, onReclone }: Props) {
                   : t("settings.gitRecoveryCardRecloneTitle")}
               </span>
             </div>
-            <p className="mt-1.5 pl-7 text-[12px] text-tertiary leading-relaxed">
+            <p className="mt-1.5 pl-7 text-[12px] leading-relaxed text-tertiary">
               {t("settings.gitRecoveryCardRecloneDesc")}
             </p>
           </button>
@@ -93,7 +99,7 @@ export function GitRecoveryDialog({ open, reason, onClose, onReclone }: Props) {
               type="button"
               onClick={() => toast.info(t("settings.gitRecoveryFallbackHint"))}
               disabled={!!loading}
-              className="w-full text-left rounded-md border border-border-subtle bg-bg-secondary px-3 py-3 transition-colors outline-none hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded-md border border-border-subtle bg-bg-secondary px-3 py-3 text-left outline-none transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60"
             >
               <div className="flex items-center gap-2">
                 <span className="rounded-full bg-surface p-1 text-muted">
@@ -103,7 +109,7 @@ export function GitRecoveryDialog({ open, reason, onClose, onReclone }: Props) {
                   {t("settings.gitRecoveryCardKeepLocalTitle")}
                 </span>
               </div>
-              <p className="mt-1.5 pl-7 text-[12px] text-tertiary leading-relaxed">
+              <p className="mt-1.5 pl-7 text-[12px] leading-relaxed text-tertiary">
                 {t("settings.gitRecoveryCardKeepLocalDesc")}
               </p>
             </button>
@@ -114,7 +120,7 @@ export function GitRecoveryDialog({ open, reason, onClose, onReclone }: Props) {
           <button
             onClick={() => !loading && onClose()}
             disabled={!!loading}
-            className="px-3 py-1.5 rounded-lg text-[13px] font-medium text-tertiary hover:text-secondary hover:bg-surface-hover transition-colors outline-none disabled:opacity-50"
+            className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-tertiary outline-none transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
           >
             {t("common.cancel")}
           </button>

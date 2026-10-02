@@ -1,16 +1,21 @@
-import { useState } from "react";
 import { FileText, FolderOpen } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
-import { DetailSheet } from "./DetailSheet";
-import { AgentToggleSection, type AgentToggleItem } from "./AgentToggleSection";
-import { ProjectAgentDots } from "./ProjectAgentDots";
-import { CreatorBadge } from "./CreatorBadge";
-import { SkillMarkdown } from "./SkillMarkdown";
-import { DocumentDiffViewer } from "./DocumentDiffViewer";
-import { getAgentDotTargets, getAssignedAgents, type ProjectSkillGroup } from "../lib/projectSkillGroups";
+
+import {
+  getAgentDotTargets,
+  getAssignedAgents,
+  type ProjectSkillGroup,
+} from "../lib/projectSkillGroups";
 import type { SkillCreator } from "../lib/skillCreator";
 import type { ProjectAgentTarget } from "../lib/tauri";
+import { cn } from "../utils";
+import { type AgentToggleItem, AgentToggleSection } from "./AgentToggleSection";
+import { CreatorBadge } from "./CreatorBadge";
+import { DetailSheet } from "./DetailSheet";
+import { DocumentDiffViewer } from "./DocumentDiffViewer";
+import { ProjectAgentDots } from "./ProjectAgentDots";
+import { SkillMarkdown } from "./SkillMarkdown";
 
 /** A project skill's detail sheet: agents, vendored copy and SKILL.md. */
 export function ProjectSkillDetailPanel({
@@ -31,24 +36,26 @@ export function ProjectSkillDetailPanel({
   skill: ProjectSkillGroup;
   creator: SkillCreator;
   targets: ProjectAgentTarget[];
-  togglingAgent: string | null;
+  togglingAgent: null | string;
   onToggleAgent: (agentKey: string, enabled: boolean) => void;
   onUseProjectAgents: () => void;
   /** The skill's vendored copy, if it has one. */
-  vendoredPath: string | null;
+  vendoredPath: null | string;
   vendoredLock: { key: string; reason: string } | null;
-  docContent: string | null;
+  docContent: null | string;
   docLoading: boolean;
-  centerDocContent: string | null;
+  centerDocContent: null | string;
   centerDocLoading: boolean;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [contentTab, setContentTab] = useState<"local" | "diff" | "center">("local");
+  const [contentTab, setContentTab] = useState<"center" | "diff" | "local">("local");
   const supportsCenterDiff = skill.centerSkillIds.length > 0;
+
   const toggleItems: AgentToggleItem[] = targets.map((target) => {
     const variant = skill.variants.find((item) => item.agent === target.key);
     const locked = vendoredLock?.key === target.key;
+
     return {
       key: target.key,
       displayName: target.display_name,
@@ -66,6 +73,7 @@ export function ProjectSkillDetailPanel({
               : null,
     };
   });
+
   const meta = (
     <>
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
@@ -101,7 +109,7 @@ export function ProjectSkillDetailPanel({
       <div className="mt-3 flex items-center gap-4 text-[12.5px] text-muted">
         <div className="flex min-w-0 items-center gap-1.5">
           <FolderOpen className="h-3.5 w-3.5 shrink-0" />
-          <span className="font-mono truncate">{skill.primaryVariant.path}</span>
+          <span className="truncate font-mono">{skill.primaryVariant.path}</span>
         </div>
         {skill.files.length > 0 && (
           <div className="flex shrink-0 items-center gap-1.5">
@@ -117,7 +125,9 @@ export function ProjectSkillDetailPanel({
     <DetailSheet
       open={true}
       title={skill.name}
-      description={skill.description ? <p className="line-clamp-3">{skill.description}</p> : undefined}
+      description={
+        skill.description ? <p className="line-clamp-3">{skill.description}</p> : undefined
+      }
       meta={meta}
       onClose={onClose}
     >
@@ -137,7 +147,9 @@ export function ProjectSkillDetailPanel({
       {vendoredPath && (
         <div className="mb-3 space-y-1 rounded-md border border-border-subtle bg-bg-secondary px-3 py-2 text-[12px] text-muted">
           <p className="text-secondary">{vendoredLock?.reason}</p>
-          <p className="truncate font-mono" title={vendoredPath}>{vendoredPath}</p>
+          <p className="truncate font-mono" title={vendoredPath}>
+            {vendoredPath}
+          </p>
           <p>{t("project.vendored.commitHint")}</p>
           <p>{t("project.vendored.windowsNote")}</p>
         </div>
@@ -161,7 +173,7 @@ export function ProjectSkillDetailPanel({
                 "rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors",
                 contentTab === tab
                   ? "bg-accent text-white"
-                  : "bg-surface-hover text-muted hover:text-secondary"
+                  : "bg-surface-hover text-muted hover:text-secondary",
               )}
               disabled={(tab === "diff" || tab === "center") && centerDocLoading}
             >
@@ -183,7 +195,9 @@ export function ProjectSkillDetailPanel({
         ) : centerDocLoading ? (
           <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
         ) : (
-          <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
+          <div className="mt-12 text-center text-[13px] text-muted">
+            {t("mySkills.sourceDiffUnavailable")}
+          </div>
         )
       ) : contentTab === "center" ? (
         centerDocLoading ? (
@@ -191,12 +205,16 @@ export function ProjectSkillDetailPanel({
         ) : centerDocContent ? (
           <SkillMarkdown content={centerDocContent} />
         ) : (
-          <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
+          <div className="mt-12 text-center text-[13px] text-muted">
+            {t("mySkills.sourceDiffUnavailable")}
+          </div>
         )
       ) : docContent ? (
         <SkillMarkdown content={docContent} />
       ) : (
-        <div className="mt-12 text-center text-[13px] text-muted">{t("common.documentMissing")}</div>
+        <div className="mt-12 text-center text-[13px] text-muted">
+          {t("common.documentMissing")}
+        </div>
       )}
     </DetailSheet>
   );

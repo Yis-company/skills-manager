@@ -1,5 +1,5 @@
-import { useEffect } from "react";
 import { Pencil, Trash2 } from "lucide-react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
 export interface TagMenuState {
@@ -24,7 +24,9 @@ export function TagContextMenu({ menu, onClose, onRename, onDelete }: TagContext
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 

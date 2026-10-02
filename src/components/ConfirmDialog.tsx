@@ -1,5 +1,5 @@
+import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { X, AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 interface Props {
@@ -31,10 +31,13 @@ export function ConfirmDialog({
   // Escape closes the dialog, except while the confirmed action is running.
   useEffect(() => {
     if (!open || loading) return;
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
   }, [open, loading, onClose]);
 
@@ -42,6 +45,7 @@ export function ConfirmDialog({
 
   const handleConfirm = async () => {
     setLoading(true);
+
     try {
       await onConfirm();
       onClose();
@@ -56,21 +60,28 @@ export function ConfirmDialog({
     // <html> and zoom does not scale vh: a bare 85vh renders at 102% of the
     // viewport on the largest size. Same compensation as html/body in index.css.
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={loading && lockWhilePending ? undefined : onClose} />
-      <div className="relative bg-surface border border-border rounded-xl w-full max-w-sm p-5 shadow-2xl flex flex-col max-h-[calc(85vh/var(--app-scale))]">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[13px] font-semibold text-primary flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={loading && lockWhilePending ? undefined : onClose}
+      />
+      <div className="relative flex max-h-[calc(85vh/var(--app-scale))] w-full max-w-sm flex-col rounded-xl border border-border bg-surface p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-[13px] font-semibold text-primary">
+            <AlertTriangle className="h-4 w-4 text-amber-400" />
             {title || t("common.confirm")}
           </h2>
-          <button onClick={onClose} disabled={loading && lockWhilePending} className="text-muted hover:text-secondary p-1 rounded transition-colors outline-none">
-            <X className="w-4 h-4" />
+          <button
+            onClick={onClose}
+            disabled={loading && lockWhilePending}
+            className="rounded p-1 text-muted outline-none transition-colors hover:text-secondary"
+          >
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <p className="text-[13px] text-tertiary mb-5">{message}</p>
+        <p className="mb-5 text-[13px] text-tertiary">{message}</p>
         {details && details.length > 0 ? (
-          <div className="mb-5 flex flex-wrap gap-2 overflow-y-auto min-h-0">
+          <div className="mb-5 flex min-h-0 flex-wrap gap-2 overflow-y-auto">
             {details.map((detail) => (
               <span
                 key={detail}
@@ -86,7 +97,7 @@ export function ConfirmDialog({
           <button
             onClick={onClose}
             disabled={loading && lockWhilePending}
-            className="px-3 py-1.5 rounded-lg text-[13px] font-medium text-tertiary hover:text-secondary hover:bg-surface-hover transition-colors outline-none"
+            className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-tertiary outline-none transition-colors hover:bg-surface-hover hover:text-secondary"
           >
             {t("common.cancel")}
           </button>
@@ -95,8 +106,8 @@ export function ConfirmDialog({
             disabled={loading}
             className={
               tone === "warning"
-                ? "px-3 py-1.5 rounded-lg bg-accent-dark hover:bg-accent text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-accent-border outline-none"
-                : "px-3 py-1.5 rounded-lg bg-red-600/90 hover:bg-red-500 text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-red-500/50 outline-none"
+                ? "rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                : "rounded-lg border border-red-500/50 bg-red-600/90 px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
             }
           >
             {loading ? t("common.loading") : confirmLabel || t("common.delete")}

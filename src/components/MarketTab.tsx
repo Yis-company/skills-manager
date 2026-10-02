@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Check,
   CheckSquare,
@@ -13,18 +13,19 @@ import {
   Star,
   TrendingUp,
 } from "lucide-react";
+import { useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { cn } from "../utils";
-import type { SkillsShSkill } from "../lib/tauri";
-import { filterMarketSkills, paginateMarketSkills } from "../lib/marketSearch";
+
 import { MARKET_SEARCH_STEP, type MarketSearch } from "../hooks/useMarketSearch";
-import type { SourceOverflow } from "../hooks/useSourceOverflow";
-import { StatusBanner } from "./StatusBanner";
-import { SourceFilterPills } from "./SourceFilterPills";
 import { useMultiSelect } from "../hooks/useMultiSelect";
-import { MultiSelectToolbar } from "./MultiSelectToolbar";
+import type { SourceOverflow } from "../hooks/useSourceOverflow";
 import { getActiveHostId } from "../lib/hostCall";
+import { filterMarketSkills, paginateMarketSkills } from "../lib/marketSearch";
+import type { SkillsShSkill } from "../lib/tauri";
+import { cn } from "../utils";
+import { MultiSelectToolbar } from "./MultiSelectToolbar";
+import { SourceFilterPills } from "./SourceFilterPills";
+import { StatusBanner } from "./StatusBanner";
 
 const MARKET_PAGE_SIZE = 24;
 
@@ -34,7 +35,7 @@ interface MarketTabProps {
   /** `source/skill_id` refs of the skills.sh skills already installed. */
   installedSourceRefs: Set<string>;
   /** Id of the skill being installed, if any. */
-  installing: string | null;
+  installing: null | string;
   onInstall: (skill: SkillsShSkill) => void;
   onCancelInstall: (cancelKey: string) => void;
   bulkProgress: { completed: number; total: number } | null;
@@ -42,7 +43,7 @@ interface MarketTabProps {
   onInstallSelected: (skills: SkillsShSkill[]) => Promise<string[]>;
   onStopBulkInstall: () => void;
   onRetryBulkInstall: () => Promise<string[]>;
-  hostId: string | null;
+  hostId: null | string;
   bulkSummary: { installed: number; total: number; stopped: boolean } | null;
   retryCount: number;
   batchLocked: boolean;
@@ -70,6 +71,7 @@ export function MarketTab({
   batchLocked,
 }: MarketTabProps) {
   const { t } = useTranslation();
+
   const {
     marketTab,
     setMarketTab,
@@ -89,6 +91,7 @@ export function MarketTab({
     debouncedMarketQuery,
     sourceOptions,
   } = market;
+
   const marketListRef = useRef<HTMLDivElement | null>(null);
 
   const scrollMarketListToTop = () => {
@@ -102,7 +105,7 @@ export function MarketTab({
 
   const filteredMarketSkills = useMemo(
     () => filterMarketSkills(marketSkills, marketSourceFilter, debouncedMarketQuery),
-    [marketSkills, marketSourceFilter, debouncedMarketQuery]
+    [marketSkills, marketSourceFilter, debouncedMarketQuery],
   );
 
   const {
@@ -111,9 +114,11 @@ export function MarketTab({
     items: paginatedMarketSkills,
     visiblePages: visibleMarketPages,
   } = paginateMarketSkills(filteredMarketSkills, marketPage, MARKET_PAGE_SIZE);
+
   const eligibleSkills = paginatedMarketSkills.filter(
     (skill) => !installedSourceRefs.has(`${skill.source}/${skill.skill_id}`),
   );
+
   const {
     isMultiSelect: selectMode,
     setIsMultiSelect,
@@ -132,17 +137,23 @@ export function MarketTab({
     scopeSignal: hostId ?? "local",
     escapeEnabled: !batchLocked && bulkProgress === null,
   });
+
   const selectedSkills = eligibleSkills.filter((skill) => selectedIds.has(skill.id));
+
   const installSelected = async (skills: SkillsShSkill[]) => {
     const selectedHostId = hostId;
     const succeeded = await onInstallSelected(skills);
+
     if (getActiveHostId() === selectedHostId) removeSelected(succeeded);
   };
+
   const retryBulkInstall = async () => {
     const selectedHostId = hostId;
     const succeeded = await onRetryBulkInstall();
+
     if (getActiveHostId() === selectedHostId) removeSelected(succeeded);
   };
+
   const hasMarketQuery = debouncedMarketQuery.trim().length > 0;
   const canLoadMoreSearch = hasMarketQuery && marketSkills.length >= marketSearchLimit;
   const isLoadingMoreSearch = hasMarketQuery && marketLoadingMore;
@@ -166,13 +177,14 @@ export function MarketTab({
                   ].map((tab) => {
                     const Icon = tab.icon;
                     const isActive = marketTab === tab.id;
+
                     return (
                       <button
                         key={tab.id}
                         onClick={() => setMarketTab(tab.id)}
                         className={cn(
                           "app-segmented-button flex items-center gap-1.5",
-                          isActive && "app-segmented-button-active"
+                          isActive && "app-segmented-button-active",
                         )}
                       >
                         <Icon className="h-3 w-3" />
@@ -231,14 +243,16 @@ export function MarketTab({
           <MultiSelectToolbar
             selectedCount={selectedSkills.length}
             isAllSelected={isAllSelected}
-            actions={[{
-              key: "install",
-              label: t("install.market.installSelected", { count: selectedSkills.length }),
-              icon: <DownloadCloud className="h-3.5 w-3.5" />,
-              onSelect: () => installSelected(selectedSkills),
-              tone: "primary",
-              disabled: selectedSkills.length === 0 || installing !== null,
-            }]}
+            actions={[
+              {
+                key: "install",
+                label: t("install.market.installSelected", { count: selectedSkills.length }),
+                icon: <DownloadCloud className="h-3.5 w-3.5" />,
+                onSelect: () => installSelected(selectedSkills),
+                tone: "primary",
+                disabled: selectedSkills.length === 0 || installing !== null,
+              },
+            ]}
             labels={{
               hint: t("mySkills.selectHint"),
               selected: t("mySkills.selectedCount", { count: selectedSkills.length }),
@@ -267,7 +281,11 @@ export function MarketTab({
             <span role="status" className="ml-auto text-[13px] text-secondary">
               {t("install.market.installingProgress", bulkProgress)}
             </span>
-            <button type="button" onClick={onStopBulkInstall} className="app-toolbar-button app-toolbar-button-secondary">
+            <button
+              type="button"
+              onClick={onStopBulkInstall}
+              className="app-toolbar-button app-toolbar-button-secondary"
+            >
               {t("install.market.stopInstalling")}
             </button>
           </>
@@ -277,19 +295,31 @@ export function MarketTab({
       {bulkSummary ? (
         <div className="app-panel mb-3 space-y-2 p-3" role="status">
           <p className="text-[13px] font-medium text-secondary">
-            {t(bulkSummary.stopped ? "install.market.batchStopped" : "install.market.batchSummary", bulkSummary)}
+            {t(
+              bulkSummary.stopped ? "install.market.batchStopped" : "install.market.batchSummary",
+              bulkSummary,
+            )}
           </p>
           {bulkFailures.length > 0 ? (
             <>
               <ul className="max-h-32 space-y-1 overflow-y-auto text-[12px] text-muted">
                 {bulkFailures.map(({ skill, error }) => (
-                  <li key={skill.id}>{t("install.market.batchFailureDetail", { name: skill.name || skill.skill_id, error })}</li>
+                  <li key={skill.id}>
+                    {t("install.market.batchFailureDetail", {
+                      name: skill.name || skill.skill_id,
+                      error,
+                    })}
+                  </li>
                 ))}
               </ul>
             </>
           ) : null}
           {retryCount > 0 ? (
-            <button type="button" onClick={() => void retryBulkInstall()} className="app-toolbar-button app-toolbar-button-secondary">
+            <button
+              type="button"
+              onClick={() => void retryBulkInstall()}
+              className="app-toolbar-button app-toolbar-button-secondary"
+            >
               {t("install.market.batchRetry", { count: retryCount })}
             </button>
           ) : null}
@@ -330,110 +360,116 @@ export function MarketTab({
                   const isEligible = !isInstalled;
 
                   return (
-                  <div
-                    key={skill.id}
-                    className="app-panel flex flex-col gap-2 p-3 transition-colors hover:border-border"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <img
-                          src={avatarUrl}
-                          alt={owner}
-                          className="h-6 w-6 shrink-0 rounded-full border border-border-subtle"
-                          loading="lazy"
-                        />
-                        <div className="min-w-0">
-                          <h3 className="truncate text-[13px] font-semibold text-secondary">
-                            {displayName}
-                          </h3>
-                          {showSkillId ? (
-                            <p className="truncate text-[13px] leading-4 text-muted">{skill.skill_id}</p>
-                          ) : null}
+                    <div
+                      key={skill.id}
+                      className="app-panel flex flex-col gap-2 p-3 transition-colors hover:border-border"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <img
+                            src={avatarUrl}
+                            alt={owner}
+                            className="h-6 w-6 shrink-0 rounded-full border border-border-subtle"
+                            loading="lazy"
+                          />
+                          <div className="min-w-0">
+                            <h3 className="truncate text-[13px] font-semibold text-secondary">
+                              {displayName}
+                            </h3>
+                            {showSkillId ? (
+                              <p className="truncate text-[13px] leading-4 text-muted">
+                                {skill.skill_id}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            onClick={() =>
+                              openUrl(`https://skills.sh/${skill.source}/${skill.skill_id}`)
+                            }
+                            className="rounded-[5px] p-1 text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
+                            title={t("install.viewOnWeb")}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </button>
+                          {selectMode ? (
+                            <input
+                              type="checkbox"
+                              aria-label={t("install.market.selectSkill", { name: displayName })}
+                              checked={isSelected}
+                              disabled={!isEligible || batchRunning || batchLocked}
+                              onChange={() => toggleSelect(skill.id)}
+                              className="h-4 w-4 accent-[var(--color-accent)] disabled:opacity-50"
+                            />
+                          ) : isInstalled ? (
+                            <span
+                              className="rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 p-1 text-emerald-400"
+                              title={t("install.installed")}
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                            </span>
+                          ) : installing === skill.id ? (
+                            <button
+                              onClick={() => onCancelInstall(`${skill.source}/${skill.skill_id}`)}
+                              className="inline-flex items-center gap-1 rounded-[5px] border border-red-500/30 bg-red-500/10 px-1.5 py-1 text-red-400 transition-colors hover:bg-red-500/20"
+                              title={t("install.cancel")}
+                              aria-label={t("install.cancel")}
+                            >
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              <span className="text-[11px] font-medium leading-none">
+                                {t("install.cancel")}
+                              </span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => onInstall(skill)}
+                              disabled={installing !== null || batchRunning}
+                              className="rounded-[5px] border border-accent-border bg-accent-dark p-1 text-white transition-colors hover:bg-accent disabled:opacity-50"
+                              title={t("install.oneClickInstall")}
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         <button
-                          onClick={() => openUrl(`https://skills.sh/${skill.source}/${skill.skill_id}`)}
-                          className="rounded-[5px] p-1 text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
-                          title={t("install.viewOnWeb")}
+                          type="button"
+                          onClick={() => setMarketSourceFilter(skill.source)}
+                          disabled={
+                            batchRunning || batchLocked || marketSourceFilter === skill.source
+                          }
+                          title={t("install.onlyThisContributor")}
+                          className={cn(
+                            "rounded-[5px] bg-accent-bg px-1.5 py-0.5 text-[13px] leading-4 font-medium text-accent-light transition-colors",
+                            marketSourceFilter === skill.source
+                              ? "cursor-default opacity-90"
+                              : "hover:bg-accent-bg/80",
+                          )}
                         >
-                          <ExternalLink className="h-3.5 w-3.5" />
+                          @{skill.source}
                         </button>
-                        {selectMode ? (
-                          <input
-                            type="checkbox"
-                            aria-label={t("install.market.selectSkill", { name: displayName })}
-                            checked={isSelected}
-                            disabled={!isEligible || batchRunning || batchLocked}
-                            onChange={() => toggleSelect(skill.id)}
-                            className="h-4 w-4 accent-[var(--color-accent)] disabled:opacity-50"
-                          />
-                        ) : isInstalled ? (
-                          <span
-                            className="rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 p-1 text-emerald-400"
-                            title={t("install.installed")}
-                          >
-                            <Check className="h-3.5 w-3.5" />
+                        {marketTab === "alltime" && skill.installs > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded-[5px] border border-border-subtle bg-background px-1.5 py-0.5 text-[13px] leading-4 text-muted">
+                            <DownloadCloud className="h-3 w-3" />
+                            {skill.installs >= 1_000_000
+                              ? `${(skill.installs / 1_000_000).toFixed(1)}M`
+                              : skill.installs >= 1_000
+                                ? `${(skill.installs / 1_000).toFixed(1)}K`
+                                : skill.installs}
                           </span>
-                        ) : installing === skill.id ? (
-                          <button
-                            onClick={() => onCancelInstall(`${skill.source}/${skill.skill_id}`)}
-                            className="inline-flex items-center gap-1 rounded-[5px] border border-red-500/30 bg-red-500/10 px-1.5 py-1 text-red-400 transition-colors hover:bg-red-500/20"
-                            title={t("install.cancel")}
-                            aria-label={t("install.cancel")}
-                          >
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            <span className="text-[11px] leading-none font-medium">
-                              {t("install.cancel")}
-                            </span>
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => onInstall(skill)}
-                            disabled={installing !== null || batchRunning}
-                            className="rounded-[5px] border border-accent-border bg-accent-dark p-1 text-white transition-colors hover:bg-accent disabled:opacity-50"
-                            title={t("install.oneClickInstall")}
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                          </button>
                         )}
+                        {isInstalled ? (
+                          <span className="inline-flex items-center gap-1 rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[13px] font-medium leading-4 text-emerald-400">
+                            <Check className="h-3 w-3" />
+                            {t("install.installed")}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setMarketSourceFilter(skill.source)}
-                        disabled={batchRunning || batchLocked || marketSourceFilter === skill.source}
-                        title={t("install.onlyThisContributor")}
-                        className={cn(
-                          "rounded-[5px] bg-accent-bg px-1.5 py-0.5 text-[13px] leading-4 font-medium text-accent-light transition-colors",
-                          marketSourceFilter === skill.source
-                            ? "cursor-default opacity-90"
-                            : "hover:bg-accent-bg/80"
-                        )}
-                      >
-                        @{skill.source}
-                      </button>
-                      {marketTab === "alltime" && skill.installs > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-[5px] border border-border-subtle bg-background px-1.5 py-0.5 text-[13px] leading-4 text-muted">
-                          <DownloadCloud className="h-3 w-3" />
-                          {skill.installs >= 1_000_000
-                            ? `${(skill.installs / 1_000_000).toFixed(1)}M`
-                            : skill.installs >= 1_000
-                              ? `${(skill.installs / 1_000).toFixed(1)}K`
-                              : skill.installs}
-                        </span>
-                      )}
-                      {isInstalled ? (
-                        <span className="inline-flex items-center gap-1 rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[13px] leading-4 font-medium text-emerald-400">
-                          <Check className="h-3 w-3" />
-                          {t("install.installed")}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
                   );
                 })}
               </div>
@@ -463,7 +499,7 @@ export function MarketTab({
                             "min-w-8 rounded-[6px] border px-2.5 py-1.5 text-[13px] font-semibold transition-colors",
                             page === currentMarketPage
                               ? "border-accent-border bg-accent-dark text-white"
-                              : "border-border-subtle bg-surface text-secondary hover:bg-surface-hover"
+                              : "border-border-subtle bg-surface text-secondary hover:bg-surface-hover",
                           )}
                         >
                           {page}
@@ -473,7 +509,9 @@ export function MarketTab({
                   })}
 
                   <button
-                    onClick={() => changeMarketPage(Math.min(totalMarketPages, currentMarketPage + 1))}
+                    onClick={() =>
+                      changeMarketPage(Math.min(totalMarketPages, currentMarketPage + 1))
+                    }
                     disabled={batchRunning || batchLocked || currentMarketPage === totalMarketPages}
                     className="inline-flex items-center gap-1 rounded-[6px] border border-border-subtle bg-surface px-3 py-1.5 text-[13px] font-medium text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
                   >
@@ -496,9 +534,7 @@ export function MarketTab({
                     ) : (
                       <Search className="h-3.5 w-3.5" />
                     )}
-                    {isLoadingMoreSearch
-                      ? t("install.loadingMore")
-                      : t("install.loadMoreSearch")}
+                    {isLoadingMoreSearch ? t("install.loadingMore") : t("install.loadMoreSearch")}
                   </button>
                 </div>
               ) : null}

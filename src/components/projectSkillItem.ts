@@ -1,6 +1,6 @@
+import type { ProjectSkillGroup } from "../lib/projectSkillGroups";
 import type { SkillCreator } from "../lib/skillCreator";
 import type { ProjectAgentTarget, ProjectSkill } from "../lib/tauri";
-import type { ProjectSkillGroup } from "../lib/projectSkillGroups";
 
 /** Shared by the project's grid card and list row. */
 export interface ProjectSkillItemProps {
@@ -15,7 +15,7 @@ export interface ProjectSkillItemProps {
   isUpdatingProject: boolean;
   isToggling: boolean;
   /** Agent whose toggle is in flight for this skill. */
-  pendingAgent: string | null;
+  pendingAgent: null | string;
   /** The agent that must keep the vendored copy, if any. */
   vendoredLock: { key: string; reason: string } | null;
   onToggleSelect: (skillKey: string) => void;

@@ -1,12 +1,17 @@
 import { Download, FileText, Loader2, Square, SquareCheck, Trash2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
-import { ToggleSwitch } from "./ToggleSwitch";
-import { ProjectAgentDots } from "./ProjectAgentDots";
-import { CreatorBadge } from "./CreatorBadge";
-import { getSyncStatusMeta, type ProjectSkillItemProps } from "./projectSkillItem";
+
+import {
+  getAssignedAgents,
+  getProjectUpdateCandidates,
+  isCenterUpdatable,
+} from "../lib/projectSkillGroups";
 import { getTagColor } from "../lib/skillTags";
-import { getAssignedAgents, getProjectUpdateCandidates, isCenterUpdatable } from "../lib/projectSkillGroups";
+import { cn } from "../utils";
+import { CreatorBadge } from "./CreatorBadge";
+import { ProjectAgentDots } from "./ProjectAgentDots";
+import { getSyncStatusMeta, type ProjectSkillItemProps } from "./projectSkillItem";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 /** A skill in the project list view. */
 export function ProjectSkillRow({
@@ -40,17 +45,17 @@ export function ProjectSkillRow({
     <div
       className={cn(
         "app-panel group flex cursor-pointer items-center gap-3.5 rounded-xl border-transparent px-3.5 py-3 transition-all hover:border-border hover:bg-surface-hover",
-        isMultiSelect && isSelected && "ring-1 ring-accent border-accent/40"
+        isMultiSelect && isSelected && "ring-1 ring-accent border-accent/40",
       )}
-      onClick={() =>
-        isMultiSelect ? onToggleSelect(skill.id) : onOpenDetail(skill)
-      }
+      onClick={() => (isMultiSelect ? onToggleSelect(skill.id) : onOpenDetail(skill))}
     >
       <div className="flex h-4 w-4 shrink-0 items-center justify-center">
         {isMultiSelect ? (
-          isSelected
-            ? <SquareCheck className="h-3.5 w-3.5 text-accent" />
-            : <Square className="h-3.5 w-3.5 text-faint" />
+          isSelected ? (
+            <SquareCheck className="h-3.5 w-3.5 text-accent" />
+          ) : (
+            <Square className="h-3.5 w-3.5 text-faint" />
+          )
         ) : (
           <span
             className={cn(
@@ -59,7 +64,7 @@ export function ProjectSkillRow({
                 ? "bg-accent-light shadow-[0_0_0_3px_var(--color-accent-bg)]"
                 : skill.enabledCount > 0
                   ? "bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.15)]"
-                  : "bg-surface-active"
+                  : "bg-surface-active",
             )}
             title={`${skill.enabledCount}/${skill.totalCount}`}
           />
@@ -83,7 +88,7 @@ export function ProjectSkillRow({
               key={tag}
               className={cn(
                 "inline-flex items-center rounded-full px-1.5 py-0.5 text-[11px] font-medium",
-                getTagColor(tag, allTags)
+                getTagColor(tag, allTags),
               )}
             >
               {tag}
@@ -94,7 +99,9 @@ export function ProjectSkillRow({
 
       <div className="flex shrink-0 items-center gap-2.5">
         <CreatorBadge creator={creator} size="md" hideLocal className="max-w-[160px]" />
-        <span className={cn("rounded-full px-2 py-0.5 text-[12px] font-medium", statusMeta.className)}>
+        <span
+          className={cn("rounded-full px-2 py-0.5 text-[12px] font-medium", statusMeta.className)}
+        >
           {statusMeta.label}
         </span>
         {skill.enabledCount === 0 && (
@@ -104,7 +111,7 @@ export function ProjectSkillRow({
         )}
         {skill.files.length > 0 && (
           <span className="flex items-center gap-1 text-[12px] text-faint">
-            <FileText className="w-3 h-3" />
+            <FileText className="h-3 w-3" />
             {skill.files.length}
           </span>
         )}
@@ -128,7 +135,10 @@ export function ProjectSkillRow({
           <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
             {canUpdateCenter && (
               <button
-                onClick={(e) => { e.stopPropagation(); onUpdateCenter(skill); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateCenter(skill);
+                }}
                 disabled={isUpdatingCenter || isUpdatingProject}
                 className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
                 title={t("project.updateCenter")}
@@ -142,7 +152,10 @@ export function ProjectSkillRow({
             )}
             {canUpdateProject && (
               <button
-                onClick={(e) => { e.stopPropagation(); onUpdateProject(skill); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateProject(skill);
+                }}
                 disabled={isUpdatingCenter || isUpdatingProject}
                 className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
                 title={t("project.updateProject")}
@@ -168,7 +181,10 @@ export function ProjectSkillRow({
             />
           ) : null}
           <button
-            onClick={(e) => { e.stopPropagation(); onDelete(skill); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(skill);
+            }}
             className="shrink-0 rounded p-0.5 text-muted transition-colors hover:bg-red-500/10 hover:text-red-500"
             title={t("project.deleteSkill")}
           >

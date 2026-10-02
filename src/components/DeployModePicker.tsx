@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
+
 import type { ProjectDeployMode } from "../lib/tauri";
+import { cn } from "../utils";
 
 interface Props {
   value: ProjectDeployMode;
@@ -12,6 +13,7 @@ interface Props {
 /** "Linked to library" or "Vendored copy", with a line on what the current choice means. */
 export function DeployModePicker({ value, onChange, disabled, className }: Props) {
   const { t } = useTranslation();
+
   return (
     <div className={className}>
       <div className="app-segmented flex w-full">
@@ -21,7 +23,10 @@ export function DeployModePicker({ value, onChange, disabled, className }: Props
             type="button"
             onClick={() => onChange(mode)}
             disabled={disabled}
-            className={cn("app-segmented-button flex-1", value === mode && "app-segmented-button-active")}
+            className={cn(
+              "app-segmented-button flex-1",
+              value === mode && "app-segmented-button-active",
+            )}
           >
             {t(`project.settings.mode.${mode}`)}
           </button>

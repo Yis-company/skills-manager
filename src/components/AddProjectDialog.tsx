@@ -1,10 +1,11 @@
+import { Check, FolderOpen, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { X, FolderOpen, Search, Check } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
-import * as api from "../lib/tauri";
-import { DeployModePicker } from "./DeployModePicker";
+
 import { pickPath } from "../lib/pickPath";
+import * as api from "../lib/tauri";
+import { cn } from "../utils";
+import { DeployModePicker } from "./DeployModePicker";
 
 interface Props {
   open: boolean;
@@ -12,9 +13,15 @@ interface Props {
   onAdded: () => Promise<void>;
 }
 
-export function AddProjectDialog({ open, onClose, onAdded }: Props) {
+export function AddProjectDialog({ open, ...props }: Props) {
+  if (!open) return null;
+
+  return <AddProjectDialogContent {...props} />;
+}
+
+function AddProjectDialogContent({ onClose, onAdded }: Omit<Props, "open">) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<"manual" | "scan" | "linked">("manual");
+  const [tab, setTab] = useState<"linked" | "manual" | "scan">("manual");
   const [scanRoot, setScanRoot] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanResults, setScanResults] = useState<string[]>([]);
@@ -26,29 +33,20 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
   const [deployMode, setDeployMode] = useState<api.ProjectDeployMode>("link");
 
   useEffect(() => {
-    if (!open) return;
-    setTab("manual");
-    setScanRoot("");
-    setScanning(false);
-    setScanResults([]);
-    setSelected(new Set());
-    setAdding(false);
-    setScanned(false);
-    setLinkedName("");
-    setLinkedPath("");
-    setDeployMode("link");
     api
       .getSettings("default_project_deploy_mode")
-      .then((v) => { if (v === "copy") setDeployMode(v); })
+      .then((v) => {
+        if (v === "copy") setDeployMode(v);
+      })
       .catch(() => {});
-  }, [open]);
-
-  if (!open) return null;
+  }, []);
 
   const handleSelectFolder = async () => {
     const dir = await pickPath({ directory: true });
+
     if (!dir) return;
     setAdding(true);
+
     try {
       await api.addProject(dir, deployMode);
       await onAdded();
@@ -66,6 +64,7 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
     setScanned(false);
     setScanResults([]);
     setSelected(new Set());
+
     try {
       const results = await api.scanProjects(scanRoot.trim());
       setScanResults(results);
@@ -79,8 +78,10 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
   const toggleSelect = (path: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
+
       if (next.has(path)) next.delete(path);
       else next.add(path);
+
       return next;
     });
   };
@@ -88,6 +89,7 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
   const handleAddSelected = async () => {
     if (selected.size === 0) return;
     setAdding(true);
+
     try {
       for (const path of selected) {
         try {
@@ -96,6 +98,7 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
           // skip duplicates
         }
       }
+
       await onAdded();
       onClose();
     } finally {
@@ -105,12 +108,14 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
 
   const handleSelectBrowse = async () => {
     const dir = await pickPath({ directory: true }, { startPath: scanRoot.trim() });
+
     if (dir) setScanRoot(dir);
   };
 
   const handleAddLinkedWorkspace = async () => {
     if (!linkedName.trim() || !linkedPath.trim()) return;
     setAdding(true);
+
     try {
       await api.addLinkedWorkspace(linkedName.trim(), linkedPath.trim());
       await onAdded();
@@ -128,21 +133,19 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-surface border border-border rounded-xl w-full max-w-[480px] p-5 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[13px] font-semibold text-primary">
-            {t("project.addProjectTitle")}
-          </h2>
+      <div className="relative w-full max-w-[480px] rounded-xl border border-border bg-surface p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold text-primary">{t("project.addProjectTitle")}</h2>
           <button
             onClick={onClose}
-            className="text-muted hover:text-secondary p-1 rounded transition-colors outline-none"
+            className="rounded p-1 text-muted outline-none transition-colors hover:text-secondary"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-4 p-0.5 bg-background rounded-lg border border-border-subtle">
+        <div className="mb-4 flex gap-1 rounded-lg border border-border-subtle bg-background p-0.5">
           {(["manual", "scan", "linked"] as const).map((key) => (
             <button
               key={key}
@@ -151,7 +154,7 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
                 "flex-1 py-1.5 text-[13px] font-medium rounded-md transition-all outline-none",
                 tab === key
                   ? "bg-surface text-primary shadow-sm"
-                  : "text-muted hover:text-secondary"
+                  : "text-muted hover:text-secondary",
               )}
             >
               {t(
@@ -159,7 +162,7 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
                   ? "project.tabManual"
                   : key === "scan"
                     ? "project.tabScan"
-                    : "project.tabLinked"
+                    : "project.tabLinked",
               )}
             </button>
           ))}
@@ -171,15 +174,13 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
 
         {tab === "manual" ? (
           <div className="space-y-3">
-            <p className="text-[13px] text-tertiary">
-              {t("project.addManual")}
-            </p>
+            <p className="text-[13px] text-tertiary">{t("project.addManual")}</p>
             <button
               onClick={handleSelectFolder}
               disabled={adding}
-              className="flex items-center gap-2 w-full px-3 py-2.5 rounded-lg border border-dashed border-border-subtle hover:border-border bg-background text-[13px] text-tertiary hover:text-secondary transition-all outline-none"
+              className="flex w-full items-center gap-2 rounded-lg border border-dashed border-border-subtle bg-background px-3 py-2.5 text-[13px] text-tertiary outline-none transition-all hover:border-border hover:text-secondary"
             >
-              <FolderOpen className="w-4 h-4 text-muted" />
+              <FolderOpen className="h-4 w-4 text-muted" />
               {adding ? t("common.loading") : t("project.addManual")}
             </button>
           </div>
@@ -196,28 +197,22 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
               />
               <button
                 onClick={handleSelectBrowse}
-                className="px-2.5 rounded-lg border border-border-subtle bg-background text-muted hover:text-secondary hover:border-border transition-all outline-none"
+                className="rounded-lg border border-border-subtle bg-background px-2.5 text-muted outline-none transition-all hover:border-border hover:text-secondary"
                 title={t("project.scanDir")}
               >
-                <FolderOpen className="w-4 h-4" />
+                <FolderOpen className="h-4 w-4" />
               </button>
               <button
                 onClick={handleScan}
                 disabled={!scanRoot.trim() || scanning}
-                className="px-3 py-1.5 rounded-lg bg-accent-dark hover:bg-accent text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-accent-border outline-none"
+                className="rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {scanning ? (
-                  t("project.scanning")
-                ) : (
-                  <Search className="w-4 h-4" />
-                )}
+                {scanning ? t("project.scanning") : <Search className="h-4 w-4" />}
               </button>
             </div>
 
             {scanned && scanResults.length === 0 && (
-              <p className="text-[13px] text-muted py-4 text-center">
-                {t("project.scanNoResult")}
-              </p>
+              <p className="py-4 text-center text-[13px] text-muted">{t("project.scanNoResult")}</p>
             )}
 
             {scanResults.length > 0 && (
@@ -229,19 +224,17 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
                   <button
                     onClick={() =>
                       setSelected((prev) =>
-                        prev.size === scanResults.length
-                          ? new Set()
-                          : new Set(scanResults)
+                        prev.size === scanResults.length ? new Set() : new Set(scanResults),
                       )
                     }
-                    className="text-[12px] text-accent hover:underline outline-none"
+                    className="text-[12px] text-accent outline-none hover:underline"
                   >
                     {selected.size === scanResults.length
                       ? t("project.deselectAll")
                       : t("project.selectAll")}
                   </button>
                 </div>
-                <div className="max-h-[240px] overflow-y-auto space-y-1">
+                <div className="max-h-[240px] space-y-1 overflow-y-auto">
                   {scanResults.map((path) => (
                     <button
                       key={path}
@@ -250,7 +243,7 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
                         "flex items-center gap-2 w-full px-3 py-2 rounded-lg text-left text-[13px] transition-all outline-none",
                         selected.has(path)
                           ? "bg-accent-bg/50 text-primary border border-accent-border/30"
-                          : "bg-background text-tertiary border border-border-subtle hover:border-border"
+                          : "bg-background text-tertiary border border-border-subtle hover:border-border",
                       )}
                     >
                       <div
@@ -258,10 +251,10 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
                           "w-4 h-4 rounded border flex items-center justify-center shrink-0",
                           selected.has(path)
                             ? "bg-accent-dark border-accent-border text-white"
-                            : "border-border-subtle"
+                            : "border-border-subtle",
                         )}
                       >
-                        {selected.has(path) && <Check className="w-3 h-3" />}
+                        {selected.has(path) && <Check className="h-3 w-3" />}
                       </div>
                       <span className="truncate">{path}</span>
                     </button>
@@ -271,7 +264,7 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
                   <button
                     onClick={handleAddSelected}
                     disabled={selected.size === 0 || adding}
-                    className="px-3 py-1.5 rounded-lg bg-accent-dark hover:bg-accent text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-accent-border outline-none"
+                    className="rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {adding
                       ? t("common.loading")
@@ -283,9 +276,7 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-[13px] text-tertiary">
-              {t("project.addLinkedHint")}
-            </p>
+            <p className="text-[13px] text-tertiary">{t("project.addLinkedHint")}</p>
             <input
               type="text"
               value={linkedName}
@@ -304,12 +295,13 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
               <button
                 onClick={async () => {
                   const dir = await pickPath({ directory: true }, { startPath: linkedPath.trim() });
+
                   if (dir) setLinkedPath(dir);
                 }}
-                className="px-2.5 rounded-lg border border-border-subtle bg-background text-muted hover:text-secondary hover:border-border transition-all outline-none"
+                className="rounded-lg border border-border-subtle bg-background px-2.5 text-muted outline-none transition-all hover:border-border hover:text-secondary"
                 title={t("project.selectSkillsDir")}
               >
-                <FolderOpen className="w-4 h-4" />
+                <FolderOpen className="h-4 w-4" />
               </button>
             </div>
             <p className="text-[12px] leading-5 text-muted">
@@ -318,9 +310,9 @@ export function AddProjectDialog({ open, onClose, onAdded }: Props) {
             <button
               onClick={handleAddLinkedWorkspace}
               disabled={adding || !linkedName.trim() || !linkedPath.trim()}
-              className="flex items-center justify-center gap-2 w-full px-3 py-2.5 rounded-lg border border-dashed border-border-subtle hover:border-border bg-background text-[13px] text-tertiary hover:text-secondary transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border-subtle bg-background px-3 py-2.5 text-[13px] text-tertiary outline-none transition-all hover:border-border hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <FolderOpen className="w-4 h-4 text-muted" />
+              <FolderOpen className="h-4 w-4 text-muted" />
               {adding ? t("common.loading") : t("project.addLinkedWorkspace")}
             </button>
           </div>

@@ -1,25 +1,24 @@
 import { describe, expect, it } from "vitest";
+
 import { buildFileTree, type FileTreeNode } from "./instructionTree";
 
-type Shape = string | { [folder: string]: Shape[] };
+type Outline = { [folder: string]: Outline[] } | string;
 
-function shape(nodes: FileTreeNode<{ path: string }>[]): Shape[] {
+function outline(nodes: FileTreeNode<{ path: string }>[]): Outline[] {
   return nodes.map((node) =>
-    node.kind === "file" ? node.name : { [node.name]: shape(node.children) },
+    node.kind === "file" ? node.name : { [node.name]: outline(node.children) },
   );
 }
 
 describe("buildFileTree", () => {
   it("nests paths with folders before files, sorted by name", () => {
     const tree = buildFileTree(
-      [
-        "CLAUDE.md",
-        "packages/web/AGENTS.md",
-        "AGENTS.md",
-        "packages/api/AGENTS.md",
-      ].map((path) => ({ path })),
+      ["CLAUDE.md", "packages/web/AGENTS.md", "AGENTS.md", "packages/api/AGENTS.md"].map(
+        (path) => ({ path }),
+      ),
     );
-    expect(shape(tree)).toEqual([
+
+    expect(outline(tree)).toEqual([
       { packages: [{ api: ["AGENTS.md"] }, { web: ["AGENTS.md"] }] },
       "AGENTS.md",
       "CLAUDE.md",
@@ -32,9 +31,8 @@ describe("buildFileTree", () => {
         path,
       })),
     );
-    expect(shape(tree)).toEqual([
-      { ".claude/rules": ["style.md", "testing.md"] },
-    ]);
+
+    expect(outline(tree)).toEqual([{ ".claude/rules": ["style.md", "testing.md"] }]);
     expect(tree[0].path).toBe(".claude/rules");
   });
 

@@ -1,12 +1,18 @@
 import type { ProjectAgentTarget } from "./tauri";
 
-const PROJECT_EXPORT_AGENT_PRIORITY = ["claude_code", "codex", "cursor", "gemini_cli", "github_copilot"];
+const PROJECT_EXPORT_AGENT_PRIORITY = [
+  "claude_code",
+  "codex",
+  "cursor",
+  "gemini_cli",
+  "github_copilot",
+];
 
 // Keys of project agents that can actually receive skills right now: both
 // installed on disk and enabled by the user. Used everywhere export targets
 // are derived so disabled/uninstalled agents never get project-local skills.
 export function enabledInstalledAgentKeys(targets: ProjectAgentTarget[]): string[] {
-  return targets.filter((target) => target.installed && target.enabled).map((target) => target.key);
+  return targets.flatMap((target) => (target.installed && target.enabled ? [target.key] : []));
 }
 
 // The project's selected agents that can receive skills right now. A project
@@ -21,5 +27,6 @@ export function getDefaultExportAgents(targets: ProjectAgentTarget[]): string[] 
   // when any priority agent was on).
   const prioritized = PROJECT_EXPORT_AGENT_PRIORITY.filter((key) => availableKeys.has(key));
   const rest = enabledKeys.filter((key) => !prioritized.includes(key));
+
   return Array.from(new Set([...prioritized, ...rest]));
 }
