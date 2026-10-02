@@ -601,6 +601,22 @@ mod tests {
         assert_eq!(dto.update_status, "up_to_date");
     }
 
+    /// #502: `npm install` in a local skill's source is not an update.
+    #[test]
+    fn a_local_source_with_only_installed_dependencies_is_up_to_date() {
+        let repo = test_repo();
+        let body = "---\nname: skill-1\n---\nbody\n";
+        insert_local_skill(&repo, "skill-1", body, body);
+        let deps = repo._tmp.path().join("skill-1-source/node_modules/pkg");
+        fs::create_dir_all(&deps).unwrap();
+        fs::write(deps.join("index.js"), "module.exports = 1;\n").unwrap();
+
+        let dto =
+            check_skill_update_internal_with_remote(&repo.store, "skill-1", true, None).unwrap();
+
+        assert_eq!(dto.update_status, "up_to_date");
+    }
+
     /// A vanished library copy still has an update to offer. This is a
     /// regression guard on the end-to-end path, not proof of the empty-tree
     /// guard itself — a non-empty source cannot collide with an empty library,

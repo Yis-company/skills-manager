@@ -19,14 +19,8 @@ import { HostBadge } from "../../components/HostBadge";
 import { useApp } from "../../context/AppContext";
 import { listenOnActiveHost } from "../../lib/hostEvents";
 import * as api from "../../lib/tauri";
-import { cn } from "../../utils";
-import {
-  ACTION_BUTTON_CLASS,
-  compactHomePath,
-  FIELD_CLASS,
-  pickDirectory,
-  SEGMENTED_BUTTON_CLASS,
-} from "./shared";
+import { cn, compactHomePath } from "../../utils";
+import { ACTION_BUTTON_CLASS, FIELD_CLASS, pickDirectory, SEGMENTED_BUTTON_CLASS } from "./shared";
 
 export function LibrarySection() {
   const { t } = useTranslation();

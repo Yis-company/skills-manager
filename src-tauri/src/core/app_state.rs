@@ -5,8 +5,8 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 
 use super::{
-    central_repo, scenario_service, skill_store::SkillStore, sync_engine, sync_metadata,
-    tool_adapters, tool_service,
+    central_repo, scenario_service, skill_metadata, skill_store::SkillStore, sync_engine,
+    sync_metadata, tool_adapters, tool_service,
 };
 
 /// Per-stage timings collected during `initialize_store`. The struct is
@@ -57,6 +57,67 @@ pub fn initialize_store() -> Result<(Arc<SkillStore>, StartupTimings)> {
 
 pub fn initialize_cli_store() -> Result<Arc<SkillStore>> {
     initialize_store_inner(false, false).map(|(store, _)| store)
+}
+
+fn reindex_or_rebuild_metadata(store: &SkillStore) -> Result<()> {
+    let Err(err) = sync_metadata::reindex_from_metadata(store) else {
+        return Ok(());
+    };
+    // #421: empty skill metadata used to abort every launch. When the
+    // database still holds a library whose directories all exist, it is the
+    // better record: rebuild the metadata from it. Otherwise keep refusing —
+    // starting with an empty library would let the auto backup commit that
+    // emptiness.
+    if err.is::<sync_metadata::EmptySkillMetadata>() && db_library_is_intact(store) {
+        central_repo::record_startup_error(format!(
+            "sync metadata: {err}; rebuilt it from the database"
+        ));
+        return sync_metadata::write_all_from_db(store)
+            .context("Failed to rebuild sync metadata from the database");
+    }
+    Err(err.context("Failed to reindex from sync metadata"))
+}
+
+/// The database can stand in for empty metadata only if it covers the whole
+/// library: non-empty, every record's directory exists, and every skill
+/// directory in the central repo has a record.
+fn db_library_is_intact(store: &SkillStore) -> bool {
+    let Ok(skills) = store.get_all_skills() else {
+        return false;
+    };
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let mut recorded = std::collections::HashSet::new();
+    for skill in &skills {
+        let path = Path::new(&skill.central_path);
+        if !path.is_dir() {
+            return false;
+        }
+        recorded.insert(canon(path));
+    }
+    if recorded.is_empty() {
+        return false;
+    }
+    let mut walk = walkdir::WalkDir::new(central_repo::skills_dir())
+        .min_depth(1)
+        .max_depth(6)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            name != ".git" && name != ".skills-manager"
+        });
+    while let Some(entry) = walk.next() {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        if entry.file_type().is_dir() && skill_metadata::is_valid_skill_dir(entry.path()) {
+            if !recorded.contains(&canon(entry.path())) {
+                return false;
+            }
+            // A skill's own subfolders are its content, not more skills.
+            walk.skip_current_dir();
+        }
+    }
+    true
 }
 
 /// For CLI `repo set-path` / `reset-path` and host `serve` startup: carry out a
@@ -115,8 +176,7 @@ fn initialize_store_inner(
 
     if sync_metadata::metadata_exists() {
         let step = Instant::now();
-        sync_metadata::reindex_from_metadata(&store)
-            .context("Failed to reindex from sync metadata")?;
+        reindex_or_rebuild_metadata(&store)?;
         timings.reindex_from_metadata_ms = Some(step.elapsed().as_millis());
     }
 
@@ -329,6 +389,92 @@ fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<usiz
 mod tests {
     use super::*;
     use crate::core::skill_store::{ProjectRecord, SkillRecord, SkillTargetRecord};
+
+    fn skill_at(id: &str, central_path: &Path) -> SkillRecord {
+        SkillRecord {
+            id: id.into(),
+            name: id.into(),
+            description: None,
+            source_type: "local".into(),
+            source_ref: None,
+            source_ref_resolved: None,
+            source_subpath: None,
+            source_branch: None,
+            source_revision: None,
+            remote_revision: None,
+            central_path: central_path.to_string_lossy().into(),
+            content_hash: None,
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+            status: "ok".into(),
+            update_status: "unknown".into(),
+            last_checked_at: None,
+            last_check_error: None,
+        }
+    }
+
+    /// Central repo with one skill dir and metadata whose skills/ is empty (#421).
+    fn library_with_empty_metadata() -> (
+        std::sync::MutexGuard<'static, ()>,
+        tempfile::TempDir,
+        SkillStore,
+        PathBuf,
+    ) {
+        let lock = central_repo::test_base_dir_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("repo");
+        central_repo::set_test_base_dir_override(Some(base.clone()));
+        let skill_dir = central_repo::skills_dir().join("s");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: s\n---\n").unwrap();
+        std::fs::create_dir_all(sync_metadata::metadata_dir().join("skills")).unwrap();
+        std::fs::write(sync_metadata::metadata_dir().join("schema.json"), "{}").unwrap();
+        let store = SkillStore::new(&base.join("test.db")).unwrap();
+        (lock, tmp, store, skill_dir)
+    }
+
+    #[test]
+    fn empty_metadata_is_rebuilt_from_an_intact_database() {
+        let (_lock, _tmp, store, skill_dir) = library_with_empty_metadata();
+        store.insert_skill(&skill_at("s", &skill_dir)).unwrap();
+
+        reindex_or_rebuild_metadata(&store).unwrap();
+
+        assert!(store.get_skill_by_id("s").unwrap().is_some());
+        let written = std::fs::read_dir(sync_metadata::metadata_dir().join("skills"))
+            .unwrap()
+            .count();
+        assert_eq!(written, 1, "metadata rebuilt from the database");
+        central_repo::set_test_base_dir_override(None);
+    }
+
+    #[test]
+    fn empty_metadata_still_refuses_when_the_database_is_empty_or_stale() {
+        let (_lock, tmp, store, _skill_dir) = library_with_empty_metadata();
+        let err = reindex_or_rebuild_metadata(&store).unwrap_err();
+        assert!(err.is::<sync_metadata::EmptySkillMetadata>());
+
+        store
+            .insert_skill(&skill_at("gone", &tmp.path().join("missing")))
+            .unwrap();
+        assert!(reindex_or_rebuild_metadata(&store).is_err());
+        central_repo::set_test_base_dir_override(None);
+    }
+
+    #[test]
+    fn empty_metadata_still_refuses_when_the_database_misses_a_skill_dir() {
+        let (_lock, _tmp, store, skill_dir) = library_with_empty_metadata();
+        store.insert_skill(&skill_at("s", &skill_dir)).unwrap();
+        let unrecorded = central_repo::skills_dir().join("cat/b");
+        std::fs::create_dir_all(&unrecorded).unwrap();
+        std::fs::write(unrecorded.join("SKILL.md"), "---\nname: b\n---\n").unwrap();
+
+        let err = reindex_or_rebuild_metadata(&store).unwrap_err();
+        assert!(err.is::<sync_metadata::EmptySkillMetadata>());
+        assert!(store.get_skill_by_id("s").unwrap().is_some());
+        central_repo::set_test_base_dir_override(None);
+    }
 
     #[test]
     #[cfg(unix)]

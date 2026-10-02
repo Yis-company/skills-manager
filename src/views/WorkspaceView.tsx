@@ -55,16 +55,12 @@ import {
 import { matchesTagFilter } from "../lib/tagFilter";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectSkill } from "../lib/tauri";
-import { cn } from "../utils";
+import { cn, compactHomePath } from "../utils";
 import {
   CODING_WORKSPACE_CONFIG,
   LOBSTER_WORKSPACE_CONFIG,
   type WorkspaceConfig,
 } from "./workspaceConfigs";
-
-function compactHomePath(path: string) {
-  return path.replace(/^\/Users\/[^/]+/, "~");
-}
 
 interface WorkspaceSkillCardTag {
   label: string;

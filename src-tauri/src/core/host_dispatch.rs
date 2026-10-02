@@ -207,7 +207,7 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.req("key")?,
         )),
         "add_custom_tool" => reply(tools::add_custom_tool_core(
-            ctx,
+            &ctx.store,
             a.req("key")?,
             a.req("displayName")?,
             a.req("skillsDir")?,

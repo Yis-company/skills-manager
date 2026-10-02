@@ -33,8 +33,8 @@ import { ToggleSwitch } from "../../components/ToggleSwitch";
 import { useApp } from "../../context/AppContext";
 import { getErrorMessage } from "../../lib/error";
 import * as api from "../../lib/tauri";
-import { cn } from "../../utils";
-import { ACTION_BUTTON_CLASS, compactHomePath, FIELD_CLASS, pickDirectory } from "./shared";
+import { cn, compactHomePath } from "../../utils";
+import { ACTION_BUTTON_CLASS, FIELD_CLASS, pickDirectory } from "./shared";
 
 interface AgentGroupDndProps {
   items: api.ToolInfo[];

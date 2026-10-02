@@ -125,6 +125,7 @@ export function Sidebar() {
     presets,
     viewedPreset,
     setViewedPresetId,
+    closeSkillDetail,
     refreshPresets,
     refreshManagedSkills,
     projects,
@@ -143,6 +144,7 @@ export function Sidebar() {
     id: string;
     name: string;
     icon?: null | string;
+    description?: null | string;
   } | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
@@ -280,6 +282,7 @@ export function Sidebar() {
   ] as const;
 
   const handleSwitchPreset = (id: string) => {
+    closeSkillDetail();
     setViewedPresetId(id);
 
     if (location.pathname !== "/my-skills") {
@@ -298,19 +301,14 @@ export function Sidebar() {
     toast.success(t("preset.created"));
   };
 
-  const handleRenamePreset = async (newName: string, icon?: string) => {
+  const handleRenamePreset = async (newName: string, icon?: string, description?: string) => {
     if (!renameTarget) return;
     const preset = presets.find((s) => s.id === renameTarget.id);
 
     if (!preset) return;
-    await api.updatePreset(
-      renameTarget.id,
-      newName,
-      preset.description || undefined,
-      icon || preset.icon || undefined,
-    );
+    await api.updatePreset(renameTarget.id, newName, description, icon || preset.icon || undefined);
     await refreshPresets();
-    toast.success(t("preset.renamed"));
+    toast.success(t("preset.updated"));
   };
 
   const handleDeletePreset = async () => {
@@ -327,7 +325,7 @@ export function Sidebar() {
 
   const handleRenameClick = (
     event: React.MouseEvent,
-    preset: { id: string; name: string; icon?: null | string },
+    preset: { id: string; name: string; icon?: null | string; description?: null | string },
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -599,6 +597,7 @@ export function Sidebar() {
                             <>
                               <button
                                 onClick={() => handleSwitchPreset(preset.id)}
+                                title={preset.description || undefined}
                                 className={cn(
                                   "flex min-w-0 flex-1 items-center gap-2 px-2.5 py-[7px] text-left text-sm leading-5 outline-none",
                                   isActive
@@ -648,7 +647,7 @@ export function Sidebar() {
                                 <button
                                   onClick={(event) => handleRenameClick(event, preset)}
                                   className="rounded p-1 text-faint transition hover:text-secondary"
-                                  title={t("common.rename")}
+                                  title={t("common.edit")}
                                 >
                                   <Pencil className="h-3 w-3" />
                                 </button>
@@ -902,6 +901,7 @@ export function Sidebar() {
         open={renameTarget !== null}
         currentName={renameTarget?.name || ""}
         currentIcon={renameTarget?.icon}
+        currentDescription={renameTarget?.description}
         onClose={() => setRenameTarget(null)}
         onRename={handleRenamePreset}
       />
