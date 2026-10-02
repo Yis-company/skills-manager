@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
 import { Loader2, Terminal, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+
 import { useApp } from "../context/AppContext";
 import { getErrorMessage } from "../lib/error";
 import * as api from "../lib/tauri";
@@ -12,8 +13,8 @@ const PROMPT_SETTING_KEY = "agent_control_setup_prompt";
 
 /** The library skill that teaches an agent to drive Skills Manager. */
 const SKILL_NAME = "manage-skills";
-const SKILL_SOURCE =
-  "https://github.com/A-and-Brian/skills-manager/tree/main/skills/manage-skills";
+
+const SKILL_SOURCE = "https://github.com/A-and-Brian/skills-manager/tree/main/skills/manage-skills";
 
 /**
  * One-time pointer to a capability nothing else advertises: an agent can drive
@@ -40,13 +41,10 @@ export function AgentControlSetupCard() {
 
   const alreadyInstalled = useMemo(
     () => managedSkills.some((skill) => skill.name === SKILL_NAME),
-    [managedSkills]
+    [managedSkills],
   );
 
-  const candidates = useMemo(
-    () => tools.filter((tool) => tool.installed && tool.enabled),
-    [tools]
-  );
+  const candidates = useMemo(() => tools.filter((tool) => tool.installed && tool.enabled), [tools]);
 
   useEffect(() => {
     void api
@@ -64,22 +62,26 @@ export function AgentControlSetupCard() {
 
   const toggle = (key: string) =>
     setSelected((current) =>
-      current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
+      current.includes(key) ? current.filter((k) => k !== key) : [...current, key],
     );
 
   const enable = async () => {
     if (busy || selected.length === 0) return;
     setBusy(true);
+
     try {
       await api.installGit(SKILL_SOURCE);
       const skills = await api.getManagedSkills();
       const installed = skills.find((skill) => skill.name === SKILL_NAME);
+
       if (!installed) {
         throw new Error(t("agentControl.errorNotFound"));
       }
+
       for (const key of selected) {
         await api.syncSkillToTool(installed.id, key);
       }
+
       toast.success(t("agentControl.done", { count: selected.length }));
       await api.setSettings(PROMPT_SETTING_KEY, "installed").catch(() => {});
     } catch (e) {
@@ -100,12 +102,8 @@ export function AgentControlSetupCard() {
           <Terminal className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-[14px] font-semibold text-primary">
-            {t("agentControl.title")}
-          </h3>
-          <p className="mt-0.5 text-[12px] leading-5 text-muted">
-            {t("agentControl.body")}
-          </p>
+          <h3 className="text-[14px] font-semibold text-primary">{t("agentControl.title")}</h3>
+          <p className="mt-0.5 text-[12px] leading-5 text-muted">{t("agentControl.body")}</p>
 
           {expanded && (
             <div className="mt-3">
@@ -113,6 +111,7 @@ export function AgentControlSetupCard() {
               <div className="flex flex-wrap gap-1.5">
                 {candidates.map((tool) => {
                   const on = selected.includes(tool.key);
+
                   return (
                     <button
                       key={tool.key}
@@ -151,10 +150,7 @@ export function AgentControlSetupCard() {
                 : t("agentControl.confirm", { count: selected.length })}
             </button>
           ) : (
-            <button
-              onClick={() => setExpanded(true)}
-              className="app-button-secondary h-[34px]"
-            >
+            <button onClick={() => setExpanded(true)} className="app-button-secondary h-[34px]">
               {t("agentControl.cta")}
             </button>
           )}

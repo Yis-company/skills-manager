@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { UNTAGGED_FILTER } from "./skillTags";
 import { matchesTagFilter, replaceTagInFilters, tagSuggestions } from "./tagFilter";
 

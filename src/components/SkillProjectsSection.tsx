@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, FolderOpen, Loader2, Plus } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+
+import { getErrorMessage } from "../lib/error";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, Project, ProjectAgentTarget } from "../lib/tauri";
 import { cn } from "../utils";
-import { getErrorMessage } from "../lib/error";
 import { AgentIcon } from "./AgentIcon";
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
   onChanged?: () => void;
 }
 
-type RowState = "loading" | "installed" | "available" | "error";
+type RowState = "available" | "error" | "installed";
 
 interface RowData {
   state: RowState;
@@ -31,25 +32,11 @@ interface RowData {
 export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<Record<string, RowData>>({});
-  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [pendingKey, setPendingKey] = useState<null | string>(null);
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setRows((prev) => {
-      const next: Record<string, RowData> = {};
-      for (const p of projects) {
-        next[p.id] = prev[p.id] ?? {
-          state: "loading",
-          installedAgents: [],
-          installedPathByAgent: {},
-          vendoredAgents: [],
-          dirNamesByAgent: {},
-          targets: [],
-        };
-      }
-      return next;
-    });
 
     const loadAll = async () => {
       const results = await Promise.all(
@@ -60,78 +47,104 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
               api.getProjectAgentTargets(p.id),
               api.slugifySkillNames([skill.name]),
             ]);
+
             const installedPathByAgent: Record<string, string> = {};
             const vendoredAgents: string[] = [];
+
             for (const projectSkill of projectSkills) {
               if (projectSkill.center_skill_id === skill.id) {
                 installedPathByAgent[projectSkill.agent] = projectSkill.relative_path;
+
                 if (projectSkill.vendored) vendoredAgents.push(projectSkill.agent);
               }
             }
+
             const installedAgents = Object.keys(installedPathByAgent);
             const dirNamesByAgent: Record<string, string[]> = {};
+
             for (const projectSkill of projectSkills) {
               if (!dirNamesByAgent[projectSkill.agent]) {
                 dirNamesByAgent[projectSkill.agent] = [];
               }
+
               dirNamesByAgent[projectSkill.agent].push(projectSkill.relative_path.toLowerCase());
             }
-            return [p.id, {
-              state: installedAgents.length > 0 ? "installed" : "available",
-              installedAgents: Array.from(new Set(installedAgents)),
-              installedPathByAgent,
-              vendoredAgents,
-              dirNamesByAgent,
-              targets,
-              dirName: dirNames[0]?.toLowerCase(),
-            }] as const;
+
+            return [
+              p.id,
+              {
+                state: installedAgents.length > 0 ? "installed" : "available",
+                installedAgents: Array.from(new Set(installedAgents)),
+                installedPathByAgent,
+                vendoredAgents,
+                dirNamesByAgent,
+                targets,
+                dirName: dirNames[0]?.toLowerCase(),
+              },
+            ] as const;
           } catch (e) {
-            return [p.id, {
-              state: "error" as const,
-              installedAgents: [],
-              installedPathByAgent: {},
-              vendoredAgents: [],
-              dirNamesByAgent: {},
-              targets: [],
-              error: getErrorMessage(e, ""),
-            }] as const;
+            return [
+              p.id,
+              {
+                state: "error" as const,
+                installedAgents: [],
+                installedPathByAgent: {},
+                vendoredAgents: [],
+                dirNamesByAgent: {},
+                targets: [],
+                error: getErrorMessage(e, ""),
+              },
+            ] as const;
           }
         }),
       );
+
       if (cancelled) return;
       setRows(Object.fromEntries(results));
     };
+
     void loadAll();
+
     return () => {
       cancelled = true;
     };
   }, [projects, skill.id, skill.name]);
 
   const installedCount = useMemo(
-    () => Object.values(rows).filter((r) => r.state === "installed").length,
-    [rows],
+    () => projects.filter((p) => rows[p.id]?.state === "installed").length,
+    [projects, rows],
   );
 
   const getAgentState = (row: RowData | undefined, target: ProjectAgentTarget) => {
-    if (!row || row.state === "loading") return "loading";
+    if (!row) return "loading";
+
     if (row.state === "error") return "error";
+
     if (!target.installed || !target.enabled) return "unavailable";
+
     if (row.installedAgents.includes(target.key)) return "installed";
+
     if (row.dirName && (row.dirNamesByAgent[target.key] ?? []).includes(row.dirName)) {
       return "conflict";
     }
+
     return "available";
   };
 
   const handleAdd = async (project: Project, target: ProjectAgentTarget) => {
     const row = rows[project.id];
+
     if (!row || getAgentState(row, target) !== "available") return;
+
     if (!target.installed || !target.enabled) {
       toast.error(t("addFromLibrary.errors.noTarget"));
+
       return;
     }
+
     const key = `${project.id}:${target.key}`;
     setPendingKey(key);
+
     try {
       await api.exportSkillToProject(skill.id, project.id, [target.key]);
       toast.success(
@@ -163,10 +176,12 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
   const handleRemove = async (project: Project, target: ProjectAgentTarget) => {
     const row = rows[project.id];
     const relativePath = row?.installedPathByAgent[target.key];
+
     // Only the project view deletes a vendored copy, as the whole skill.
     if (!row || !relativePath || row.vendoredAgents.includes(target.key)) return;
     const key = `${project.id}:${target.key}`;
     setPendingKey(key);
+
     try {
       await api.deleteProjectSkill(project.id, relativePath, target.key);
       toast.success(
@@ -180,8 +195,9 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
       delete nextPathByAgent[target.key];
       const removedDirName = relativePath.toLowerCase();
       const nextDirNamesByAgent = { ...row.dirNamesByAgent };
-      nextDirNamesByAgent[target.key] = (nextDirNamesByAgent[target.key] ?? [])
-        .filter((dirName) => dirName !== removedDirName);
+      nextDirNamesByAgent[target.key] = (nextDirNamesByAgent[target.key] ?? []).filter(
+        (dirName) => dirName !== removedDirName,
+      );
       setRows((prev) => ({
         ...prev,
         [project.id]: {
@@ -208,9 +224,7 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
     <div className="mb-4 rounded-xl border border-border-subtle">
       <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-6 py-2.5 text-[13px]">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="font-medium text-secondary">
-            {t("addFromLibrary.projectsTitle")}
-          </span>
+          <span className="font-medium text-secondary">{t("addFromLibrary.projectsTitle")}</span>
           <span className="rounded-full border border-border-subtle bg-surface px-2 py-0.5 text-[12px] text-muted">
             {t("addFromLibrary.projectsSummary", {
               installed: installedCount,
@@ -231,13 +245,17 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
       <div className="grid grid-cols-1 gap-1.5 px-3 py-3 md:grid-cols-2">
         {visibleProjects.map((project) => {
           const row = rows[project.id];
+
           // Offer the project's own agents, plus any the skill is already on
           // so it can still be taken off them.
-          const activeTargets = row?.targets.filter((target) => (
-            target.installed &&
-            target.enabled &&
-            (target.selected || row.installedAgents.includes(target.key))
-          )) ?? [];
+          const activeTargets =
+            row?.targets.filter(
+              (target) =>
+                target.installed &&
+                target.enabled &&
+                (target.selected || row.installedAgents.includes(target.key)),
+            ) ?? [];
+
           return (
             <div
               key={project.id}
@@ -249,85 +267,98 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
               <div className="flex min-w-0 flex-col gap-1.5">
                 <div className="flex min-w-0 items-center gap-2">
                   <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1 truncate font-medium text-secondary" title={project.name}>
+                  <span
+                    className="min-w-0 flex-1 truncate font-medium text-secondary"
+                    title={project.name}
+                  >
                     {project.name}
                   </span>
-                  {!row || row.state === "loading" ? (
+                  {!row ? (
                     <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-faint" />
                   ) : row.state === "error" ? (
-                    <span
-                      className="shrink-0 text-rose-500"
-                      title={row.error || t("common.error")}
-                    >
+                    <span className="shrink-0 text-rose-500" title={row.error || t("common.error")}>
                       {t("common.error")}
                     </span>
                   ) : null}
                 </div>
-                {row && row.state !== "loading" && row.state !== "error" && (
+                {row && row.state !== "error" && (
                   <div className="flex min-w-0 flex-wrap gap-1.5">
                     {activeTargets.length === 0 ? (
-                      <span className="text-[12px] text-muted">{t("addFromLibrary.status.unavailable")}</span>
-                    ) : activeTargets.map((target) => {
-                      const agentState = getAgentState(row, target);
-                      const agentPending = pendingKey === `${project.id}:${target.key}`;
-                      // Removing a vendored copy would take the files every
-                      // other agent links to, so it cannot be clicked off here.
-                      const locked = agentState === "installed" && row.vendoredAgents.includes(target.key);
-                      const label =
-                        locked
+                      <span className="text-[12px] text-muted">
+                        {t("addFromLibrary.status.unavailable")}
+                      </span>
+                    ) : (
+                      activeTargets.map((target) => {
+                        const agentState = getAgentState(row, target);
+                        const agentPending = pendingKey === `${project.id}:${target.key}`;
+
+                        // Removing a vendored copy would take the files every
+                        // other agent links to, so it cannot be clicked off here.
+                        const locked =
+                          agentState === "installed" && row.vendoredAgents.includes(target.key);
+
+                        const label = locked
                           ? t("project.vendored.badge")
                           : agentState === "installed"
                             ? t("addFromLibrary.installedShort")
                             : agentState === "conflict"
                               ? t("addFromLibrary.status.conflict")
                               : t("addFromLibrary.add");
-                      const title =
-                        locked
+
+                        const title = locked
                           ? t("project.vendored.lockedReason", { agents: target.display_name })
                           : agentState === "conflict"
                             ? t("addFromLibrary.tooltip.conflict")
                             : agentState === "installed"
                               ? t("addFromLibrary.tooltip.remove")
                               : target.display_name;
-                      return (
-                        <button
-                          key={target.key}
-                          type="button"
-                          title={title}
-                          onClick={() => {
-                            if (agentState === "installed") {
-                              void handleRemove(project, target);
-                            } else {
-                              void handleAdd(project, target);
+
+                        return (
+                          <button
+                            key={target.key}
+                            type="button"
+                            title={title}
+                            onClick={() => {
+                              if (agentState === "installed") {
+                                void handleRemove(project, target);
+                              } else {
+                                void handleAdd(project, target);
+                              }
+                            }}
+                            disabled={
+                              locked ||
+                              (agentState !== "available" && agentState !== "installed") ||
+                              agentPending
                             }
-                          }}
-                          disabled={locked || (agentState !== "available" && agentState !== "installed") || agentPending}
-                          className={cn(
-                            "inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[12px] font-semibold transition-colors disabled:cursor-default",
-                            agentState === "available" && "text-accent-light hover:bg-accent-bg",
-                            agentState === "installed" && "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-                            agentState === "installed" && !locked && "hover:bg-emerald-500/15",
-                            agentState === "conflict" && "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-                          )}
-                        >
-                          <AgentIcon
-                            agentKey={target.key}
-                            displayName={target.display_name}
-                            className="h-3.5 w-3.5 rounded-[4px]"
-                          />
-                          {agentPending ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : agentState === "installed" ? (
-                            <CheckCircle2 className="h-3 w-3" />
-                          ) : agentState === "conflict" ? (
-                            <AlertTriangle className="h-3 w-3" />
-                          ) : (
-                            <Plus className="h-3 w-3" />
-                          )}
-                          <span>{label}</span>
-                        </button>
-                      );
-                    })}
+                            className={cn(
+                              "inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[12px] font-semibold transition-colors disabled:cursor-default",
+                              agentState === "available" && "text-accent-light hover:bg-accent-bg",
+                              agentState === "installed" &&
+                                "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+                              agentState === "installed" && !locked && "hover:bg-emerald-500/15",
+                              agentState === "conflict" &&
+                                "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+                            )}
+                          >
+                            <AgentIcon
+                              agentKey={target.key}
+                              displayName={target.display_name}
+                              className="h-3.5 w-3.5 rounded-[4px]"
+                            />
+                            {agentPending ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : agentState === "installed" ? (
+                              <CheckCircle2 className="h-3 w-3" />
+                            ) : agentState === "conflict" ? (
+                              <AlertTriangle className="h-3 w-3" />
+                            ) : (
+                              <Plus className="h-3 w-3" />
+                            )}
+                            <span>{label}</span>
+                          </button>
+                        );
+                      })
+                    )}
                   </div>
                 )}
               </div>

@@ -1,4 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
 import {
   Calendar,
   Check,
@@ -11,15 +10,17 @@ import {
   RefreshCw,
   UploadCloud,
 } from "lucide-react";
+import type { Dispatch, SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
+
 import type { ScanResult } from "../lib/tauri";
+import { cn } from "../utils";
 import { StatusBanner } from "./StatusBanner";
 
 interface LocalInstallTabProps {
-  scanResult: ScanResult | null;
+  scanResult: null | ScanResult;
   scanLoading: boolean;
-  localError: string | null;
+  localError: null | string;
   /** Source paths of discovered skills being imported. */
   importingPaths: Set<string>;
   importingAll: boolean;
@@ -58,7 +59,7 @@ export function LocalInstallTab({
   const pendingGroups = scanGroups.filter((group) => !group.imported);
 
   return (
-    <div className="space-y-4 pb-8 animate-in fade-in duration-300">
+    <div className="animate-in fade-in space-y-4 pb-8 duration-300">
       <section className="app-panel overflow-hidden">
         <div className="border-b border-border-subtle px-4 py-3.5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -79,11 +80,7 @@ export function LocalInstallTab({
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={onInstallFolder}
-                className="app-button-primary"
-              >
+              <button type="button" onClick={onInstallFolder} className="app-button-primary">
                 <FolderUp className="h-4 w-4" />
                 {t("install.local.selectFolder")}
               </button>
@@ -106,7 +103,6 @@ export function LocalInstallTab({
             </div>
           </div>
         </div>
-
       </section>
 
       {localError ? (
@@ -183,6 +179,7 @@ export function LocalInstallTab({
                   const isImporting = !!primaryPath && importingPaths.has(primaryPath);
                   const isRenaming = group.name in renameEditing;
                   const importName = renameEditing[group.name] ?? group.name;
+
                   const foundDate = new Date(group.found_at).toLocaleDateString(undefined, {
                     year: "numeric",
                     month: "short",
@@ -190,7 +187,10 @@ export function LocalInstallTab({
                   });
 
                   return (
-                    <article key={group.name} className="border-b border-border-subtle last:border-b-0">
+                    <article
+                      key={group.name}
+                      className="border-b border-border-subtle last:border-b-0"
+                    >
                       <div className="flex items-start justify-between gap-3 px-3 py-2">
                         <div className="min-w-0 flex-1 space-y-1.5">
                           <div className="flex min-w-0 items-center gap-2">
@@ -199,13 +199,17 @@ export function LocalInstallTab({
                                 autoFocus
                                 value={renameEditing[group.name]}
                                 onChange={(e) =>
-                                  setRenameEditing((prev) => ({ ...prev, [group.name]: e.target.value }))
+                                  setRenameEditing((prev) => ({
+                                    ...prev,
+                                    [group.name]: e.target.value,
+                                  }))
                                 }
                                 onBlur={() => {
                                   if (!renameEditing[group.name]?.trim()) {
                                     setRenameEditing((prev) => {
                                       const next = { ...prev };
                                       delete next[group.name];
+
                                       return next;
                                     });
                                   }
@@ -215,10 +219,11 @@ export function LocalInstallTab({
                                     setRenameEditing((prev) => {
                                       const next = { ...prev };
                                       delete next[group.name];
+
                                       return next;
                                     });
                                   } else if (e.key === "Enter") {
-                                    (e.target as HTMLInputElement).blur();
+                                    e.currentTarget.blur();
                                   }
                                 }}
                                 className="min-w-0 max-w-[220px] rounded border border-accent-border bg-surface px-1.5 py-0.5 text-[13px] font-semibold text-secondary outline-none focus:ring-1 focus:ring-accent"
@@ -231,7 +236,10 @@ export function LocalInstallTab({
                             {!group.imported && !isRenaming ? (
                               <button
                                 onClick={() =>
-                                  setRenameEditing((prev) => ({ ...prev, [group.name]: group.name }))
+                                  setRenameEditing((prev) => ({
+                                    ...prev,
+                                    [group.name]: group.name,
+                                  }))
                                 }
                                 className="shrink-0 rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
                                 title={t("install.scan.rename")}
@@ -285,7 +293,7 @@ export function LocalInstallTab({
                       </div>
 
                       {otherLocations.length > 0 ? (
-                        <div className="border-t border-border-subtle bg-surface/40 px-3 py-1.5">
+                        <div className="bg-surface/40 border-t border-border-subtle px-3 py-1.5">
                           <div className="space-y-1">
                             {otherLocations.map((location) => (
                               <div key={location.id} className="flex min-w-0 items-center gap-2">

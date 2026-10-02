@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, FileText, Folder } from "lucide-react";
-import { cn } from "../utils";
+import { useMemo, useState } from "react";
+
 import { buildFileTree, type FileTreeNode } from "../lib/instructionTree";
+import { cn } from "../utils";
 
 export interface InstructionTreeFile {
   path: string;
@@ -24,18 +25,23 @@ export function InstructionFileTree<T extends InstructionTreeFile>({
 }) {
   const tree = useMemo(() => buildFileTree(files), [files]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
   const toggle = (path: string) =>
     setCollapsed((old) => {
       const next = new Set(old);
+
       if (!next.delete(path)) next.add(path);
+
       return next;
     });
 
   const render = (nodes: FileTreeNode<T>[], depth: number) =>
     nodes.map((node) => {
       const indent = { paddingLeft: `${12 + depth * 14}px` };
+
       if (node.kind === "folder") {
         const open = !collapsed.has(node.path);
+
         return (
           <div key={node.path} role="treeitem" aria-expanded={open}>
             <button
@@ -51,7 +57,9 @@ export function InstructionFileTree<T extends InstructionTreeFile>({
           </div>
         );
       }
+
       const file = node.file;
+
       return (
         <button
           key={node.path}
@@ -74,9 +82,7 @@ export function InstructionFileTree<T extends InstructionTreeFile>({
             {file.managed ? " · managed" : " · local"}
             {file.conflict ? " · changed since deployment" : ""}
             {file.symlink_target && (
-              <span className="block break-all">
-                Link target: {file.symlink_target}
-              </span>
+              <span className="block break-all">Link target: {file.symlink_target}</span>
             )}
           </span>
         </button>

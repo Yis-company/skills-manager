@@ -1,76 +1,91 @@
-import { useState, useEffect } from "react";
+import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import {
+  Check,
+  Copy,
+  ExternalLink,
   Folder,
   FolderOpen,
   Link as LinkIcon,
-  Copy,
   Loader2,
-  ExternalLink,
   Pencil,
   RotateCcw,
   X,
-  Check,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
-import { cn, compactHomePath } from "../../utils";
-import * as api from "../../lib/tauri";
-import { listenOnActiveHost } from "../../lib/hostEvents";
-import { useApp } from "../../context/AppContext";
+
 import { HostBadge } from "../../components/HostBadge";
-import {
-  ACTION_BUTTON_CLASS,
-  FIELD_CLASS,
-  SEGMENTED_BUTTON_CLASS,
-  pickDirectory,
-} from "./shared";
+import { useApp } from "../../context/AppContext";
+import { listenOnActiveHost } from "../../lib/hostEvents";
+import * as api from "../../lib/tauri";
+import { cn, compactHomePath } from "../../utils";
+import { ACTION_BUTTON_CLASS, FIELD_CLASS, pickDirectory, SEGMENTED_BUTTON_CLASS } from "./shared";
 
 export function LibrarySection() {
   const { t } = useTranslation();
   const { activeHost, reconnectHost } = useApp();
+
   // A host picks up a new library path when its session starts again.
   const announceRepoPathChange = () => {
     if (!activeHost) {
       toast.info(t("settings.repoPathRestartNotice"));
+
       return;
     }
+
     toast.info(t("settings.repoPathReconnectNotice", { name: activeHost.name }), {
       duration: 10000,
       action: { label: t("remoteSession.reconnect"), onClick: () => void reconnectHost() },
     });
   };
+
   const [syncMode, setSyncMode] = useState("symlink");
   const [defaultDeployMode, setDefaultDeployMode] = useState<api.ProjectDeployMode>("link");
   const [openingRepo, setOpeningRepo] = useState(false);
   const [centralRepoPath, setCentralRepoPath] = useState("");
-  const [centralRepoPathOverride, setCentralRepoPathOverride] = useState<string | null>(null);
-  const [centralRepoPendingPath, setCentralRepoPendingPath] = useState<string | null>(null);
+  const [centralRepoPathOverride, setCentralRepoPathOverride] = useState<null | string>(null);
+  const [centralRepoPendingPath, setCentralRepoPendingPath] = useState<null | string>(null);
   const [editingCentralRepoPath, setEditingCentralRepoPath] = useState(false);
   const [centralRepoPathInput, setCentralRepoPathInput] = useState("");
   const [savingCentralRepoPath, setSavingCentralRepoPath] = useState(false);
   const [autoUpdateInterval, setAutoUpdateInterval] = useState("off");
   const [autoUpdateApply, setAutoUpdateApply] = useState("off");
-  const [autoUpdateLastRun, setAutoUpdateLastRun] = useState<string | null>(null);
+  const [autoUpdateLastRun, setAutoUpdateLastRun] = useState<null | string>(null);
 
   useEffect(() => {
-    api.getSettings("sync_mode").then((v) => { if (v) setSyncMode(v); });
-    api.getSettings("default_project_deploy_mode").then((v) => { if (v === "copy") setDefaultDeployMode(v); });
-    api.getCentralRepoPath().then((path) => {
-      setCentralRepoPath(path);
-      setCentralRepoPathInput(path);
-    }).catch(() => {});
-    api.getCentralRepoPathOverride().then(setCentralRepoPathOverride).catch(() => {});
-    api.getCentralRepoPendingPath().then(setCentralRepoPendingPath).catch(() => {});
-    api.getSettings("auto_update_check_interval").then((v) => { if (v) setAutoUpdateInterval(v); });
-    api.getSettings("auto_update_apply").then((v) => { if (v) setAutoUpdateApply(v); });
+    api.getSettings("sync_mode").then((v) => {
+      if (v) setSyncMode(v);
+    });
+    api.getSettings("default_project_deploy_mode").then((v) => {
+      if (v === "copy") setDefaultDeployMode(v);
+    });
+    api
+      .getCentralRepoPath()
+      .then((path) => {
+        setCentralRepoPath(path);
+        setCentralRepoPathInput(path);
+      })
+      .catch(() => {});
+    api
+      .getCentralRepoPathOverride()
+      .then(setCentralRepoPathOverride)
+      .catch(() => {});
+    api
+      .getCentralRepoPendingPath()
+      .then(setCentralRepoPendingPath)
+      .catch(() => {});
+    api.getSettings("auto_update_check_interval").then((v) => {
+      if (v) setAutoUpdateInterval(v);
+    });
+    api.getSettings("auto_update_apply").then((v) => {
+      if (v) setAutoUpdateApply(v);
+    });
     // The `skills-auto-updated` listener may populate this concurrently, so
     // keep whichever timestamp is newer rather than blindly overwriting.
     api.getSettings("auto_update_last_run_at").then((v) => {
       if (!v) return;
-      setAutoUpdateLastRun((prev) =>
-        prev && Date.parse(prev) >= Date.parse(v) ? prev : v
-      );
+      setAutoUpdateLastRun((prev) => (prev && Date.parse(prev) >= Date.parse(v) ? prev : v));
     });
   }, []);
 
@@ -82,6 +97,7 @@ export function LibrarySection() {
   const handleDefaultDeployModeChange = async (mode: api.ProjectDeployMode) => {
     const previous = defaultDeployMode;
     setDefaultDeployMode(mode);
+
     try {
       await api.setSettings("default_project_deploy_mode", mode);
     } catch {
@@ -119,11 +135,15 @@ export function LibrarySection() {
 
   const handleSaveCentralRepoPath = async () => {
     const trimmed = centralRepoPathInput.trim();
+
     if (!trimmed) {
       toast.error(t("settings.repoPathEmpty"));
+
       return;
     }
+
     setSavingCentralRepoPath(true);
+
     try {
       const nextPath = await api.setCentralRepoPath(trimmed);
       setCentralRepoPathOverride(nextPath);
@@ -131,6 +151,7 @@ export function LibrarySection() {
       setCentralRepoPendingPath(pendingPath);
       setEditingCentralRepoPath(false);
       toast.success(t("settings.repoPathSaved"));
+
       if (pendingPath) announceRepoPathChange();
     } catch (error) {
       toast.error(String(error));
@@ -141,6 +162,7 @@ export function LibrarySection() {
 
   const handleResetCentralRepoPath = async () => {
     setSavingCentralRepoPath(true);
+
     try {
       const nextPath = await api.setCentralRepoPath(null);
       setCentralRepoPathOverride(null);
@@ -149,6 +171,7 @@ export function LibrarySection() {
       setCentralRepoPendingPath(pendingPath);
       setEditingCentralRepoPath(false);
       toast.success(t("settings.repoPathReset"));
+
       if (pendingPath) announceRepoPathChange();
     } catch (error) {
       toast.error(String(error));
@@ -174,16 +197,20 @@ export function LibrarySection() {
   // avoids a follow-up DB roundtrip.
   useEffect(() => {
     type AutoUpdatedPayload = { ran_at?: string };
-    const unlistenPromise = listenOnActiveHost<AutoUpdatedPayload>("skills-auto-updated", (event) => {
-      const ranAt = event.payload?.ran_at;
-      if (ranAt) {
-        setAutoUpdateLastRun(ranAt);
-      }
-    });
+
+    const unlistenPromise = listenOnActiveHost<AutoUpdatedPayload>(
+      "skills-auto-updated",
+      (event) => {
+        const ranAt = event.payload?.ran_at;
+
+        if (ranAt) {
+          setAutoUpdateLastRun(ranAt);
+        }
+      },
+    );
+
     return () => {
-      unlistenPromise
-        .then((unlisten) => unlisten())
-        .catch(() => {});
+      unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
     };
   }, []);
 
@@ -193,6 +220,7 @@ export function LibrarySection() {
     { value: "6h", label: t("settings.autoUpdate.interval6h") },
     { value: "24h", label: t("settings.autoUpdate.interval24h") },
   ] as const;
+
   const autoUpdateApplyOptions = [
     { value: "off", label: t("settings.autoUpdate.applyOff") },
     { value: "on", label: t("settings.autoUpdate.applyOn") },
@@ -208,7 +236,7 @@ export function LibrarySection() {
         {t("settings.categories.library")}
         <HostBadge />
       </h2>
-      <div className="app-panel overflow-hidden divide-y divide-border-faint">
+      <div className="app-panel divide-y divide-border-faint overflow-hidden">
         {/* Repo path */}
         <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
           <div className="min-w-0 flex-1">
@@ -226,6 +254,7 @@ export function LibrarySection() {
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void handleSaveCentralRepoPath();
+
                     if (e.key === "Escape") {
                       setCentralRepoPathInput(centralRepoPathOverride ?? centralRepoPath);
                       setEditingCentralRepoPath(false);
@@ -234,11 +263,13 @@ export function LibrarySection() {
                 />
                 <button
                   type="button"
-                  onClick={() => pickDirectory(setCentralRepoPathInput, centralRepoPathInput.trim())}
+                  onClick={() =>
+                    pickDirectory(setCentralRepoPathInput, centralRepoPathInput.trim())
+                  }
                   disabled={savingCentralRepoPath}
                   className={`${ACTION_BUTTON_CLASS} text-muted hover:text-secondary`}
                 >
-                  <FolderOpen className="w-3 h-3" />
+                  <FolderOpen className="h-3 w-3" />
                   {t("settings.selectFolder")}
                 </button>
                 <button
@@ -248,9 +279,9 @@ export function LibrarySection() {
                   className={`${ACTION_BUTTON_CLASS} border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/5 dark:text-emerald-400`}
                 >
                   {savingCentralRepoPath ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <Check className="w-3 h-3" />
+                    <Check className="h-3 w-3" />
                   )}
                   {t("common.save")}
                 </button>
@@ -263,13 +294,15 @@ export function LibrarySection() {
                   disabled={savingCentralRepoPath}
                   className={`${ACTION_BUTTON_CLASS} text-muted hover:text-secondary`}
                 >
-                  <X className="w-3 h-3" />
+                  <X className="h-3 w-3" />
                 </button>
               </div>
             ) : (
               <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-border-subtle bg-background px-3 py-2">
-                <Folder className="w-3 h-3 text-muted" />
-                <span className="truncate text-[13px] font-mono text-tertiary">{displayedRepoPath}</span>
+                <Folder className="h-3 w-3 text-muted" />
+                <span className="truncate font-mono text-[13px] text-tertiary">
+                  {displayedRepoPath}
+                </span>
               </div>
             )}
             {!editingCentralRepoPath && (
@@ -278,7 +311,7 @@ export function LibrarySection() {
                 onClick={handleStartEditCentralRepoPath}
                 className={`${ACTION_BUTTON_CLASS} text-muted hover:text-secondary`}
               >
-                <Pencil className="w-3 h-3" />
+                <Pencil className="h-3 w-3" />
                 {t("settings.changeDir")}
               </button>
             )}
@@ -290,9 +323,9 @@ export function LibrarySection() {
                 className={`${ACTION_BUTTON_CLASS} text-muted hover:text-secondary`}
               >
                 {savingCentralRepoPath ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
-                  <RotateCcw className="w-3 h-3" />
+                  <RotateCcw className="h-3 w-3" />
                 )}
                 {t("settings.resetPath")}
               </button>
@@ -305,7 +338,7 @@ export function LibrarySection() {
                 disabled={!centralRepoPath}
                 className={`${ACTION_BUTTON_CLASS} border-accent-border bg-accent-bg text-accent hover:border-accent hover:bg-accent-bg`}
               >
-                <Copy className="w-3 h-3" />
+                <Copy className="h-3 w-3" />
                 {t("settings.copyPath")}
               </button>
             ) : (
@@ -317,13 +350,13 @@ export function LibrarySection() {
                   ACTION_BUTTON_CLASS,
                   "border-accent-border bg-accent-bg text-accent",
                   "hover:border-accent hover:bg-accent-bg",
-                  openingRepo && "cursor-wait opacity-70"
+                  openingRepo && "cursor-wait opacity-70",
                 )}
               >
                 {openingRepo ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
-                  <ExternalLink className="w-3 h-3" />
+                  <ExternalLink className="h-3 w-3" />
                 )}
                 {t("settings.openInFinder")}
               </button>
@@ -360,19 +393,23 @@ export function LibrarySection() {
               onClick={() => handleSyncModeChange("symlink")}
               className={cn(
                 SEGMENTED_BUTTON_CLASS,
-                syncMode === "symlink" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
+                syncMode === "symlink"
+                  ? "bg-surface-active text-secondary"
+                  : "text-muted hover:text-tertiary",
               )}
             >
-              <LinkIcon className="w-3 h-3" /> {t("settings.symlink")}
+              <LinkIcon className="h-3 w-3" /> {t("settings.symlink")}
             </button>
             <button
               onClick={() => handleSyncModeChange("copy")}
               className={cn(
                 SEGMENTED_BUTTON_CLASS,
-                syncMode === "copy" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
+                syncMode === "copy"
+                  ? "bg-surface-active text-secondary"
+                  : "text-muted hover:text-tertiary",
               )}
             >
-              <Copy className="w-3 h-3" /> {t("settings.copy")}
+              <Copy className="h-3 w-3" /> {t("settings.copy")}
             </button>
           </div>
         </div>
@@ -380,9 +417,12 @@ export function LibrarySection() {
         {/* Default deploy mode for new projects */}
         <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
           <div className="min-w-0 flex-1">
-            <h3 className="text-[14px] font-semibold text-primary">{t("settings.defaultProjectMode")}</h3>
+            <h3 className="text-[14px] font-semibold text-primary">
+              {t("settings.defaultProjectMode")}
+            </h3>
             <p className="mt-0.5 text-[12px] text-muted">
-              {t("settings.defaultProjectModeDesc")} {t(`project.settings.modeHint.${defaultDeployMode}`)}
+              {t("settings.defaultProjectModeDesc")}{" "}
+              {t(`project.settings.modeHint.${defaultDeployMode}`)}
             </p>
           </div>
           <div className="app-segmented flex-wrap bg-background">
@@ -392,7 +432,9 @@ export function LibrarySection() {
                 onClick={() => handleDefaultDeployModeChange(mode)}
                 className={cn(
                   SEGMENTED_BUTTON_CLASS,
-                  defaultDeployMode === mode ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
+                  defaultDeployMode === mode
+                    ? "bg-surface-active text-secondary"
+                    : "text-muted hover:text-tertiary",
                 )}
               >
                 {t(`project.settings.mode.${mode}`)}
@@ -427,7 +469,7 @@ export function LibrarySection() {
                   SEGMENTED_BUTTON_CLASS,
                   autoUpdateInterval === option.value
                     ? "bg-surface-active text-secondary"
-                    : "text-muted hover:text-tertiary"
+                    : "text-muted hover:text-tertiary",
                 )}
               >
                 {option.label}
@@ -441,9 +483,7 @@ export function LibrarySection() {
             <h3 className="text-[14px] font-semibold text-primary">
               {t("settings.autoUpdate.applyLabel")}
             </h3>
-            <p className="mt-0.5 text-[12px] text-muted">
-              {t("settings.autoUpdate.applyDesc")}
-            </p>
+            <p className="mt-0.5 text-[12px] text-muted">{t("settings.autoUpdate.applyDesc")}</p>
           </div>
           <div className="app-segmented flex-wrap bg-background">
             {autoUpdateApplyOptions.map((option) => (
@@ -456,7 +496,7 @@ export function LibrarySection() {
                   SEGMENTED_BUTTON_CLASS,
                   autoUpdateApply === option.value
                     ? "bg-surface-active text-secondary"
-                    : "text-muted hover:text-tertiary"
+                    : "text-muted hover:text-tertiary",
                 )}
               >
                 {option.label}

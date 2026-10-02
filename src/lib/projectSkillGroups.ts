@@ -1,5 +1,6 @@
-import type { ProjectSkill } from "./tauri";
+import { isString } from "../utils";
 import { matchesTagFilter } from "./tagFilter";
+import type { ProjectSkill } from "./tauri";
 
 /** The folder a copy-mode project vendors its skills into. */
 export const VENDORED_SKILLS_DIR = ".agents/skills";
@@ -10,7 +11,7 @@ export interface ProjectSkillGroup {
   name: string;
   dir_name: string;
   relative_path: string;
-  description: string | null;
+  description: null | string;
   files: string[];
   variants: ProjectSkill[];
   /**
@@ -19,7 +20,7 @@ export interface ProjectSkillGroup {
    */
   effectiveVariants: ProjectSkill[];
   /** The vendored copy other agents' links read, whatever the deploy mode. */
-  vendoredVariant: ProjectSkill | null;
+  vendoredVariant: null | ProjectSkill;
   enabledCount: number;
   totalCount: number;
   primaryVariant: ProjectSkill;
@@ -38,16 +39,22 @@ const STATUS_PRIORITY: ProjectSkill["sync_status"][] = [
 ];
 
 function getGroupStatus(variants: ProjectSkill[]): ProjectSkill["sync_status"] {
-  return STATUS_PRIORITY.find((status) => variants.some((variant) => variant.sync_status === status))
-    ?? "project_only";
+  return (
+    STATUS_PRIORITY.find((status) => variants.some((variant) => variant.sync_status === status)) ??
+    "project_only"
+  );
 }
 
 const byName = (a: string, b: string) => a.localeCompare(b);
 
 /** Whether an agent's project folder is `.agents/skills` itself; `.` segments do not count. */
 export function isVendoredSkillsDir(relativeSkillsDir: string): boolean {
-  return relativeSkillsDir.split(/[\\/]/).filter((part) => part && part !== ".").join("/")
-    === VENDORED_SKILLS_DIR;
+  return (
+    relativeSkillsDir
+      .split(/[\\/]/)
+      .filter((part) => part && part !== ".")
+      .join("/") === VENDORED_SKILLS_DIR
+  );
 }
 
 /**
@@ -60,6 +67,7 @@ export function isVendoredSkillsDir(relativeSkillsDir: string): boolean {
  */
 export function groupProjectSkills(skills: ProjectSkill[]): ProjectSkillGroup[] {
   const buckets = new Map<string, ProjectSkill[]>();
+
   for (const skill of skills) {
     const key = skill.relative_path.toLowerCase();
     buckets.set(key, [...(buckets.get(key) ?? []), skill]);
@@ -70,6 +78,7 @@ export function groupProjectSkills(skills: ProjectSkill[]): ProjectSkillGroup[] 
     const owned = variants.filter((variant) => !variant.alias_of);
     const effectiveVariants = owned.length > 0 ? owned : variants;
     const first = found[0];
+
     return {
       id,
       name: first.name,
@@ -86,7 +95,9 @@ export function groupProjectSkills(skills: ProjectSkill[]): ProjectSkillGroup[] 
       status: getGroupStatus(found),
       tags: Array.from(new Set(found.flatMap((variant) => variant.tags))).sort(byName),
       centerSkillIds: Array.from(
-        new Set(found.flatMap((variant) => (variant.center_skill_id ? [variant.center_skill_id] : [])))
+        new Set(
+          found.flatMap((variant) => (variant.center_skill_id ? [variant.center_skill_id] : [])),
+        ),
       ).sort(byName),
       agentsOverridden: found.some((variant) => variant.agents_overridden),
     };
@@ -106,14 +117,16 @@ export function isProjectUpdatable(status: ProjectSkill["sync_status"]): boolean
 /** Library updates are safe only for deployed copies where the library is newer. */
 export function getProjectUpdateCandidates(skill: ProjectSkillGroup): ProjectSkill[] {
   return skill.effectiveVariants.filter(
-    (variant) => variant.in_center && isProjectUpdatable(variant.sync_status)
+    (variant) => variant.in_center && isProjectUpdatable(variant.sync_status),
   );
 }
 
 /** Deployed copies with local changes are skipped until the user reviews them. */
 export function getProjectUpdateReviewCount(skill: ProjectSkillGroup): number {
   return skill.effectiveVariants.filter(
-    (variant) => variant.in_center && (variant.sync_status === "project_newer" || variant.sync_status === "diverged")
+    (variant) =>
+      variant.in_center &&
+      (variant.sync_status === "project_newer" || variant.sync_status === "diverged"),
   ).length;
 }
 
@@ -125,47 +138,58 @@ export function getAssignedAgents(variants: ProjectSkill[]) {
 export function getAgentDotTargets(variants: ProjectSkill[]) {
   const seen = new Set<string>();
   const targets: { key: string; display_name: string }[] = [];
+
   for (const v of variants) {
     if (!seen.has(v.agent)) {
       seen.add(v.agent);
       targets.push({ key: v.agent, display_name: v.agent_display_name });
     }
   }
+
   return targets;
 }
 
 export interface ProjectSkillFilter {
   search: string;
   tags: ReadonlySet<string>;
-  mode: "all" | "enabled" | "disabled";
+  mode: "all" | "disabled" | "enabled";
 }
 
 /** Search by name or description, then the tag pills, then enabled on any agent or none. */
 export function filterProjectSkillGroups(groups: ProjectSkillGroup[], filter: ProjectSkillFilter) {
   const search = filter.search.toLowerCase();
+
   return groups.filter((skill) => {
     const matchesSearch =
       skill.name.toLowerCase().includes(search) ||
       (skill.description || "").toLowerCase().includes(search);
+
     if (!matchesSearch) return false;
+
     if (!matchesTagFilter(skill.tags, filter.tags)) return false;
+
     if (filter.mode === "enabled") return skill.enabledCount > 0;
+
     if (filter.mode === "disabled") return skill.enabledCount === 0;
+
     return true;
   });
 }
 
 /** The stored last-used agent list, or null when missing or malformed. Non-string entries are dropped. */
-export function parseLastUsedAgents(raw: string | null): string[] | null {
+export function parseLastUsedAgents(raw: null | string): null | string[] {
   if (!raw) return null;
+
   try {
     const parsed = JSON.parse(raw);
+
     if (Array.isArray(parsed)) {
-      return parsed.filter((x): x is string => typeof x === "string");
+      return parsed.filter(isString);
     }
   } catch {
     // fall through
   }
+
   return null;
 }
 
@@ -177,12 +201,14 @@ export function parseLastUsedAgents(raw: string | null): string[] | null {
 export function pickInitialAgents(
   available: ReadonlySet<string>,
   selected: string[],
-  lastUsed: string[] | null,
+  lastUsed: null | string[],
   hasAgentSelection: boolean,
 ): string[] {
   if (!hasAgentSelection && lastUsed && lastUsed.length > 0) {
     const filtered = lastUsed.filter((k) => available.has(k));
+
     if (filtered.length > 0) return filtered;
   }
+
   return selected.filter((k) => available.has(k));
 }

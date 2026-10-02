@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { CloseActionDialog } from "./CloseActionDialog";
+import { useEffect, useState } from "react";
+
 import * as api from "../lib/tauri";
+import { CloseActionDialog } from "./CloseActionDialog";
 
 export function CloseActionGuard() {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -9,16 +10,26 @@ export function CloseActionGuard() {
   useEffect(() => {
     const unlisten = listen("window-close-requested", async () => {
       const tray = await api.getSettings("show_tray_icon");
+
       const trayEnabled = (() => {
         const normalized = (tray ?? "true").trim().toLowerCase();
-        return !(normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off");
+
+        return !(
+          normalized === "false" ||
+          normalized === "0" ||
+          normalized === "no" ||
+          normalized === "off"
+        );
       })();
+
       if (!trayEnabled) {
         api.appExit();
+
         return;
       }
 
       const pref = await api.getSettings("close_action");
+
       if (pref === "close") {
         api.appExit();
       } else if (pref === "hide") {
@@ -27,6 +38,7 @@ export function CloseActionGuard() {
         setDialogOpen(true);
       }
     });
+
     return () => {
       unlisten.then((fn) => fn());
     };
@@ -34,12 +46,14 @@ export function CloseActionGuard() {
 
   const handleClose = async (remember: boolean) => {
     setDialogOpen(false);
+
     if (remember) await api.setSettings("close_action", "close");
     api.appExit();
   };
 
   const handleHide = async (remember: boolean) => {
     setDialogOpen(false);
+
     if (remember) await api.setSettings("close_action", "hide");
     await api.hideToTray();
   };

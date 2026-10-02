@@ -1,14 +1,15 @@
-import { invoke as tauriInvoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
+import { type InvokeArgs, type InvokeOptions, invoke as tauriInvoke } from "@tauri-apps/api/core";
+
 import { isHostScoped } from "./hostScope";
 
 /** The remote host the app operates on, or null for this computer. */
-let activeHostId: string | null = null;
+let activeHostId: null | string = null;
 
-export function setActiveHostId(hostId: string | null) {
+export function setActiveHostId(hostId: null | string) {
   activeHostId = hostId;
 }
 
-export function getActiveHostId(): string | null {
+export function getActiveHostId(): null | string {
   return activeHostId;
 }
 
@@ -19,6 +20,7 @@ export function getActiveHostId(): string | null {
  */
 export function trackHost(): () => boolean {
   const hostId = activeHostId;
+
   return () => activeHostId === hostId;
 }
 
@@ -28,14 +30,15 @@ export function trackHost(): () => boolean {
  * bound to the same machine. Commands outside the host scope still run here.
  */
 export function invokeHost<T>(
-  hostId: string | null,
+  hostId: null | string,
   command: string,
   args?: InvokeArgs,
-  options?: InvokeOptions
+  options?: InvokeOptions,
 ): Promise<T> {
   if (hostId !== null && isHostScoped(command, args)) {
     return tauriInvoke<T>("remote_invoke", { hostId, command, args: args ?? {} }, options);
   }
+
   return tauriInvoke<T>(command, args, options);
 }
 
@@ -51,6 +54,10 @@ export function invoke<T>(command: string, args?: InvokeArgs, options?: InvokeOp
 /** `invoke` on this computer whatever host is active, for the few reads that
  *  must stay local although the same command is routed, like the proxy the
  *  app updater uses. */
-export function invokeLocal<T>(command: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> {
+export function invokeLocal<T>(
+  command: string,
+  args?: InvokeArgs,
+  options?: InvokeOptions,
+): Promise<T> {
   return tauriInvoke<T>(command, args, options);
 }

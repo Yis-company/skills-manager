@@ -1,13 +1,16 @@
 import { History, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "../utils";
+
 import { displaySnapshotLabel } from "../lib/backupFormat";
 import type { GitBackupStatus, GitBackupVersion } from "../lib/tauri";
+import { cn } from "../utils";
 
 function formatDateTime(iso: string) {
   if (!iso) return "-";
   const date = new Date(iso);
+
   if (Number.isNaN(date.getTime())) return iso;
+
   return date.toLocaleString();
 }
 
@@ -16,7 +19,7 @@ interface BackupHistoryListProps {
   versionsLoading: boolean;
   gitStatus: GitBackupStatus | null;
   /** Tag of the snapshot being restored, if any. */
-  restoringVersionTag: string | null;
+  restoringVersionTag: null | string;
   onRefresh: () => void;
   /** Ask to restore a snapshot; the view confirms first. */
   onRestore: (tag: string) => void;
@@ -52,7 +55,9 @@ export function BackupHistoryList({
       </div>
 
       {versionsLoading ? (
-        <div className="py-6 text-center text-[13px] text-muted">{t("mySkills.gitVersionLoading")}</div>
+        <div className="py-6 text-center text-[13px] text-muted">
+          {t("mySkills.gitVersionLoading")}
+        </div>
       ) : versions.length === 0 ? (
         <div className="rounded-md border border-dashed border-border-subtle py-6 text-center text-[13px] text-muted">
           {t("backup.history.empty")}
@@ -68,7 +73,9 @@ export function BackupHistoryList({
                 <div className="truncate text-[13px] font-semibold text-secondary">
                   {displaySnapshotLabel(version.tag)}
                 </div>
-                <div className="truncate text-[12px] text-muted">{version.message || version.commit}</div>
+                <div className="truncate text-[12px] text-muted">
+                  {version.message || version.commit}
+                </div>
                 <div className="text-[11px] text-faint">
                   {version.author ? `${version.author} · ` : ""}
                   {version.commit} · {formatDateTime(version.committed_at)}

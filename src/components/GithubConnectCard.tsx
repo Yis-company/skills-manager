@@ -1,8 +1,9 @@
-import { Copy, ExternalLink, Github, Loader2 } from "lucide-react";
 import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { Copy, ExternalLink, Github, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+
 import type { GithubDeviceFlowStart } from "../lib/tauri";
 
 const GITHUB_TOKEN_URL =
@@ -14,7 +15,7 @@ interface GithubConnectCardProps {
   /** The device-flow code being waited on, if any. */
   deviceInfo: GithubDeviceFlowStart | null;
   /** The view's in-flight action, if any; `"github"` while connecting. */
-  loading: string | null;
+  loading: null | string;
   githubRepoName: string;
   setGithubRepoName: (name: string) => void;
   /** Show the personal access token form instead of only device sign-in. */
@@ -22,8 +23,8 @@ interface GithubConnectCardProps {
   setPatMode: (patMode: boolean) => void;
   githubToken: string;
   setGithubToken: (token: string) => void;
-  githubError: string | null;
-  setGithubError: (error: string | null) => void;
+  githubError: null | string;
+  setGithubError: (error: null | string) => void;
   onDeviceFlow: () => void;
   onCancelDeviceFlow: () => void;
   onConnect: () => void;
@@ -105,8 +106,14 @@ export function GithubConnectCard({
               disabled={!!loading}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-accent-border bg-accent-dark px-3 text-[13px] font-medium text-white transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading === "github" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Github className="h-3.5 w-3.5" />}
-              {loading === "github" ? t("backup.github.connecting") : t("backup.github.deviceSignIn")}
+              {loading === "github" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Github className="h-3.5 w-3.5" />
+              )}
+              {loading === "github"
+                ? t("backup.github.connecting")
+                : t("backup.github.deviceSignIn")}
             </button>
             <input
               type="text"

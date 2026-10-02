@@ -1,6 +1,7 @@
+import { Plus, Tag, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X, Plus, Tag } from "lucide-react";
 import { useTranslation } from "react-i18next";
+
 import { cn } from "../utils";
 
 interface TaggableSkill {
@@ -17,7 +18,13 @@ interface Props {
   onApply: (adds: string[], removes: string[]) => Promise<void>;
 }
 
-export function BatchTagDialog({ open, skills, allTags, note, onClose, onApply }: Props) {
+export function BatchTagDialog({ open, ...props }: Props) {
+  if (!open) return null;
+
+  return <BatchTagDialogContent {...props} />;
+}
+
+function BatchTagDialogContent({ skills, allTags, note, onClose, onApply }: Omit<Props, "open">) {
   const { t } = useTranslation();
   const [adds, setAdds] = useState<string[]>([]);
   const [removes, setRemoves] = useState<string[]>([]);
@@ -25,69 +32,74 @@ export function BatchTagDialog({ open, skills, allTags, note, onClose, onApply }
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (open) {
-      setAdds([]);
-      setRemoves([]);
-      setInput("");
-    }
-  }, [open]);
-
   // Escape closes the dialog; the tag input handles its own Escape first.
   useEffect(() => {
-    if (!open || loading) return;
+    if (loading) return;
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+
       if (e.target === inputRef.current) return;
       onClose();
     };
+
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, loading, onClose]);
+  }, [loading, onClose]);
 
   const tagCounts = useMemo(() => {
     const counts = new Map<string, number>();
+
     for (const skill of skills) {
       for (const tag of skill.tags) {
         counts.set(tag, (counts.get(tag) || 0) + 1);
       }
     }
+
     return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
   }, [skills]);
 
   const suggestions = useMemo(() => {
     const needle = input.trim().toLowerCase();
     const existing = new Set(tagCounts.map(([t]) => t));
-    return allTags.filter((tag) => {
-      if (adds.includes(tag)) return false;
-      if (existing.has(tag)) return false;
-      if (!needle) return true;
-      return tag.toLowerCase().includes(needle);
-    }).slice(0, 8);
-  }, [allTags, adds, input, tagCounts]);
 
-  if (!open) return null;
+    return allTags
+      .filter((tag) => {
+        if (adds.includes(tag)) return false;
+
+        if (existing.has(tag)) return false;
+
+        if (!needle) return true;
+
+        return tag.toLowerCase().includes(needle);
+      })
+      .slice(0, 8);
+  }, [allTags, adds, input, tagCounts]);
 
   const addTag = (value: string) => {
     const trimmed = value.trim();
+
     if (!trimmed) return;
+
     if (!adds.includes(trimmed)) setAdds([...adds, trimmed]);
     setInput("");
     inputRef.current?.focus();
   };
 
   const toggleRemove = (tag: string) => {
-    setRemoves((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
-    );
+    setRemoves((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   };
 
   const handleApply = async () => {
     if (adds.length === 0 && removes.length === 0) {
       onClose();
+
       return;
     }
+
     setLoading(true);
+
     try {
       await onApply(adds, removes);
       onClose();
@@ -101,17 +113,17 @@ export function BatchTagDialog({ open, skills, allTags, note, onClose, onApply }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-surface border border-border rounded-xl w-full max-w-[440px] p-5 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[13px] font-semibold text-primary flex items-center gap-2">
-            <Tag className="w-4 h-4 text-accent-light" />
+      <div className="relative w-full max-w-[440px] rounded-xl border border-border bg-surface p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-[13px] font-semibold text-primary">
+            <Tag className="h-4 w-4 text-accent-light" />
             {t("mySkills.batchTagDialog.title", { count: skills.length })}
           </h2>
           <button
             onClick={onClose}
-            className="text-muted hover:text-secondary p-1 rounded transition-colors outline-none"
+            className="rounded p-1 text-muted outline-none transition-colors hover:text-secondary"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
@@ -123,7 +135,7 @@ export function BatchTagDialog({ open, skills, allTags, note, onClose, onApply }
 
         <div className="space-y-4">
           <div>
-            <label className="block text-[12px] font-medium text-tertiary mb-1.5">
+            <label className="mb-1.5 block text-[12px] font-medium text-tertiary">
               {t("mySkills.batchTagDialog.currentTags")}
             </label>
             {tagCounts.length === 0 ? (
@@ -132,6 +144,7 @@ export function BatchTagDialog({ open, skills, allTags, note, onClose, onApply }
               <div className="flex flex-wrap gap-1.5">
                 {tagCounts.map(([tag, count]) => {
                   const marked = removes.includes(tag);
+
                   return (
                     <button
                       key={tag}
@@ -140,7 +153,7 @@ export function BatchTagDialog({ open, skills, allTags, note, onClose, onApply }
                         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-medium transition-colors",
                         marked
                           ? "bg-red-500/15 text-red-500 line-through"
-                          : "bg-accent-bg text-accent-light hover:bg-red-500/10 hover:text-red-500"
+                          : "bg-accent-bg text-accent-light hover:bg-red-500/10 hover:text-red-500",
                       )}
                       title={
                         marked
@@ -161,7 +174,7 @@ export function BatchTagDialog({ open, skills, allTags, note, onClose, onApply }
           </div>
 
           <div>
-            <label className="block text-[12px] font-medium text-tertiary mb-1.5">
+            <label className="mb-1.5 block text-[12px] font-medium text-tertiary">
               {t("mySkills.batchTagDialog.toAdd")}
             </label>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -227,14 +240,14 @@ export function BatchTagDialog({ open, skills, allTags, note, onClose, onApply }
         <div className="flex justify-end gap-2 pt-5">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-lg text-[13px] font-medium text-tertiary hover:text-secondary hover:bg-surface-hover transition-colors outline-none"
+            className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-tertiary outline-none transition-colors hover:bg-surface-hover hover:text-secondary"
           >
             {t("common.cancel")}
           </button>
           <button
             onClick={handleApply}
             disabled={loading || !hasChanges}
-            className="px-3 py-1.5 rounded-lg bg-accent-dark hover:bg-accent text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-accent-border outline-none"
+            className="rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? t("common.loading") : t("mySkills.batchTagDialog.apply")}
           </button>

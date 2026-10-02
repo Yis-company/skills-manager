@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "sortImports": {},
+  "sortTailwindcss": { "config": "./tailwind.config.js" },
+  "ignorePatterns": [
+    "**/*.md",
+    "**/*.toml",
+    "pnpm-lock.yaml",
+    "public/**",
+    "reference/**",
+    "src-tauri/target/**",
+    "src-tauri/gen/**",
+    "e2e/test-results",
+    "e2e/playwright-report",
+    ".agent/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".continue/**",
+    ".cursor/**",
+    ".gemini/**",
+    ".opencode/**",
+    ".pi/**",
+    ".roo/**",
+    ".serena/**",
+    ".windsurf/**",
+    "tools/oxlint/anti-slop/**"
+  ]
+}

@@ -1,5 +1,6 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
+
 import en from "./en.json";
 
 // English is the only shipped locale. Strings still go through i18next so a

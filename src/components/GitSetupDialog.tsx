@@ -1,6 +1,7 @@
+import { Cloud, Upload, X } from "lucide-react";
 import { useState } from "react";
-import { X, Cloud, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
+
 import { cn } from "../utils";
 
 interface Props {
@@ -23,12 +24,14 @@ export function GitSetupDialog({ open, hasRemote, onClose, onClone, onInit }: Pr
   const handleConfirm = async () => {
     if (!hasRemote) return;
     setLoading(true);
+
     try {
       if (choice === "clone") {
         await onClone();
       } else {
         await onInit();
       }
+
       onClose();
     } finally {
       setLoading(false);
@@ -37,19 +40,24 @@ export function GitSetupDialog({ open, hasRemote, onClose, onClone, onInit }: Pr
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => !loading && onClose()} />
-      <div className="relative bg-surface border border-border rounded-xl w-full max-w-lg p-5 shadow-2xl">
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={() => !loading && onClose()}
+      />
+      <div className="relative w-full max-w-lg rounded-xl border border-border bg-surface p-5 shadow-2xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-[14px] font-semibold text-primary">{t("settings.gitSetupTitle")}</h2>
+            <h2 className="text-[14px] font-semibold text-primary">
+              {t("settings.gitSetupTitle")}
+            </h2>
             <p className="mt-1 text-[12px] text-muted">{t("settings.gitSetupSubtitle")}</p>
           </div>
           <button
             onClick={() => !loading && onClose()}
             disabled={loading}
-            className="text-muted hover:text-secondary p-1 rounded transition-colors outline-none"
+            className="rounded p-1 text-muted outline-none transition-colors hover:text-secondary"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
@@ -84,14 +92,14 @@ export function GitSetupDialog({ open, hasRemote, onClose, onClone, onInit }: Pr
           <button
             onClick={() => !loading && onClose()}
             disabled={loading}
-            className="px-3 py-1.5 rounded-lg text-[13px] font-medium text-tertiary hover:text-secondary hover:bg-surface-hover transition-colors outline-none disabled:opacity-50"
+            className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-tertiary outline-none transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
           >
             {t("common.cancel")}
           </button>
           <button
             onClick={handleConfirm}
             disabled={loading || !hasRemote}
-            className="px-3 py-1.5 rounded-lg bg-accent-dark hover:bg-accent text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-accent-border outline-none"
+            className="rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? t("common.loading") : t("settings.gitSetupConfirm")}
           </button>
@@ -122,17 +130,24 @@ function ChoiceCard({ icon, active, disabled, badge, title, description, onClick
         "disabled:cursor-not-allowed disabled:opacity-60",
         active
           ? "border-accent bg-accent-bg"
-          : "border-border-subtle bg-bg-secondary hover:bg-surface-hover"
+          : "border-border-subtle bg-bg-secondary hover:bg-surface-hover",
       )}
     >
       <div className="flex items-center gap-2">
-        <span className={cn("rounded-full p-1", active ? "bg-accent/20 text-accent-light" : "bg-surface text-muted")}>{icon}</span>
+        <span
+          className={cn(
+            "rounded-full p-1",
+            active ? "bg-accent/20 text-accent-light" : "bg-surface text-muted",
+          )}
+        >
+          {icon}
+        </span>
         <span className="text-[13px] font-semibold text-primary">{title}</span>
         <span className="ml-auto rounded-full border border-border-subtle bg-surface px-2 py-0.5 text-[11px] text-muted">
           {badge}
         </span>
       </div>
-      <p className="mt-1.5 pl-7 text-[12px] text-tertiary leading-relaxed">{description}</p>
+      <p className="mt-1.5 pl-7 text-[12px] leading-relaxed text-tertiary">{description}</p>
     </button>
   );
 }

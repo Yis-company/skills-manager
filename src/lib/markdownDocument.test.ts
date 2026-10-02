@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  richEditingIsLossless,
-  splitFrontmatter,
-  withTrailingNewline,
-} from "./markdownDocument";
+
+import { richEditingIsLossless, splitFrontmatter, withTrailingNewline } from "./markdownDocument";
 
 describe("splitFrontmatter", () => {
   it("separates a leading YAML block and joins back to the original", () => {
@@ -39,9 +36,7 @@ describe("richEditingIsLossless", () => {
   });
 
   it("checks only the body of a file with frontmatter", () => {
-    expect(richEditingIsLossless("---\nalwaysApply: true\n---\n# Rule\n")).toBe(
-      true,
-    );
+    expect(richEditingIsLossless("---\nalwaysApply: true\n---\n# Rule\n")).toBe(true);
   });
 
   it("rejects syntax the rich editor would rewrite", () => {

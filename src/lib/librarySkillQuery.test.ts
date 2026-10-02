@@ -1,23 +1,24 @@
 import { describe, expect, it } from "vitest";
-import type { ManagedSkill } from "./tauri";
+
 import {
   canRefreshSkill,
   filterLibrarySkills,
   groupLibrarySkills,
   libraryCreators,
   libraryFilterCounts,
+  type LibraryQuery,
   NO_TAG_GROUP,
   NOT_DEPLOYED,
   skillDisplayNames,
   sortLibrarySkills,
   togglableSkills,
   updateFilterOf,
-  type LibraryQuery,
 } from "./librarySkillQuery";
 import { LOCAL_CREATOR } from "./skillCreator";
 import { UNTAGGED_FILTER } from "./skillTags";
+import type { ManagedSkill } from "./tauri";
 
-function skill(overrides: Partial<ManagedSkill> & { id: string }): ManagedSkill {
+function skill(overrides: { id: string } & Partial<ManagedSkill>): ManagedSkill {
   return {
     name: overrides.id,
     description: null,
@@ -45,7 +46,15 @@ function skill(overrides: Partial<ManagedSkill> & { id: string }): ManagedSkill 
 }
 
 function target(tool: string) {
-  return { id: `${tool}-t`, skill_id: "", tool, target_path: "", mode: "symlink", status: "synced", synced_at: null };
+  return {
+    id: `${tool}-t`,
+    skill_id: "",
+    tool,
+    target_path: "",
+    mode: "symlink",
+    status: "synced",
+    synced_at: null,
+  };
 }
 
 function query(overrides: Partial<LibraryQuery> = {}): LibraryQuery {
@@ -64,42 +73,102 @@ function query(overrides: Partial<LibraryQuery> = {}): LibraryQuery {
 
 const displayName = (s: ManagedSkill) => s.name;
 
-const docx = skill({ id: "docx", tags: ["docs", "office"], targets: [target("claude"), target("codex")], update_status: "up_to_date", updated_at: 30, created_at: 1 });
-const pdf = skill({ id: "pdf", tags: ["docs"], targets: [target("claude")], update_status: "update_available", updated_at: 10, created_at: 3 });
-const notes = skill({ id: "notes", source_type: "local", update_status: "up_to_date", updated_at: 20, created_at: 2 });
+const docx = skill({
+  id: "docx",
+  tags: ["docs", "office"],
+  targets: [target("claude"), target("codex")],
+  update_status: "up_to_date",
+  updated_at: 30,
+  created_at: 1,
+});
+
+const pdf = skill({
+  id: "pdf",
+  tags: ["docs"],
+  targets: [target("claude")],
+  update_status: "update_available",
+  updated_at: 10,
+  created_at: 3,
+});
+
+const notes = skill({
+  id: "notes",
+  source_type: "local",
+  update_status: "up_to_date",
+  updated_at: 20,
+  created_at: 2,
+});
 
 const byZed = skill({ id: "zed-pdf", source_type: "skillssh", source_ref: "zed/tools/pdf" });
+
 const byAcme = skill({ id: "acme-lint", source_ref: "https://github.com/Acme/lint.git" });
-const byAcmeToo = skill({ id: "acme-docs", source_type: "skillssh", source_ref: "acme/docs/readme" });
+
+const byAcmeToo = skill({
+  id: "acme-docs",
+  source_type: "skillssh",
+  source_ref: "acme/docs/readme",
+});
+
 const byJane = skill({ id: "jane-notes", source_type: "local", author: "Jane" });
+
 const nobody = skill({ id: "scratch", source_type: "import" });
+
 const creatorSkills = [nobody, byZed, byJane, byAcme, byAcmeToo];
 
 describe("filterLibrarySkills", () => {
   it("filters by agent, with a bucket for undeployed skills", () => {
     const all = [docx, pdf, notes];
-    expect(filterLibrarySkills(all, query({ agents: new Set(["codex"]) }), displayName).map((s) => s.id)).toEqual(["docx"]);
-    expect(filterLibrarySkills(all, query({ agents: new Set([NOT_DEPLOYED]) }), displayName).map((s) => s.id)).toEqual(["notes"]);
+    expect(
+      filterLibrarySkills(all, query({ agents: new Set(["codex"]) }), displayName).map((s) => s.id),
+    ).toEqual(["docx"]);
+    expect(
+      filterLibrarySkills(all, query({ agents: new Set([NOT_DEPLOYED]) }), displayName).map(
+        (s) => s.id,
+      ),
+    ).toEqual(["notes"]);
   });
 
   it("filters by update bucket, treating local sources as their own bucket", () => {
     const all = [docx, pdf, notes];
     expect(updateFilterOf(notes)).toBe("local");
-    expect(updateFilterOf({ ...notes, update_status: "update_available" })).toBe("update_available");
-    expect(updateFilterOf({ ...notes, source_type: "import", update_status: "source_missing" })).toBe("error");
+    expect(updateFilterOf({ ...notes, update_status: "update_available" })).toBe(
+      "update_available",
+    );
+    expect(
+      updateFilterOf({ ...notes, source_type: "import", update_status: "source_missing" }),
+    ).toBe("error");
     expect(updateFilterOf({ ...notes, update_status: "local_only" })).toBe("local");
-    expect(filterLibrarySkills(all, query({ updates: new Set(["update_available"]) }), displayName).map((s) => s.id)).toEqual(["pdf"]);
-    expect(filterLibrarySkills(all, query({ updates: new Set(["local", "up_to_date"]) }), displayName).map((s) => s.id)).toEqual(["docx", "notes"]);
+    expect(
+      filterLibrarySkills(all, query({ updates: new Set(["update_available"]) }), displayName).map(
+        (s) => s.id,
+      ),
+    ).toEqual(["pdf"]);
+    expect(
+      filterLibrarySkills(
+        all,
+        query({ updates: new Set(["local", "up_to_date"]) }),
+        displayName,
+      ).map((s) => s.id),
+    ).toEqual(["docx", "notes"]);
   });
 
   it("keeps the untagged sentinel working alongside real tags", () => {
     const all = [docx, pdf, notes];
-    expect(filterLibrarySkills(all, query({ tags: new Set([UNTAGGED_FILTER, "office"]) }), displayName).map((s) => s.id)).toEqual(["docx", "notes"]);
+    expect(
+      filterLibrarySkills(
+        all,
+        query({ tags: new Set([UNTAGGED_FILTER, "office"]) }),
+        displayName,
+      ).map((s) => s.id),
+    ).toEqual(["docx", "notes"]);
   });
 
   it("filters by creator: GitHub owner, frontmatter author or local", () => {
     const ids = (creators: string[]) =>
-      filterLibrarySkills(creatorSkills, query({ creators: new Set(creators) }), displayName).map((s) => s.id);
+      filterLibrarySkills(creatorSkills, query({ creators: new Set(creators) }), displayName).map(
+        (s) => s.id,
+      );
+
     expect(ids(["github.com/acme"])).toEqual(["acme-lint", "acme-docs"]);
     expect(ids(["author:jane", LOCAL_CREATOR])).toEqual(["scratch", "jane-notes"]);
   });
@@ -107,6 +176,7 @@ describe("filterLibrarySkills", () => {
   it("finds skills by searching their creator", () => {
     const found = (search: string) =>
       filterLibrarySkills(creatorSkills, query({ search }), displayName).map((s) => s.id);
+
     expect(found("@acme")).toEqual(["acme-lint", "acme-docs"]);
     expect(found("jane")).toEqual(["jane-notes"]);
   });
@@ -115,17 +185,37 @@ describe("filterLibrarySkills", () => {
     const inPreset = skill({ id: "a", preset_ids: ["p1"] });
     const out = skill({ id: "b" });
     const preset = { id: "p1", order: [], mode: "enabled" as const };
-    expect(filterLibrarySkills([inPreset, out], query({ preset }), displayName).map((s) => s.id)).toEqual(["a"]);
-    expect(filterLibrarySkills([inPreset, out], query({ preset: { ...preset, mode: "available" } }), displayName).map((s) => s.id)).toEqual(["b"]);
+    expect(
+      filterLibrarySkills([inPreset, out], query({ preset }), displayName).map((s) => s.id),
+    ).toEqual(["a"]);
+    expect(
+      filterLibrarySkills(
+        [inPreset, out],
+        query({ preset: { ...preset, mode: "available" } }),
+        displayName,
+      ).map((s) => s.id),
+    ).toEqual(["b"]);
   });
 });
 
 describe("sortLibrarySkills", () => {
   it("sorts by the chosen key with name as a stable tiebreak", () => {
     const all = [docx, pdf, notes];
-    expect(sortLibrarySkills(all, query({ sortBy: "updated" })).map((s) => s.id)).toEqual(["docx", "notes", "pdf"]);
-    expect(sortLibrarySkills(all, query({ sortBy: "added" })).map((s) => s.id)).toEqual(["pdf", "notes", "docx"]);
-    expect(sortLibrarySkills(all, query({ sortBy: "update_status" })).map((s) => s.id)).toEqual(["pdf", "docx", "notes"]);
+    expect(sortLibrarySkills(all, query({ sortBy: "updated" })).map((s) => s.id)).toEqual([
+      "docx",
+      "notes",
+      "pdf",
+    ]);
+    expect(sortLibrarySkills(all, query({ sortBy: "added" })).map((s) => s.id)).toEqual([
+      "pdf",
+      "notes",
+      "docx",
+    ]);
+    expect(sortLibrarySkills(all, query({ sortBy: "update_status" })).map((s) => s.id)).toEqual([
+      "pdf",
+      "docx",
+      "notes",
+    ]);
   });
 
   it("puts preset-enabled skills first in preset order, then falls back to sortBy", () => {
@@ -134,7 +224,9 @@ describe("sortLibrarySkills", () => {
     const c = skill({ id: "c", updated_at: 5 });
     const d = skill({ id: "d", updated_at: 7 });
     const preset = { id: "p1", order: ["b", "a"], mode: "all" as const };
-    expect(sortLibrarySkills([a, b, c, d], query({ sortBy: "updated", preset })).map((s) => s.id)).toEqual(["b", "a", "d", "c"]);
+    expect(
+      sortLibrarySkills([a, b, c, d], query({ sortBy: "updated", preset })).map((s) => s.id),
+    ).toEqual(["b", "a", "d", "c"]);
   });
 });
 
@@ -185,13 +277,25 @@ describe("libraryCreators", () => {
 
 describe("libraryFilterCounts", () => {
   const all = [docx, pdf, notes];
+
   const counts = (skills: ManagedSkill[], overrides: Partial<LibraryQuery> = {}) =>
     libraryFilterCounts(skills, query(overrides), displayName);
 
   it("counts an option against the other categories, not its own", () => {
     const withCodex = counts(all, { agents: new Set(["codex"]) });
-    expect(withCodex.agents).toEqual(new Map([["claude", 2], ["codex", 1], [NOT_DEPLOYED, 1]]));
-    expect(withCodex.tags).toEqual(new Map([["docs", 1], ["office", 1]]));
+    expect(withCodex.agents).toEqual(
+      new Map([
+        ["claude", 2],
+        ["codex", 1],
+        [NOT_DEPLOYED, 1],
+      ]),
+    );
+    expect(withCodex.tags).toEqual(
+      new Map([
+        ["docs", 1],
+        ["office", 1],
+      ]),
+    );
     expect(withCodex.sources).toEqual(new Map([["git", 1]]));
   });
 
@@ -216,15 +320,29 @@ describe("libraryFilterCounts", () => {
   it("counts creators by key, Local included", () => {
     const result = counts(creatorSkills, { creators: new Set(["github.com/acme"]) });
     expect(result.creators).toEqual(
-      new Map([[LOCAL_CREATOR, 1], ["github.com/zed", 1], ["author:jane", 1], ["github.com/acme", 2]])
+      new Map([
+        [LOCAL_CREATOR, 1],
+        ["github.com/zed", 1],
+        ["author:jane", 1],
+        ["github.com/acme", 2],
+      ]),
     );
-    expect(result.sources).toEqual(new Map([["git", 1], ["skillssh", 1]]));
+    expect(result.sources).toEqual(
+      new Map([
+        ["git", 1],
+        ["skillssh", 1],
+      ]),
+    );
   });
 });
 
 describe("skillDisplayNames", () => {
   it("shows the name when it is unique", () => {
-    const names = skillDisplayNames([skill({ id: "a", name: "Review" }), skill({ id: "b", name: "Docs" })]);
+    const names = skillDisplayNames([
+      skill({ id: "a", name: "Review" }),
+      skill({ id: "b", name: "Docs" }),
+    ]);
+
     expect(names.get("a")).toBe("Review");
     expect(names.get("b")).toBe("Docs");
   });
@@ -234,6 +352,7 @@ describe("skillDisplayNames", () => {
       skill({ id: "a", name: "Review", central_path: "/lib/review-acme" }),
       skill({ id: "b", name: "Review", central_path: "C:\\lib\\review-local\\" }),
     ]);
+
     expect(names.get("a")).toBe("review-acme");
     expect(names.get("b")).toBe("review-local");
   });
@@ -243,6 +362,7 @@ describe("skillDisplayNames", () => {
       skill({ id: "a", name: "Review", central_path: "/lib/Review" }),
       skill({ id: "b", name: "Review", central_path: "/lib/review-2" }),
     ]);
+
     expect(names.get("a")).toBe("Review");
     expect(names.get("b")).toBe("review-2");
   });
@@ -255,10 +375,16 @@ describe("canRefreshSkill", () => {
   });
 
   it("refreshes local and imported skills only with a source_ref", () => {
-    expect(canRefreshSkill(skill({ id: "a", source_type: "local", source_ref: "/src/a" }))).toBe(true);
-    expect(canRefreshSkill(skill({ id: "a", source_type: "import", source_ref: "/src/a" }))).toBe(true);
+    expect(canRefreshSkill(skill({ id: "a", source_type: "local", source_ref: "/src/a" }))).toBe(
+      true,
+    );
+    expect(canRefreshSkill(skill({ id: "a", source_type: "import", source_ref: "/src/a" }))).toBe(
+      true,
+    );
     expect(canRefreshSkill(skill({ id: "a", source_type: "local", source_ref: null }))).toBe(false);
-    expect(canRefreshSkill(skill({ id: "a", source_type: "import", source_ref: null }))).toBe(false);
+    expect(canRefreshSkill(skill({ id: "a", source_type: "import", source_ref: null }))).toBe(
+      false,
+    );
   });
 });
 
@@ -268,6 +394,7 @@ describe("togglableSkills", () => {
     skill({ id: "off", preset_ids: [] }),
     skill({ id: "unselected", preset_ids: [] }),
   ];
+
   const selected = new Set(["on", "off"]);
 
   it("counts only the selected skills an enable would add", () => {

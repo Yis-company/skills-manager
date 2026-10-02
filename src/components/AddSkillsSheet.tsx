@@ -1,7 +1,3 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
-import { createPortal } from "react-dom";
-import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 import {
   CheckCircle2,
   ChevronDown,
@@ -11,25 +7,22 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { cn } from "../utils";
+import { type MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
+
+import { getErrorMessage } from "../lib/error";
+import { classifySkill, type PickerContext, targetsToInstall } from "../lib/skillPickerStatus";
+import { getTagActiveColor, getTagColor, UNTAGGED_FILTER } from "../lib/skillTags";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectAgentTarget } from "../lib/tauri";
-import { getErrorMessage } from "../lib/error";
-import {
-  classifySkill,
-  targetsToInstall,
-  type PickerContext,
-  type ProjectPickerContext,
-} from "../lib/skillPickerStatus";
-import {
-  getTagActiveColor,
-  getTagColor,
-  UNTAGGED_FILTER,
-} from "../lib/skillTags";
+import { cn } from "../utils";
 import { AgentIcon } from "./AgentIcon";
 import { SkillPickerRow } from "./SkillPickerRow";
 
 const SOURCE_PRIORITY = ["local", "import", "git", "skillssh"];
+
 const VISIBLE_TARGET_ICON_LIMIT = 5;
 
 export interface GlobalSheetTarget {
@@ -65,6 +58,7 @@ interface Props {
 
 export function AddSkillsSheet(props: Props) {
   if (!props.open) return null;
+
   return createPortal(<AddSkillsSheetBody {...props} />, document.body);
 }
 
@@ -74,7 +68,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
   const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
   const [sourceFilters, setSourceFilters] = useState<Set<string>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [anchorId, setAnchorId] = useState<string | null>(null);
+  const [anchorId, setAnchorId] = useState<null | string>(null);
   const [installing, setInstalling] = useState(false);
 
   const initialAgents = target.kind === "project" ? target.initialSelectedAgents : [];
@@ -89,7 +83,9 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !installing) onClose();
     };
+
     window.addEventListener("keydown", handler);
+
     return () => window.removeEventListener("keydown", handler);
   }, [installing, onClose]);
 
@@ -97,19 +93,25 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
   useEffect(() => {
     if (target.kind !== "project") return;
     let cancelled = false;
+
     const load = async () => {
       const names = managedSkills.map((s) => s.name);
+
       if (names.length === 0) {
         if (!cancelled) {
           setDirNameMap({});
           setDirNameMapError(false);
           setDirNameMapLoading(false);
         }
+
         return;
       }
+
       setDirNameMapLoading(true);
+
       try {
         const slugified = await api.slugifySkillNames(names);
+
         if (cancelled) return;
         const map: Record<string, string> = {};
         managedSkills.forEach((s, i) => {
@@ -125,7 +127,9 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
         if (!cancelled) setDirNameMapLoading(false);
       }
     };
+
     load();
+
     return () => {
       cancelled = true;
     };
@@ -138,6 +142,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
         installedSkillIds: target.installedSkillIds,
       };
     }
+
     return {
       kind: "project",
       selectedAgents,
@@ -150,19 +155,24 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
+
     for (const skill of managedSkills) {
       for (const tag of skill.tags) {
         if (tag.trim()) tags.add(tag);
       }
     }
+
     return Array.from(tags).sort((a, b) => a.localeCompare(b));
   }, [managedSkills]);
 
   const sourceTypes = useMemo(() => {
     const present = new Set(managedSkills.map((s) => s.source_type).filter(Boolean));
+
     return [
       ...SOURCE_PRIORITY.filter((s) => present.has(s)),
-      ...Array.from(present).filter((s) => !SOURCE_PRIORITY.includes(s)).sort(),
+      ...Array.from(present)
+        .filter((s) => !SOURCE_PRIORITY.includes(s))
+        .sort(),
     ];
   }, [managedSkills]);
 
@@ -171,6 +181,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
       if (SOURCE_PRIORITY.includes(source)) {
         return t(`mySkills.sourceFilter.${source}`);
       }
+
       return source;
     },
     [t],
@@ -180,19 +191,25 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
     const q = search.trim().toLowerCase();
     const hasUntagged = tagFilters.has(UNTAGGED_FILTER);
     const tagSelected = tagFilters.size > 0;
+
     return managedSkills.filter((skill) => {
       if (q) {
         const matches =
           skill.name.toLowerCase().includes(q) ||
           (skill.description || "").toLowerCase().includes(q);
+
         if (!matches) return false;
       }
+
       if (sourceFilters.size > 0 && !sourceFilters.has(skill.source_type)) return false;
+
       if (tagSelected) {
         const matchUntagged = hasUntagged && skill.tags.length === 0;
         const matchTag = skill.tags.some((tag) => tagFilters.has(tag));
+
         if (!matchUntagged && !matchTag) return false;
       }
+
       return true;
     });
   }, [managedSkills, search, sourceFilters, tagFilters]);
@@ -200,10 +217,13 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
   // Sort: available first, then installed/conflict/unavailable (greyed out at bottom)
   const ordered = useMemo(() => {
     const statusOrder = { available: 0, conflict: 1, installed: 2, unavailable: 3 } as const;
+
     return [...filtered].sort((a, b) => {
       const sa = classifySkill(a, ctx);
       const sb = classifySkill(b, ctx);
+
       if (sa !== sb) return statusOrder[sa] - statusOrder[sb];
+
       return a.name.localeCompare(b.name);
     });
   }, [filtered, ctx]);
@@ -213,6 +233,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
     () => ordered.filter((s) => classifySkill(s, ctx) === "available").map((s) => s.id),
     [ordered, ctx],
   );
+
   const allAvailableSelected =
     availableIds.length > 0 && availableIds.every((id) => selectedIds.has(id));
 
@@ -220,11 +241,13 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
     if (availableIds.length === 0) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
+
       if (allAvailableSelected) {
         for (const id of availableIds) next.delete(id);
       } else {
         for (const id of availableIds) next.add(id);
       }
+
       return next;
     });
   };
@@ -237,8 +260,10 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
+
       if (next.has(id)) next.delete(id);
       else next.add(id);
+
       return next;
     });
   };
@@ -246,28 +271,36 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
   // Normal click toggles one row and moves the shift-click anchor there.
   const handleRowClick = (index: number) => (e: MouseEvent<HTMLDivElement>) => {
     const skill = ordered[index];
+
     if (e.shiftKey && anchorId) {
       const anchorIndex = ordered.findIndex((s) => s.id === anchorId);
+
       if (anchorIndex !== -1) {
         const [lo, hi] = anchorIndex <= index ? [anchorIndex, index] : [index, anchorIndex];
+
         const rangeIds = ordered
           .slice(lo, hi + 1)
           .map((s) => s.id)
           .filter((id) => availableIds.includes(id));
+
         if (rangeIds.length > 0) {
           const alreadyAllSelected = rangeIds.every((id) => selectedIds.has(id));
           setSelectedIds((prev) => {
             const next = new Set(prev);
+
             for (const id of rangeIds) {
               if (alreadyAllSelected) next.delete(id);
               else next.add(id);
             }
+
             return next;
           });
+
           return;
         }
       }
     }
+
     toggleSelect(skill.id);
     setAnchorId(skill.id);
   };
@@ -275,8 +308,10 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
   const toggleSourceFilter = (source: string) => {
     setSourceFilters((prev) => {
       const next = new Set(prev);
+
       if (next.has(source)) next.delete(source);
       else next.add(source);
+
       return next;
     });
   };
@@ -284,8 +319,10 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
   const toggleTagFilter = (tag: string) => {
     setTagFilters((prev) => {
       const next = new Set(prev);
+
       if (next.has(tag)) next.delete(tag);
       else next.add(tag);
+
       return next;
     });
   };
@@ -293,37 +330,47 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
   const toggleAgent = (key: string) => {
     setSelectedAgents((prev) => {
       const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+
       if (target.kind === "project") {
         target.onPersistLastUsed(next);
       }
+
       return next;
     });
   };
 
   const setAllEnabledAgents = (next: string[]) => {
     setSelectedAgents(next);
+
     if (target.kind === "project") {
       target.onPersistLastUsed(next);
     }
   };
 
   const selectableSelected = useMemo(
-    () => Array.from(selectedIds).filter((id) => {
-      const skill = managedSkills.find((s) => s.id === id);
-      if (!skill) return false;
-      return classifySkill(skill, ctx) === "available";
-    }),
+    () =>
+      Array.from(selectedIds).filter((id) => {
+        const skill = managedSkills.find((s) => s.id === id);
+
+        if (!skill) return false;
+
+        return classifySkill(skill, ctx) === "available";
+      }),
     [selectedIds, managedSkills, ctx],
   );
 
-  const projectCtx = ctx.kind === "project" ? (ctx as ProjectPickerContext) : null;
+  const projectCtx = ctx.kind === "project" ? ctx : null;
   const projectNamesReady = target.kind !== "project" || dirNameMapError || !dirNameMapLoading;
-  const enabledTargets = target.kind === "project"
-    ? target.exportTargets.filter((tt) => tt.installed && tt.enabled)
-    : [];
-  const inactiveTargets = target.kind === "project"
-    ? target.exportTargets.filter((tt) => !tt.installed || !tt.enabled)
-    : [];
+
+  const enabledTargets =
+    target.kind === "project"
+      ? target.exportTargets.filter((tt) => tt.installed && tt.enabled)
+      : [];
+
+  const inactiveTargets =
+    target.kind === "project"
+      ? target.exportTargets.filter((tt) => !tt.installed || !tt.enabled)
+      : [];
 
   const renderAgentIcons = (
     agents: { key: string; display_name: string }[],
@@ -364,14 +411,17 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
 
   const ctaLabel = (() => {
     const count = selectableSelected.length;
+
     if (target.kind === "global") {
       return count === 0
         ? t("addFromLibrary.ctaEmpty", { agent: target.agentDisplayName })
         : t("addFromLibrary.ctaGlobal", { count, agent: target.agentDisplayName });
     }
+
     if (selectedAgents.length === 0) {
       return t("addFromLibrary.ctaNoTarget");
     }
+
     return count === 0
       ? t("addFromLibrary.ctaEmptyProject", { count: selectedAgents.length })
       : t("addFromLibrary.ctaProject", { count, agentCount: selectedAgents.length });
@@ -383,6 +433,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
     let ok = 0;
     let failed = 0;
     const failures: string[] = [];
+
     try {
       if (target.kind === "global") {
         for (const id of selectableSelected) {
@@ -398,14 +449,19 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
         if (selectedAgents.length === 0) {
           toast.error(t("addFromLibrary.errors.noTarget"));
           setInstalling(false);
+
           return;
         }
+
         if (!projectCtx || !projectNamesReady) return;
+
         for (const id of selectableSelected) {
           try {
             const skill = managedSkills.find((s) => s.id === id);
+
             if (!skill) continue;
             const agents = targetsToInstall(skill, projectCtx);
+
             if (agents.length === 0) continue;
             await api.exportSkillToProject(id, target.projectId, agents);
             ok++;
@@ -415,10 +471,12 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
           }
         }
       }
+
       if (ok > 0) {
         toast.success(t("addFromLibrary.toastInstalled", { count: ok }));
         setSelectedIds(new Set());
       }
+
       if (failed > 0) {
         // Surface why. A refusal carries the path it protected and what to do
         // about it (#363); collapsing that to a bare count leaves the user with
@@ -432,7 +490,9 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
                 .join(" — "),
         );
       }
+
       await onInstalled();
+
       if (failed === 0) onClose();
     } catch (e) {
       toast.error(getErrorMessage(e, t("common.error")));
@@ -459,6 +519,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
 
     const allSelected =
       enabledTargets.length > 0 && enabledTargets.every((tt) => selectedAgents.includes(tt.key));
+
     const toggleAll = () => {
       if (allSelected) {
         setAllEnabledAgents([]);
@@ -480,6 +541,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
               <div className="flex flex-wrap items-center gap-1.5">
                 {enabledTargets.map((tt) => {
                   const active = selectedAgents.includes(tt.key);
+
                   return (
                     <button
                       key={tt.key}
@@ -522,7 +584,9 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
               onClick={toggleAll}
               className="shrink-0 pt-1 text-[12px] text-accent-light transition-colors hover:underline"
             >
-              {allSelected ? t("addFromLibrary.clearTargets") : t("addFromLibrary.selectAllTargets")}
+              {allSelected
+                ? t("addFromLibrary.clearTargets")
+                : t("addFromLibrary.selectAllTargets")}
             </button>
           )}
         </div>
@@ -573,9 +637,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
       <div className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col overflow-hidden border-l border-border-subtle bg-bg-secondary shadow-2xl">
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border-subtle px-5 py-4">
           <div className="min-w-0 flex-1">
-            <h2 className="text-[14px] font-semibold text-primary">
-              {t("addFromLibrary.title")}
-            </h2>
+            <h2 className="text-[14px] font-semibold text-primary">{t("addFromLibrary.title")}</h2>
             <div className="mt-2">{targetSummary}</div>
           </div>
           <button
@@ -631,6 +693,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
               )}
               {allTags.map((tag) => {
                 const active = tagFilters.has(tag);
+
                 return (
                   <button
                     key={tag}
@@ -652,6 +715,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
               <span className="text-[12px] text-muted">{t("mySkills.sourceType")}</span>
               {sourceTypes.map((source) => {
                 const active = sourceFilters.has(source);
+
                 return (
                   <button
                     key={source}
@@ -671,7 +735,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
+        <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto">
           {ordered.length === 0 ? (
             <div className="px-5 py-12 text-center text-[13px] text-muted">
               {managedSkills.length === 0
@@ -682,6 +746,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
             <div className="divide-y divide-border-subtle">
               {ordered.map((skill, index) => {
                 const status = classifySkill(skill, ctx);
+
                 return (
                   <SkillPickerRow
                     key={skill.id}
@@ -724,7 +789,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
               selectableSelected.length === 0 ||
               (target.kind === "project" && selectedAgents.length === 0)
             }
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="hover:bg-accent-hover inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2.5 text-[13px] font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             {installing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {ctaLabel}

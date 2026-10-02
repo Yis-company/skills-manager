@@ -9,6 +9,7 @@ const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
 /** Splits a leading YAML block (used by `.mdc` rules) from the Markdown body. */
 export function splitFrontmatter(text: string) {
   const match = text.match(FRONTMATTER);
+
   return match
     ? { frontmatter: match[0], body: text.slice(match[0].length) }
     : { frontmatter: "", body: text };
@@ -28,7 +29,6 @@ let manager: MarkdownManager | undefined;
 export function richEditingIsLossless(text: string) {
   const { body } = splitFrontmatter(text);
   manager ??= new MarkdownManager({ extensions: markdownExtensions });
-  return (
-    withTrailingNewline(manager.serialize(manager.parse(body)), body) === body
-  );
+
+  return withTrailingNewline(manager.serialize(manager.parse(body)), body) === body;
 }

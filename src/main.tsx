@@ -1,10 +1,12 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { i18nReady } from "./i18n";
-import { logStartupEvent } from "./lib/tauri";
-import "./index.css";
+
 import App from "./App.tsx";
+import { i18nReady } from "./i18n";
+
+import "./index.css";
+import { logStartupEvent } from "./lib/tauri";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,6 +28,7 @@ const queryClient = new QueryClient({
 if (import.meta.env.MODE === "e2e") await import("../e2e/fake-backend");
 
 await i18nReady;
+
 logStartupEvent("i18n_ready", performance.now()).catch(() => {});
 
 createRoot(document.getElementById("root")!).render(
@@ -33,6 +36,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <App />
     </QueryClientProvider>
-  </StrictMode>
+  </StrictMode>,
 );
+
 logStartupEvent("root_rendered", performance.now()).catch(() => {});

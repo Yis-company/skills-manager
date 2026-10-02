@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
+
 import { cn } from "../utils";
 import { CardActionMenu } from "./CardActionMenu";
 
@@ -9,7 +10,7 @@ export interface BulkAction {
   icon: ReactNode;
   onSelect: () => void;
   /** Primary = the action this page exists for; danger = destructive. Default: secondary. */
-  tone?: "primary" | "secondary" | "danger";
+  tone?: "danger" | "primary" | "secondary";
   busy?: boolean;
   disabled?: boolean;
 }
@@ -37,12 +38,9 @@ interface MultiSelectToolbarProps {
 }
 
 const TONE_CLASS: Record<NonNullable<BulkAction["tone"]>, string> = {
-  primary:
-    "border border-accent-border bg-accent-dark text-white hover:bg-accent",
-  secondary:
-    "border border-border-subtle bg-surface text-secondary hover:bg-surface-hover",
-  danger:
-    "border border-transparent text-danger hover:bg-danger-bg",
+  primary: "border border-accent-border bg-accent-dark text-white hover:bg-accent",
+  secondary: "border border-border-subtle bg-surface text-secondary hover:bg-surface-hover",
+  danger: "border border-transparent text-danger hover:bg-danger-bg",
 };
 
 export function MultiSelectToolbar({
@@ -61,7 +59,7 @@ export function MultiSelectToolbar({
 
   return (
     <div className="flex flex-wrap items-center gap-2 px-1 py-1.5">
-      <span className="text-[13px] text-muted tabular-nums">
+      <span className="text-[13px] tabular-nums text-muted">
         {hasSelection ? labels.selected : labels.hint}
       </span>
 
@@ -72,12 +70,10 @@ export function MultiSelectToolbar({
           disabled={disabled || action.disabled || action.busy}
           className={cn(
             "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-            TONE_CLASS[action.tone ?? "secondary"]
+            TONE_CLASS[action.tone ?? "secondary"],
           )}
         >
-          {action.busy
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : action.icon}
+          {action.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : action.icon}
           {action.label}
         </button>
       ))}
@@ -88,9 +84,7 @@ export function MultiSelectToolbar({
           actions={menuActions.map((action) => ({
             key: action.key,
             label: action.label,
-            icon: action.busy
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              : action.icon,
+            icon: action.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : action.icon,
             onSelect: action.onSelect,
             danger: action.tone === "danger",
             disabled: disabled || action.disabled || action.busy,
@@ -101,14 +95,14 @@ export function MultiSelectToolbar({
       <button
         onClick={onSelectAll}
         disabled={disabled}
-        className="rounded-md px-2.5 py-1 text-[13px] font-medium text-muted hover:text-secondary hover:bg-surface-hover transition-colors"
+        className="rounded-md px-2.5 py-1 text-[13px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
       >
         {isAllSelected ? labels.deselectAll : labels.selectAll}
       </button>
       <button
         onClick={onCancel}
         disabled={disabled}
-        className="rounded-md px-2.5 py-1 text-[13px] font-medium text-muted hover:text-secondary hover:bg-surface-hover transition-colors"
+        className="rounded-md px-2.5 py-1 text-[13px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
       >
         {labels.cancel}
       </button>

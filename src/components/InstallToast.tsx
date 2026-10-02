@@ -1,7 +1,7 @@
-import { Check, GitBranch, Download, Loader2 } from "lucide-react";
+import { Check, Download, GitBranch, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-export type InstallPhase = "cloning" | "installing" | "syncing" | "done";
+export type InstallPhase = "cloning" | "done" | "installing" | "syncing";
 
 interface InstallToastProps {
   skillName: string;
@@ -32,9 +32,7 @@ export function InstallToast({ skillName, phase }: InstallToastProps) {
           <Icon className="h-4 w-4 text-emerald-400" />
         )}
       </div>
-      <span className="text-[13px] text-secondary">
-        {t(config.i18nKey, { name: skillName })}
-      </span>
+      <span className="text-[13px] text-secondary">{t(config.i18nKey, { name: skillName })}</span>
     </div>
   );
 }

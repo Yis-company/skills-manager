@@ -1,5 +1,6 @@
-import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
+
 import { useApp } from "../context/AppContext";
 import { projectSkillsQueryOptions, refreshQuery } from "../lib/appQueries";
 import type { ProjectSkill } from "../lib/tauri";
@@ -17,6 +18,7 @@ export function useProjectSkills(id: string | undefined) {
   // cancels an older list read before fetching the authoritative list again.
   const loadSkills = useCallback(async () => {
     if (!id) return;
+
     try {
       await refreshQuery(queryClient, projectSkillsQueryOptions(activeHostId, id));
     } catch (error) {

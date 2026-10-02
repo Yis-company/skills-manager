@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+
 import { getActiveHostId } from "./hostCall";
 
 /** A folder, or one file with one of `files` extensions (given without dots). */
@@ -12,12 +13,12 @@ export interface PickOptions {
   startPath?: string;
 }
 
-type RemotePicker = (request: PickRequest, opts: PickOptions) => Promise<string | null>;
+export type RemotePicker = (request: PickRequest, opts: PickOptions) => Promise<null | string>;
 
-let remotePicker: RemotePicker | null = null;
+let remotePicker: null | RemotePicker = null;
 
 /** Set by the mounted remote folder browser; null when it unmounts. */
-export function setRemotePicker(picker: RemotePicker | null) {
+export function setRemotePicker(picker: null | RemotePicker) {
   remotePicker = picker;
 }
 
@@ -26,15 +27,22 @@ export function setRemotePicker(picker: RemotePicker | null) {
  * this computer, the remote folder browser while a host is active. Resolves
  * null when the choice is cancelled.
  */
-export async function pickPath(request: PickRequest, opts: PickOptions = {}): Promise<string | null> {
+export async function pickPath(
+  request: PickRequest,
+  opts: PickOptions = {},
+): Promise<null | string> {
   if (getActiveHostId() !== null) {
     if (!remotePicker) throw new Error("The remote folder browser is not mounted");
+
     return remotePicker(request, opts);
   }
-  const selected = await open(
+
+  return open(
     "directory" in request
       ? { directory: true, multiple: false }
-      : { multiple: false, filters: [{ name: request.filterName ?? "Files", extensions: request.files }] }
+      : {
+          multiple: false,
+          filters: [{ name: request.filterName ?? "Files", extensions: request.files }],
+        },
   );
-  return typeof selected === "string" ? selected : null;
 }

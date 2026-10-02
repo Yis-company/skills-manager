@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
 import { Link as LinkIcon, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+
+import { HostBadge } from "../../components/HostBadge";
 import * as api from "../../lib/tauri";
 import { ACTION_BUTTON_CLASS, FIELD_CLASS } from "./shared";
-import { HostBadge } from "../../components/HostBadge";
 
 export function NetworkSection() {
   const { t } = useTranslation();
@@ -12,16 +13,22 @@ export function NetworkSection() {
   const [proxySaving, setProxySaving] = useState(false);
 
   useEffect(() => {
-    api.getSettings("proxy_url").then((v) => { setProxyInput(v ?? ""); });
+    api.getSettings("proxy_url").then((v) => {
+      setProxyInput(v ?? "");
+    });
   }, []);
 
   const handleSaveProxy = async () => {
     const trimmed = proxyInput.trim();
+
     if (trimmed && !/^(https?|socks5):\/\//i.test(trimmed)) {
       toast.error(t("settings.proxyUrlInvalid"));
+
       return;
     }
+
     setProxySaving(true);
+
     try {
       await api.setSettings("proxy_url", trimmed);
       toast.success(t("settings.proxyUrlSaved"));
@@ -38,10 +45,10 @@ export function NetworkSection() {
         {t("settings.proxyConfig")}
         <HostBadge />
       </h2>
-      <div className="app-panel overflow-hidden divide-y divide-border-faint">
+      <div className="app-panel divide-y divide-border-faint overflow-hidden">
         <div className="px-4 py-3">
           <h3 className="text-[14px] font-semibold text-primary">{t("settings.proxyUrl")}</h3>
-          <p className="mt-0.5 mb-2 text-[12px] text-muted">{t("settings.proxyUrlDesc")}</p>
+          <p className="mb-2 mt-0.5 text-[12px] text-muted">{t("settings.proxyUrlDesc")}</p>
           <div className="flex flex-wrap items-center gap-2">
             <input
               type="text"
@@ -53,12 +60,12 @@ export function NetworkSection() {
             <button
               onClick={handleSaveProxy}
               disabled={proxySaving}
-              className={`${ACTION_BUTTON_CLASS} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+              className={`${ACTION_BUTTON_CLASS} border-border bg-surface-hover text-tertiary hover:bg-surface-active`}
             >
               {proxySaving ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
+                <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
-                <LinkIcon className="w-3 h-3" />
+                <LinkIcon className="h-3 w-3" />
               )}
               {t("common.save")}
             </button>

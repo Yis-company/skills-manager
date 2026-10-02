@@ -1,6 +1,7 @@
 import type { SkillsShSkill } from "./tauri";
 
 export const MARKET_SEARCH_CACHE_TTL_MS = 120_000;
+
 export const MARKET_SEARCH_CACHE_MAX_ENTRIES = 150;
 
 export interface MarketSearchCacheEntry {
@@ -26,6 +27,7 @@ export function pruneMarketSearchCache(cache: Map<string, MarketSearchCacheEntry
 
   const sorted = Array.from(cache.entries()).sort((a, b) => a[1].timestamp - b[1].timestamp);
   const removeCount = cache.size - MARKET_SEARCH_CACHE_MAX_ENTRIES;
+
   for (const [key] of sorted.slice(0, removeCount)) {
     cache.delete(key);
   }
@@ -38,12 +40,13 @@ export function isLoadMoreRequest(query: string, loadedCount: number, limit: num
 
 /** Filters by source; search results are ranked by installs, the leaderboard keeps its order. */
 export function filterMarketSkills(skills: SkillsShSkill[], sourceFilter: string, query: string) {
-  const filtered = sourceFilter === "all"
-    ? skills
-    : skills.filter((skill) => skill.source === sourceFilter);
+  const filtered =
+    sourceFilter === "all" ? skills : skills.filter((skill) => skill.source === sourceFilter);
+
   if (query.trim().length > 0) {
     return [...filtered].sort((a, b) => b.installs - a.installs);
   }
+
   return filtered;
 }
 
@@ -55,11 +58,15 @@ export function paginateMarketSkills(skills: SkillsShSkill[], page: number, page
   const totalPages = Math.max(1, Math.ceil(skills.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * pageSize;
+
   const visiblePages = Array.from({ length: totalPages }, (_, index) => index + 1).filter((p) => {
     if (totalPages <= 7) return true;
+
     if (p === 1 || p === totalPages) return true;
+
     return Math.abs(p - currentPage) <= 1;
   });
+
   return {
     totalPages,
     currentPage,

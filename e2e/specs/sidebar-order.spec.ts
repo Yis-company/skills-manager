@@ -1,6 +1,7 @@
-import { dragOnto, expect, test } from "../fixtures";
-import { preset, project, tool } from "../fake-backend/state";
 import type { Page } from "@playwright/test";
+
+import { preset, project, tool } from "../fake-backend/state";
+import { dragOnto, expect, test } from "../fixtures";
 
 // F1: the sidebar's presets, projects and agents are reordered by dragging.
 
@@ -12,6 +13,7 @@ const seed = {
 
 /** Every draggable sidebar row, top to bottom: presets, agents, projects. */
 const sortable = (page: Page) => page.locator('[aria-roledescription="sortable"]');
+
 const row = (page: Page, name: string) => sortable(page).filter({ hasText: name });
 
 async function drag(page: Page, name: string, onto: string) {
@@ -22,17 +24,35 @@ async function drag(page: Page, name: string, onto: string) {
 test.beforeEach(async ({ page, backend }) => {
   await backend.seed(seed);
   await page.goto("/");
-  await expect(sortable(page)).toHaveText(["Writing", "Research", "Travel", "Claude Code", "Codex", "Cursor", "api", "web", "docs"]);
+  await expect(sortable(page)).toHaveText([
+    "Writing",
+    "Research",
+    "Travel",
+    "Claude Code",
+    "Codex",
+    "Cursor",
+    "api",
+    "web",
+    "docs",
+  ]);
 });
 
 test("dragging a preset saves the new order", async ({ page, backend }) => {
   await drag(page, "Travel", "Writing");
 
-  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText(["Travel", "Writing", "Research"]);
+  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText([
+    "Travel",
+    "Writing",
+    "Research",
+  ]);
   expect(await backend.calls("reorder_presets")).toEqual([{ ids: ["p3", "p1", "p2"] }]);
 
   await page.reload();
-  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText(["Travel", "Writing", "Research"]);
+  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText([
+    "Travel",
+    "Writing",
+    "Research",
+  ]);
 });
 
 test("a failed preset save puts the old order back and says so", async ({ page, backend }) => {
@@ -40,13 +60,21 @@ test("a failed preset save puts the old order back and says so", async ({ page, 
   await drag(page, "Travel", "Writing");
 
   await expect(page.getByText("Something went wrong")).toBeVisible();
-  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText(["Writing", "Research", "Travel"]);
+  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText([
+    "Writing",
+    "Research",
+    "Travel",
+  ]);
 });
 
 test("dragging a project saves the new order", async ({ page, backend }) => {
   await drag(page, "api", "docs");
 
-  await expect(sortable(page).filter({ hasText: /^(api|web|docs)$/ })).toHaveText(["web", "docs", "api"]);
+  await expect(sortable(page).filter({ hasText: /^(api|web|docs)$/ })).toHaveText([
+    "web",
+    "docs",
+    "api",
+  ]);
   expect(await backend.calls("reorder_projects")).toEqual([{ ids: ["w2", "w3", "w1"] }]);
 });
 
@@ -55,7 +83,11 @@ test("a failed project save puts the old order back and says so", async ({ page,
   await drag(page, "api", "docs");
 
   await expect(page.getByText("Something went wrong")).toBeVisible();
-  await expect(sortable(page).filter({ hasText: /^(api|web|docs)$/ })).toHaveText(["api", "web", "docs"]);
+  await expect(sortable(page).filter({ hasText: /^(api|web|docs)$/ })).toHaveText([
+    "api",
+    "web",
+    "docs",
+  ]);
 });
 
 test("the agent order survives a reload", async ({ page }) => {
@@ -67,18 +99,28 @@ test("the agent order survives a reload", async ({ page }) => {
   await expect(agents).toHaveText(["Cursor", "Claude Code", "Codex"]);
 });
 
-
-test("queued failed preset saves restore the saved order, not a failed optimistic order", async ({ page, backend }) => {
+test("queued failed preset saves restore the saved order, not a failed optimistic order", async ({
+  page,
+  backend,
+}) => {
   await backend.hold("reorder_presets");
   await backend.failNext("reorder_presets");
   await backend.failNext("reorder_presets");
   await drag(page, "Travel", "Writing");
   await expect.poll(async () => (await backend.calls("reorder_presets")).length).toBe(1);
   await drag(page, "Research", "Writing");
-  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText(["Travel", "Research", "Writing"]);
+  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText([
+    "Travel",
+    "Research",
+    "Writing",
+  ]);
 
   await backend.release("reorder_presets");
 
   await expect.poll(async () => (await backend.calls("reorder_presets")).length).toBe(2);
-  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText(["Writing", "Research", "Travel"]);
+  await expect(sortable(page).filter({ hasText: /Writing|Research|Travel/ })).toHaveText([
+    "Writing",
+    "Research",
+    "Travel",
+  ]);
 });

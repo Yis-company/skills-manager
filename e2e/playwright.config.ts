@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 // Not 1420: that is the Tauri dev server's port, and a running `pnpm tauri:dev`
 // must neither block the tests nor be reused without the fake backend.
 const PORT = 1421;
+
 const CI = !!process.env.CI;
 
 export default defineConfig({
@@ -11,7 +12,9 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: CI,
   retries: 0,
-  reporter: CI ? [["list"], ["html", { open: "never", outputFolder: "./playwright-report" }]] : "list",
+  reporter: CI
+    ? [["list"], ["html", { open: "never", outputFolder: "./playwright-report" }]]
+    : "list",
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: "retain-on-failure",

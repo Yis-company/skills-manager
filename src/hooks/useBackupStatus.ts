@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+
 import { useApp } from "../context/AppContext";
 import { mapGitErrorMessage } from "../lib/gitErrors";
 import * as api from "../lib/tauri";
@@ -21,7 +22,7 @@ export function useBackupStatus() {
   const [remoteConfig, setRemoteConfig] = useState("");
   const [versions, setVersions] = useState<GitBackupVersion[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
-  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<null | string>(null);
   const [sizeReport, setSizeReport] = useState<GitBackupSizeReport | null>(null);
   const [deviceName, setDeviceName] = useState("");
   const [autoBackupEnabled, setAutoBackupEnabled] = useState(true);
@@ -30,35 +31,41 @@ export function useBackupStatus() {
   const [authMethod, setAuthMethod] = useState("");
   const [backupErrorRaw, setBackupErrorRaw] = useState("");
 
-  const mapGitError = useCallback(
-    (error: unknown) => mapGitErrorMessage(error, t),
-    [t],
-  );
+  const mapGitError = useCallback((cause: unknown) => mapGitErrorMessage(cause, t), [t]);
 
   const refreshGitStatus = useCallback(async (fetchRemote = false) => {
     try {
       if (fetchRemote) {
         await api.gitBackupFetch().catch(() => {});
       }
+
       const status = await api.gitBackupStatus();
       setGitStatus(status);
+
       return status;
     } catch {
       return null;
     }
   }, []);
 
-  const refreshVersions = useCallback(async () => {
+  // Callers mark `versionsLoading` before starting the load.
+  const loadVersions = useCallback(
+    () =>
+      api
+        .gitBackupListVersions(50)
+        .catch(() => [])
+        .then((items) => {
+          setVersions(items);
+          setVersionsLoading(false);
+        }),
+    [],
+  );
+
+  const refreshVersions = useCallback(() => {
     setVersionsLoading(true);
-    try {
-      const items = await api.gitBackupListVersions(50);
-      setVersions(items);
-    } catch {
-      setVersions([]);
-    } finally {
-      setVersionsLoading(false);
-    }
-  }, []);
+
+    return loadVersions();
+  }, [loadVersions]);
 
   // "Needs attention" sync conflicts (merge-engine design §4).
   const refreshPendingConflicts = useCallback(async () => {
@@ -75,11 +82,17 @@ export function useBackupStatus() {
       // before the URL is read or displayed. Idempotent and best-effort —
       // offline machines simply retry on the next visit.
       const migrated = await api.gitBackupMigrateCredentials().catch(() => null);
+
       if (migrated) {
         toast.info(t("backup.credentialsMigrated"));
       }
-      api.backupDeviceName().then(setDeviceName).catch(() => {});
-      api.getSettings("backup_auto_enabled")
+
+      api
+        .backupDeviceName()
+        .then(setDeviceName)
+        .catch(() => {});
+      api
+        .getSettings("backup_auto_enabled")
         .then((v) => {
           const normalized = (v ?? "").trim().toLowerCase();
           setAutoBackupEnabled(!["off", "false", "0", "no"].includes(normalized));
@@ -87,33 +100,43 @@ export function useBackupStatus() {
         .catch(() => {});
       // A failed automatic backup persists until a backup succeeds (§3.4) —
       // resurface it when the page opens.
-      api.getSettings("backup_last_auto_error")
+      api
+        .getSettings("backup_last_auto_error")
         .then((v) => {
           const raw = (v ?? "").trim();
+
           if (raw) {
             setBackupError(mapGitError(raw));
             setBackupErrorRaw(raw);
           }
         })
         .catch(() => {});
-      api.getSettings("github_auth_method")
+      api
+        .getSettings("github_auth_method")
         .then((v) => setAuthMethod((v ?? "").trim()))
         .catch(() => {});
-      const savedRemote = (await api.getSettings("git_backup_remote_url").catch(() => null))?.trim() || "";
+
+      const savedRemote =
+        (await api.getSettings("git_backup_remote_url").catch(() => null))?.trim() || "";
+
       setRemoteInput(savedRemote);
       setRemoteConfig(savedRemote);
       const status = await refreshGitStatus(true);
+
       if (status?.is_repo) {
         await refreshVersions();
         void refreshPendingConflicts();
-        api.gitBackupSizeReport().then(setSizeReport).catch(() => setSizeReport(null));
+        api
+          .gitBackupSizeReport()
+          .then(setSizeReport)
+          .catch(() => setSizeReport(null));
       }
     })();
   }, [mapGitError, refreshGitStatus, refreshPendingConflicts, refreshVersions, t]);
 
   // Live updates from the background auto-backup rounds.
   useEffect(() => {
-    const unlistenPromise = listen<{ ok: boolean; pending: boolean; error: string | null }>(
+    const unlistenPromise = listen<{ ok: boolean; pending: boolean; error: null | string }>(
       "backup-auto-completed",
       (event) => {
         setBackupError(event.payload.error ? mapGitError(event.payload.error) : null);
@@ -121,6 +144,7 @@ export function useBackupStatus() {
         void refreshGitStatus();
         void refreshVersions();
         void refreshPendingConflicts();
+
         // A completed background round may have merged remote changes into the
         // library (multi-device auto-sync reindexes skills + presets into the
         // DB). The merge is an app-internal write, so the file watcher's
@@ -132,18 +156,32 @@ export function useBackupStatus() {
         }
       },
     );
+
     return () => {
       void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
     };
-  }, [mapGitError, refreshGitStatus, refreshPendingConflicts, refreshVersions, refreshManagedSkills, refreshPresets]);
+  }, [
+    mapGitError,
+    refreshGitStatus,
+    refreshPendingConflicts,
+    refreshVersions,
+    refreshManagedSkills,
+    refreshPresets,
+  ]);
+
+  const isRepo = gitStatus?.is_repo;
+  const [prevIsRepo, setPrevIsRepo] = useState(isRepo);
+
+  if (isRepo !== prevIsRepo) {
+    setPrevIsRepo(isRepo);
+
+    if (isRepo) setVersionsLoading(true);
+    else setVersions([]);
+  }
 
   useEffect(() => {
-    if (gitStatus?.is_repo) {
-      void refreshVersions();
-    } else {
-      setVersions([]);
-    }
-  }, [gitStatus?.is_repo, refreshVersions]);
+    if (isRepo) void loadVersions();
+  }, [isRepo, loadVersions]);
 
   return {
     gitStatus,

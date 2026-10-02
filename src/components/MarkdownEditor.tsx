@@ -1,13 +1,14 @@
-import { useRef, useState } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
 import { Markdown } from "@tiptap/markdown";
-import { cn } from "../utils";
+import { EditorContent, useEditor } from "@tiptap/react";
+import { useRef, useState } from "react";
+
 import {
   markdownExtensions,
   richEditingIsLossless,
   splitFrontmatter,
   withTrailingNewline,
 } from "../lib/markdownDocument";
+import { cn } from "../utils";
 
 type Mode = "rich" | "source";
 
@@ -32,6 +33,7 @@ export function MarkdownEditor({
   // The last value this editor knows about. Anything else is a new file.
   const [synced, setSynced] = useState(value);
   const [version, setVersion] = useState(0);
+
   if (value !== synced) {
     const next = richEditingIsLossless(value);
     setSynced(value);
@@ -39,6 +41,7 @@ export function MarkdownEditor({
     setMode(next ? "rich" : "source");
     setVersion((old) => old + 1);
   }
+
   const emit = (next: string) => {
     setSynced(next);
     onChange(next);
@@ -47,11 +50,7 @@ export function MarkdownEditor({
   return (
     <div className="mt-2 space-y-2">
       <div className="flex items-center gap-2 text-[11px]">
-        <div
-          className="app-segmented"
-          role="group"
-          aria-label={`${ariaLabel} mode`}
-        >
+        <div className="app-segmented" role="group" aria-label={`${ariaLabel} mode`}>
           {(["rich", "source"] as const).map((option) => (
             <button
               key={option}
@@ -59,9 +58,7 @@ export function MarkdownEditor({
               aria-pressed={mode === option}
               className={cn(
                 "rounded-md px-2 py-0.5",
-                mode === option
-                  ? "bg-surface-active text-primary"
-                  : "text-muted",
+                mode === option ? "bg-surface-active text-primary" : "text-muted",
               )}
               onClick={() => setMode(option)}
             >
@@ -70,18 +67,11 @@ export function MarkdownEditor({
           ))}
         </div>
         {!lossless && (
-          <span className="text-amber-600">
-            Rich editing would reformat this file.
-          </span>
+          <span className="text-amber-600">Rich editing would reformat this file.</span>
         )}
       </div>
       {mode === "rich" ? (
-        <RichMarkdown
-          key={version}
-          value={value}
-          onChange={emit}
-          ariaLabel={ariaLabel}
-        />
+        <RichMarkdown key={version} value={value} onChange={emit} ariaLabel={ariaLabel} />
       ) : (
         <textarea
           aria-label={ariaLabel}
@@ -108,6 +98,7 @@ function RichMarkdown({
   const [header, setHeader] = useState(frontmatter);
   // Read by the editor's update callback, which Tiptap keeps from creation.
   const headerRef = useRef(frontmatter);
+
   const editor = useEditor({
     extensions: [...markdownExtensions, Markdown],
     content: body,
@@ -121,10 +112,9 @@ function RichMarkdown({
       },
     },
     onUpdate: ({ editor }) =>
-      onChange(
-        headerRef.current + withTrailingNewline(editor.getMarkdown(), body),
-      ),
+      onChange(headerRef.current + withTrailingNewline(editor.getMarkdown(), body)),
   });
+
   return (
     <>
       {frontmatter && (
@@ -138,9 +128,7 @@ function RichMarkdown({
             headerRef.current = event.target.value;
             onChange(
               event.target.value +
-                (editor
-                  ? withTrailingNewline(editor.getMarkdown(), body)
-                  : body),
+                (editor ? withTrailingNewline(editor.getMarkdown(), body) : body),
             );
           }}
         />

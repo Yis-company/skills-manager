@@ -1,15 +1,14 @@
 export type FileTreeNode<T> =
-  | { kind: "folder"; name: string; path: string; children: FileTreeNode<T>[] }
-  | { kind: "file"; name: string; path: string; file: T };
+  | { kind: "file"; name: string; path: string; file: T }
+  | { kind: "folder"; name: string; path: string; children: FileTreeNode<T>[] };
 
 /**
  * Nests flat scan paths into folders. Folders sort before files, and a folder
  * whose only child is another folder is shown as one row (`.claude/rules`).
  */
-export function buildFileTree<T extends { path: string }>(
-  files: T[],
-): FileTreeNode<T>[] {
+export function buildFileTree<T extends { path: string }>(files: T[]): FileTreeNode<T>[] {
   const root: FileTreeNode<T>[] = [];
+
   for (const file of files) {
     const parts = file.path.split("/");
     let level = root;
@@ -18,6 +17,7 @@ export function buildFileTree<T extends { path: string }>(
         (node): node is Extract<FileTreeNode<T>, { kind: "folder" }> =>
           node.kind === "folder" && node.name === name,
       );
+
       if (!folder) {
         folder = {
           kind: "folder",
@@ -27,6 +27,7 @@ export function buildFileTree<T extends { path: string }>(
         };
         level.push(folder);
       }
+
       level = folder.children;
     });
     level.push({
@@ -36,6 +37,7 @@ export function buildFileTree<T extends { path: string }>(
       file,
     });
   }
+
   return finish(root);
 }
 
@@ -44,20 +46,15 @@ function finish<T>(nodes: FileTreeNode<T>[]): FileTreeNode<T>[] {
     .map((node) => {
       if (node.kind === "file") return node;
       let folder = { ...node, children: finish(node.children) };
-      while (
-        folder.children.length === 1 &&
-        folder.children[0].kind === "folder"
-      ) {
+
+      while (folder.children.length === 1 && folder.children[0].kind === "folder") {
         const only = folder.children[0];
         folder = { ...only, name: `${folder.name}/${only.name}` };
       }
+
       return folder;
     })
     .sort((a, b) =>
-      a.kind === b.kind
-        ? a.name.localeCompare(b.name)
-        : a.kind === "folder"
-          ? -1
-          : 1,
+      a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "folder" ? -1 : 1,
     );
 }

@@ -1,26 +1,33 @@
-import { expect, test } from "../fixtures";
-import { agentTarget, project, projectSkill, skill } from "../fake-backend/state";
 import type { Page } from "@playwright/test";
+
+import { agentTarget, project, projectSkill, skill } from "../fake-backend/state";
+import { expect, test } from "../fixtures";
 
 // F2 + F4: the project page: grid and list, the detail panel, the update
 // to/from center buttons following each skill's sync status, and the agents
 // last used to add skills, remembered per project.
 
 const targets = [agentTarget("claude_code", "Claude Code"), agentTarget("codex", "Codex")];
+
 const seed = {
   skills: [skill("s1", "deploy")],
   projects: [project("p1", "webapp", 0), project("p2", "backend", 1)],
   projectAgentTargets: { p1: targets, p2: targets },
   projectSkills: {
     p1: [
-      projectSkill("deploy", "claude_code", { sync_status: "center_newer", in_center: true, center_skill_id: "s1" }),
+      projectSkill("deploy", "claude_code", {
+        sync_status: "center_newer",
+        in_center: true,
+        center_skill_id: "s1",
+      }),
       projectSkill("format", "claude_code", { sync_status: "in_sync", in_center: true }),
       projectSkill("lint-rules", "claude_code", { sync_status: "project_only" }),
     ],
   },
 };
 
-const skillHeading = (page: Page, name: string) => page.getByRole("heading", { name, exact: true, level: 3 });
+const skillHeading = (page: Page, name: string) =>
+  page.getByRole("heading", { name, exact: true, level: 3 });
 
 /** The innermost element holding both the skill's name and its delete button: its card or row. */
 const skillItem = (page: Page, name: string) =>
@@ -38,17 +45,25 @@ test.beforeEach(async ({ page, backend }) => {
   await backend.seed(seed);
   await page.goto("/project/p1");
   await expect(page.getByRole("heading", { name: "webapp", level: 1 })).toBeVisible();
-  await expect(page.getByRole("heading", { level: 3 })).toHaveText(["deploy", "format", "lint-rules"]);
+  await expect(page.getByRole("heading", { level: 3 })).toHaveText([
+    "deploy",
+    "format",
+    "lint-rules",
+  ]);
 });
 
 test("switches between grid and list", async ({ page }) => {
   expect(await topOf(page, "format")).toBe(await topOf(page, "deploy"));
 
   await page.getByTestId("view-list").click();
-  await expect.poll(async () => (await topOf(page, "format")) > (await topOf(page, "deploy"))).toBe(true);
+  await expect
+    .poll(async () => (await topOf(page, "format")) > (await topOf(page, "deploy")))
+    .toBe(true);
 
   await page.getByTestId("view-grid").click();
-  await expect.poll(async () => (await topOf(page, "format")) === (await topOf(page, "deploy"))).toBe(true);
+  await expect
+    .poll(async () => (await topOf(page, "format")) === (await topOf(page, "deploy")))
+    .toBe(true);
 });
 
 test("opens a skill's detail panel with its SKILL.md", async ({ page }) => {
@@ -60,12 +75,20 @@ test("opens a skill's detail panel with its SKILL.md", async ({ page }) => {
 
 test("offers only the update the sync status allows", async ({ page }) => {
   await expect(skillItem(page, "lint-rules")).toContainText("Project only");
-  await expect(skillItem(page, "lint-rules").getByRole("button", { name: "Update Center" })).toBeVisible();
-  await expect(skillItem(page, "lint-rules").getByRole("button", { name: "Update Project" })).toHaveCount(0);
+  await expect(
+    skillItem(page, "lint-rules").getByRole("button", { name: "Update Center" }),
+  ).toBeVisible();
+  await expect(
+    skillItem(page, "lint-rules").getByRole("button", { name: "Update Project" }),
+  ).toHaveCount(0);
 
   await expect(skillItem(page, "deploy")).toContainText("Center newer");
-  await expect(skillItem(page, "deploy").getByRole("button", { name: "Update Project" })).toBeVisible();
-  await expect(skillItem(page, "deploy").getByRole("button", { name: "Update Center" })).toHaveCount(0);
+  await expect(
+    skillItem(page, "deploy").getByRole("button", { name: "Update Project" }),
+  ).toBeVisible();
+  await expect(
+    skillItem(page, "deploy").getByRole("button", { name: "Update Center" }),
+  ).toHaveCount(0);
 
   await expect(skillItem(page, "format")).toContainText("In sync");
   await expect(skillItem(page, "format").getByRole("button", { name: /^Update/ })).toHaveCount(0);
@@ -79,7 +102,9 @@ test("updating the center brings the skill in sync", async ({ page, backend }) =
     { projectId: "p1", skillRelativePath: "lint-rules", agent: "claude_code" },
   ]);
   await expect(skillItem(page, "lint-rules")).toContainText("In sync");
-  await expect(skillItem(page, "lint-rules").getByRole("button", { name: /^Update/ })).toHaveCount(0);
+  await expect(skillItem(page, "lint-rules").getByRole("button", { name: /^Update/ })).toHaveCount(
+    0,
+  );
 });
 
 test("updating the project brings the skill in sync", async ({ page, backend }) => {
@@ -94,7 +119,9 @@ test("updating the project brings the skill in sync", async ({ page, backend }) 
 });
 
 test("remembers the agents last used to add skills, per project", async ({ page, backend }) => {
-  const agentPill = (name: string) => page.getByRole("button", { name, exact: true }).and(page.locator("[aria-pressed]"));
+  const agentPill = (name: string) =>
+    page.getByRole("button", { name, exact: true }).and(page.locator("[aria-pressed]"));
+
   // The sheet takes its first selection from the project's agents and its
   // remembered ones, so open it once both have loaded.
   const openSheet = async (projectId: string) => {

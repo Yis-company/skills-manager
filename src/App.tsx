@@ -1,10 +1,12 @@
 import { RouterProvider } from "@tanstack/react-router";
 import { Toaster } from "sonner";
+
 import { ThemeProvider, useThemeContext } from "./context/ThemeContext";
 import { router } from "./router";
 
 function ThemedToaster() {
   const { resolvedTheme } = useThemeContext();
+
   return (
     <Toaster
       theme={resolvedTheme}

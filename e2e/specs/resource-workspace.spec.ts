@@ -1,6 +1,6 @@
-import { expect, test } from "../fixtures";
-import { project, tool } from "../fake-backend/state";
 import type { RemoteHost } from "../../src/lib/tauri";
+import { project, tool } from "../fake-backend/state";
+import { expect, test } from "../fixtures";
 
 const remoteHost: RemoteHost = {
   id: "resource-host",
@@ -15,30 +15,20 @@ test.beforeEach(async ({ page, backend }) => {
   await page.goto("/my-skills");
 });
 
-test("resource tabs follow browser history and survive a reload", async ({
-  page,
-}) => {
+test("resource tabs follow browser history and survive a reload", async ({ page }) => {
   await page.getByRole("button", { name: "Instructions" }).click();
   await expect(page).toHaveURL(/resource=instructions/);
-  await expect(
-    page.getByRole("heading", { name: "Instructions", level: 2 }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
 
   await page.getByRole("button", { name: "MCPs" }).click();
   await expect(page).toHaveURL(/resource=mcps/);
-  await expect(
-    page.getByRole("heading", { name: "MCP library" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "MCP library" })).toBeVisible();
 
   await page.goBack();
   await expect(page).toHaveURL(/resource=instructions/);
-  await expect(
-    page.getByRole("heading", { name: "Instructions", level: 2 }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
   await page.reload();
-  await expect(
-    page.getByRole("heading", { name: "Instructions", level: 2 }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
 });
 
 test("an instruction bundle can be saved, reviewed, applied, and loaded again", async ({
@@ -49,22 +39,16 @@ test("an instruction bundle can be saved, reviewed, applied, and loaded again", 
   await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByLabel("Agent", { exact: true }).selectOption("codex");
   await page.getByRole("button", { name: "New", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "Name", exact: true })
-    .fill("Repository guide");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Repository guide");
   await page
     .getByRole("textbox", { name: "AGENTS.md content" })
     .fill("# Shared guidance\n\nUse the existing project patterns.");
   await page.getByRole("button", { name: "Save bundle" }).click();
   await expect(page.getByText("Bundle saved.")).toBeVisible();
   await page.getByRole("button", { name: "Review updates" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Review bundle changes" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review bundle changes" })).toBeVisible();
   await page.getByRole("button", { name: "Apply reviewed changes" }).click();
-  await expect(
-    page.getByText("Applied 1 file(s).", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Applied 1 file(s).", { exact: true })).toBeVisible();
   const calls = await backend.calls("instructions_request");
   expect(calls).toContainEqual(
     expect.objectContaining({
@@ -73,32 +57,21 @@ test("an instruction bundle can be saved, reviewed, applied, and loaded again", 
   );
 
   await page.reload();
-  await expect(
-    page.getByText("Repository guide", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Repository guide", { exact: true })).toBeVisible();
 });
 
-test("an MCP definition uses an explicit preview before apply", async ({
-  page,
-  backend,
-}) => {
+test("an MCP definition uses an explicit preview before apply", async ({ page, backend }) => {
   await page.getByRole("button", { name: "MCPs" }).click();
   await page.getByRole("button", { name: "New", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "Name", exact: true })
-    .fill("Local docs");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Local docs");
   await page.getByRole("textbox", { name: "Command" }).fill("node");
   await page.getByRole("textbox", { name: "Arguments" }).fill("server.js");
   await page.getByRole("button", { name: "Save definition" }).click();
   await expect(page.getByText("Saved.")).toBeVisible();
   await page.getByRole("button", { name: "Preview deployment" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Review deployment" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review deployment" })).toBeVisible();
   await page.getByRole("button", { name: "Apply reviewed changes" }).click();
-  await expect(
-    page.getByText("Applied to this workspace.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Applied to this workspace.", { exact: true })).toBeVisible();
   const calls = await backend.calls("mcps_request");
   expect(calls).toContainEqual(
     expect.objectContaining({
@@ -108,9 +81,7 @@ test("an MCP definition uses an explicit preview before apply", async ({
 
   await page.reload();
   await expect(page.getByText("Local docs", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Local docs · managed", { exact: true }).first(),
-  ).toBeVisible();
+  await expect(page.getByText("Local docs · managed", { exact: true }).first()).toBeVisible();
 });
 
 test("a delayed remote preview cannot appear after switching back to the local host", async ({
@@ -125,6 +96,7 @@ test("a delayed remote preview cannot appear after switching back to the local h
     revision: "1",
     updatedAt: "2026-09-27T00:00:00Z",
   };
+
   await backend.patch({
     remoteHosts: [remoteHost],
     tools: [tool("claude_code", "Claude Code")],
@@ -135,40 +107,24 @@ test("a delayed remote preview cannot appear after switching back to the local h
   await page.getByRole("button", { name: "Local", exact: true }).click();
   await page.getByRole("menuitemradio", { name: /Resource host/ }).click();
   await page.getByText("Remote docs", { exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Preview deployment" }),
-  ).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Preview deployment" })).toBeEnabled();
 
   await backend.holdResponse("remote_invoke");
   await page.getByRole("button", { name: "Preview deployment" }).click();
   await expect
-    .poll(async () =>
-      (await backend.calls("remote_invoke")).some((call) => {
-        const invoke = call as {
-          command?: string;
-          args?: { request?: { action?: string } };
-        };
-        return (
-          invoke.command === "mcps_request" &&
-          invoke.args?.request?.action === "preview"
-        );
+    .poll(() => backend.calls("remote_invoke"))
+    .toContainEqual(
+      expect.objectContaining({
+        command: "mcps_request",
+        args: expect.objectContaining({ request: expect.objectContaining({ action: "preview" }) }),
       }),
-    )
-    .toBe(true);
-  await page
-    .getByRole("button", { name: "Resource host", exact: true })
-    .click();
-  await page
-    .getByRole("menuitemradio", { name: /Local This computer/ })
-    .click();
+    );
+  await page.getByRole("button", { name: "Resource host", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /Local This computer/ }).click();
   await backend.releaseResponse("remote_invoke");
 
-  await expect(
-    page.getByRole("heading", { name: "MCP library" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Review deployment" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "MCP library" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review deployment" })).toHaveCount(0);
   await expect(page.getByText("Remote docs", { exact: true })).toHaveCount(0);
 });
 
@@ -193,42 +149,25 @@ test("MCP import opens a draft and removal explicitly detaches without changing 
     },
   });
   await page.goto("/my-skills?resource=mcps");
-  await page
-    .getByText("Import from this agent or browse the catalog", { exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Review import", exact: true })
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: "Name", exact: true }),
-  ).toHaveValue("Imported docs");
-  expect(
-    (await backend.calls("mcps_request")).some(
-      (call) =>
-        (call as { request: { action: string } }).request.action === "save",
-    ),
-  ).toBe(false);
-  await expect(
-    page.getByRole("heading", { name: "Review deployment" }),
-  ).toHaveCount(0);
+  await page.getByText("Import from this agent or browse the catalog", { exact: true }).click();
+  await page.getByRole("button", { name: "Review import", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(
+    "Imported docs",
+  );
+  expect((await backend.calls("mcps_request")).some((call) => call.request.action === "save")).toBe(
+    false,
+  );
+  await expect(page.getByRole("heading", { name: "Review deployment" })).toHaveCount(0);
   await page.getByRole("button", { name: "Save definition" }).click();
   await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
-  await page
-    .getByRole("button", { name: "Remove from library", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Remove and detach", exact: true })
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: "Name", exact: true }),
-  ).toHaveValue("");
+  await page.getByRole("button", { name: "Remove from library", exact: true }).click();
+  await page.getByRole("button", { name: "Remove and detach", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("");
   expect(await backend.calls("mcps_request")).toContainEqual({
     request: expect.objectContaining({ action: "remove", detach: true }),
   });
   await page.reload();
-  await expect(
-    page.getByText("Imported docs · unmanaged", { exact: true }).first(),
-  ).toBeVisible();
+  await expect(page.getByText("Imported docs · unmanaged", { exact: true }).first()).toBeVisible();
 });
 
 test("project resources can select every assigned agent and nested edits retain project-relative paths", async ({
@@ -236,9 +175,7 @@ test("project resources can select every assigned agent and nested edits retain 
   backend,
 }) => {
   await backend.patch({
-    projects: [
-      project("repo", "Repo", 0, { agent_keys: ["claude_code", "codex"] }),
-    ],
+    projects: [project("repo", "Repo", 0, { agent_keys: ["claude_code", "codex"] })],
     instructionFiles: {
       "docs/AGENTS.md": {
         content: "Nested rules",
@@ -250,45 +187,31 @@ test("project resources can select every assigned agent and nested edits retain 
   });
   await page.goto("/project/repo?resource=instructions");
   await page.getByLabel("Agent", { exact: true }).selectOption("codex");
-  await page
-    .getByRole("tree", { name: "Instruction files" })
-    .getByTitle("docs/AGENTS.md")
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: "Instruction file content" }),
-  ).toHaveText("Nested rules");
+  await page.getByRole("tree", { name: "Instruction files" }).getByTitle("docs/AGENTS.md").click();
+  await expect(page.getByRole("textbox", { name: "Instruction file content" })).toHaveText(
+    "Nested rules",
+  );
   await page.getByLabel("Include directory", { exact: true }).fill("docs");
-  await page
-    .getByRole("heading", { name: "Instructions", exact: true })
-    .click();
-  await page
-    .getByRole("tree", { name: "Instruction files" })
-    .getByTitle("docs/AGENTS.md")
-    .click();
+  await page.getByRole("heading", { name: "Instructions", exact: true }).click();
+  await page.getByRole("tree", { name: "Instruction files" }).getByTitle("docs/AGENTS.md").click();
   await page
     .getByRole("textbox", { name: "Instruction file content" })
     .fill("Updated nested rules");
   await page.getByRole("button", { name: "Save file", exact: true }).click();
   await expect(page.getByText("File saved.", { exact: true })).toBeVisible();
-  const calls = (await backend.calls("instructions_request")) as {
-    request: { action: string; target: unknown; path?: string };
-  }[];
-  expect(
-    calls.findLast((call) => call.request.action === "write")?.request,
-  ).toMatchObject({
+
+  const requests = (await backend.calls("instructions_request")).map((call) => call.request);
+  const write = requests.findLast((request) => request.action === "write");
+
+  expect(write).toMatchObject({
     target: { agent_key: "codex", project_id: "repo" },
     path: "docs/AGENTS.md",
     content: "Updated nested rules",
   });
-  expect(
-    calls.findLast((call) => call.request.action === "write")?.request.target,
-  ).not.toHaveProperty("relative_dir");
+  expect(write?.target).not.toHaveProperty("relative_dir");
 });
 
-test("project worktrees get their own tabs and scope file scans", async ({
-  page,
-  backend,
-}) => {
+test("project worktrees get their own tabs and scope file scans", async ({ page, backend }) => {
   await backend.patch({
     projects: [project("repo", "Repo", 0, { agent_keys: ["claude_code"] })],
     instructionWorktrees: [
@@ -310,11 +233,9 @@ test("project worktrees get their own tabs and scope file scans", async ({
   await tabs.getByRole("tab", { name: "fix-login (fix/login)" }).click();
   await expect
     .poll(async () => {
-      const calls = (await backend.calls("instructions_request")) as {
-        request: { action: string; target?: { worktree?: string } };
-      }[];
-      return calls.findLast((call) => call.request.action === "scan")?.request
-        .target?.worktree;
+      const requests = (await backend.calls("instructions_request")).map((call) => call.request);
+
+      return requests.findLast((request) => request.action === "scan")?.target.worktree;
     })
     .toBe("/work/repo/.claude/worktrees/fix-login");
 });
@@ -336,23 +257,18 @@ test("files the rich editor would reformat open in source mode unchanged", async
     },
   });
   await page.goto("/project/repo?resource=instructions");
-  await page
-    .getByRole("tree", { name: "Instruction files" })
-    .getByTitle("CLAUDE.md")
-    .click();
+  await page.getByRole("tree", { name: "Instruction files" }).getByTitle("CLAUDE.md").click();
+
   const editor = page.getByRole("textbox", {
     name: "Instruction file content",
   });
+
   await expect(editor).toHaveValue(original);
-  await expect(
-    page.getByText("Rich editing would reformat this file."),
-  ).toBeVisible();
+  await expect(page.getByText("Rich editing would reformat this file.")).toBeVisible();
   await page.getByRole("button", { name: "Save file", exact: true }).click();
   await expect(page.getByText("File saved.", { exact: true })).toBeVisible();
-  const calls = (await backend.calls("instructions_request")) as {
-    request: { action: string; content?: string };
-  }[];
-  expect(
-    calls.findLast((call) => call.request.action === "write")?.request.content,
-  ).toBe(original);
+
+  const requests = (await backend.calls("instructions_request")).map((call) => call.request);
+
+  expect(requests.findLast((request) => request.action === "write")?.content).toBe(original);
 });

@@ -1,9 +1,10 @@
-import { existsSync } from 'node:fs';
-import { delimiter, dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 
-function canRun(command, args = ['--version']) {
-  const result = spawnSync(command, args, { stdio: 'ignore' });
+function canRun(command, args = ["--version"]) {
+  const result = spawnSync(command, args, { stdio: "ignore" });
+
   return result.status === 0;
 }
 
@@ -12,37 +13,43 @@ function resolveCargo() {
     return process.env.CARGO;
   }
 
-  if (canRun('cargo')) {
-    return 'cargo';
+  if (canRun("cargo")) {
+    return "cargo";
   }
 
-  const rustupCheck = spawnSync('rustup', ['which', 'rustc'], { encoding: 'utf8' });
+  const rustupCheck = spawnSync("rustup", ["which", "rustc"], { encoding: "utf8" });
+
   if (rustupCheck.status === 0) {
     const rustcPath = rustupCheck.stdout.trim();
+
     if (rustcPath) {
-      const cargoPath = join(dirname(rustcPath), 'cargo');
+      const cargoPath = join(dirname(rustcPath), "cargo");
+
       if (existsSync(cargoPath)) {
         return cargoPath;
       }
     }
   }
 
-  console.error('cargo not found. Install Rust or ensure cargo/rustup is on PATH.');
+  console.error("cargo not found. Install Rust or ensure cargo/rustup is on PATH.");
   process.exit(127);
 }
 
 const mode = process.argv[2];
+
 const extraArgs = process.argv.slice(3);
+
 const cargo = resolveCargo();
 
-const baseArgs = ['--manifest-path', 'src-tauri/Cargo.toml', '--bin', 'skills-manager-cli'];
+const baseArgs = ["--manifest-path", "src-tauri/Cargo.toml", "--bin", "skills-manager-cli"];
+
 const cargoArgs =
-  mode === 'cli'
-    ? ['run', '--quiet', ...baseArgs, '--', ...extraArgs]
-    : mode === 'build'
-      ? ['build', ...baseArgs]
-      : mode === 'install'
-        ? ['install', '--path', 'src-tauri', '--bin', 'skills-manager-cli', '--locked', '--force']
+  mode === "cli"
+    ? ["run", "--quiet", ...baseArgs, "--", ...extraArgs]
+    : mode === "build"
+      ? ["build", ...baseArgs]
+      : mode === "install"
+        ? ["install", "--path", "src-tauri", "--bin", "skills-manager-cli", "--locked", "--force"]
         : null;
 
 if (!cargoArgs) {
@@ -51,10 +58,10 @@ if (!cargoArgs) {
 }
 
 const result = spawnSync(cargo, cargoArgs, {
-  stdio: 'inherit',
+  stdio: "inherit",
   env: {
     ...process.env,
-    PATH: `${dirname(cargo)}${delimiter}${process.env.PATH ?? ''}`,
+    PATH: `${dirname(cargo)}${delimiter}${process.env.PATH ?? ""}`,
   },
 });
 

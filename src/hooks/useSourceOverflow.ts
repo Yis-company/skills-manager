@@ -18,6 +18,7 @@ export function useSourceOverflow(sourceOptions: string[]) {
   const allBtnMeasureRef = useRef<HTMLButtonElement | null>(null);
   const moreBtnMeasureRef = useRef<HTMLButtonElement | null>(null);
   const sourceMeasureRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
   const resetSourceOverflowState = useCallback(() => {
     setSourceOverflowOpen(false);
     setSourceSearch("");
@@ -26,14 +27,20 @@ export function useSourceOverflow(sourceOptions: string[]) {
 
   useEffect(() => {
     if (!sourceOverflowOpen) return;
+
     const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target instanceof Node ? e.target : null;
+
       if (
-        sourceOverflowBtnRef.current?.contains(e.target as Node) ||
-        sourceOverflowPanelRef.current?.contains(e.target as Node)
-      ) return;
+        sourceOverflowBtnRef.current?.contains(target) ||
+        sourceOverflowPanelRef.current?.contains(target)
+      )
+        return;
       resetSourceOverflowState();
     };
+
     document.addEventListener("mousedown", handleClickOutside);
+
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [resetSourceOverflowState, sourceOverflowOpen]);
 
@@ -42,14 +49,18 @@ export function useSourceOverflow(sourceOptions: string[]) {
     const container = filterContainerRef.current;
     const allBtn = allBtnMeasureRef.current;
     const moreBtn = moreBtnMeasureRef.current;
+
     if (!container || !allBtn || !moreBtn) {
       setVisibleSourceCount(Infinity);
+
       return;
     }
 
     const containerWidth = container.clientWidth;
+
     if (containerWidth <= 0) {
       setVisibleSourceCount(Infinity);
+
       return;
     }
 
@@ -59,16 +70,20 @@ export function useSourceOverflow(sourceOptions: string[]) {
 
     if (available <= 0) {
       setVisibleSourceCount(0);
+
       return;
     }
 
     let used = 0;
     let count = 0;
+
     for (let i = 0; i < sourceOptions.length; i += 1) {
       const el = sourceMeasureRefs.current[i];
       const w = el?.offsetWidth ?? 0;
+
       if (w <= 0) continue;
       const nextUsed = used + (count > 0 ? gap : 0) + w;
+
       if (nextUsed <= available) {
         used = nextUsed;
         count += 1;
@@ -76,6 +91,7 @@ export function useSourceOverflow(sourceOptions: string[]) {
         break;
       }
     }
+
     setVisibleSourceCount(count);
   }, [sourceOptions]);
 
@@ -88,13 +104,16 @@ export function useSourceOverflow(sourceOptions: string[]) {
 
   useEffect(() => {
     const container = filterContainerRef.current;
+
     if (!container) return;
     const observer = new ResizeObserver(computeVisibleCount);
     observer.observe(container);
+
     return () => observer.disconnect();
   }, [computeVisibleCount]);
 
   const overflowSources = sourceOptions.slice(visibleSourceCount);
+
   const filteredOverflowSources = sourceSearch
     ? overflowSources.filter((s) => s.toLowerCase().includes(sourceSearch.toLowerCase()))
     : overflowSources;
@@ -110,7 +129,9 @@ export function useSourceOverflow(sourceOptions: string[]) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSourceFocusedIndex((idx) => {
       if (filteredOverflowSources.length === 0) return -1;
+
       if (idx < 0) return idx;
+
       return Math.min(idx, filteredOverflowSources.length - 1);
     });
   }, [filteredOverflowSources.length]);
@@ -118,9 +139,7 @@ export function useSourceOverflow(sourceOptions: string[]) {
   // Scroll the focused overflow item into view whenever the index changes
   useEffect(() => {
     if (sourceFocusedIndex < 0) return;
-    sourceListRef.current
-      ?.children[sourceFocusedIndex]
-      ?.scrollIntoView({ block: "nearest" });
+    sourceListRef.current?.children[sourceFocusedIndex]?.scrollIntoView({ block: "nearest" });
   }, [sourceFocusedIndex]);
 
   return {

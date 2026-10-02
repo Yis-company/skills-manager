@@ -1,17 +1,19 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import * as api from "../lib/tauri";
-import type { SkillsShSkill } from "../lib/tauri";
+
 import {
-  MARKET_SEARCH_CACHE_TTL_MS,
   isLoadMoreRequest,
+  MARKET_SEARCH_CACHE_TTL_MS,
+  type MarketSearchCacheEntry,
   marketSearchCacheKey,
   pruneMarketSearchCache,
-  type MarketSearchCacheEntry,
 } from "../lib/marketSearch";
+import * as api from "../lib/tauri";
+import type { SkillsShSkill } from "../lib/tauri";
 
 export const MARKET_SEARCH_STEP = 60;
+
 const MARKET_SEARCH_DEBOUNCE_MS = 450;
 
 /**
@@ -21,7 +23,7 @@ const MARKET_SEARCH_DEBOUNCE_MS = 450;
  */
 export function useMarketSearch(active: boolean) {
   const { t } = useTranslation();
-  const [marketTab, setMarketTab] = useState<"hot" | "trending" | "alltime">("alltime");
+  const [marketTab, setMarketTab] = useState<"alltime" | "hot" | "trending">("alltime");
   const [marketQuery, setMarketQuery] = useState("");
   const [marketSourceFilter, setMarketSourceFilter] = useState("all");
   const [marketSkills, setMarketSkills] = useState<SkillsShSkill[]>([]);
@@ -29,7 +31,7 @@ export function useMarketSearch(active: boolean) {
   const [marketSearchLimit, setMarketSearchLimit] = useState(MARKET_SEARCH_STEP);
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketLoadingMore, setMarketLoadingMore] = useState(false);
-  const [marketError, setMarketError] = useState<string | null>(null);
+  const [marketError, setMarketError] = useState<null | string>(null);
   const [marketReloadKey, setMarketReloadKey] = useState(0);
   const marketSearchCacheRef = useRef<Map<string, MarketSearchCacheEntry>>(new Map());
   const marketSkillsLengthRef = useRef(0);
@@ -40,6 +42,7 @@ export function useMarketSearch(active: boolean) {
     const timer = setTimeout(() => {
       setDebouncedMarketQuery(deferredMarketQuery);
     }, MARKET_SEARCH_DEBOUNCE_MS);
+
     return () => clearTimeout(timer);
   }, [deferredMarketQuery]);
 
@@ -56,24 +59,29 @@ export function useMarketSearch(active: boolean) {
     if (query.length > 0 && !loadingMore) {
       const cacheKey = marketSearchCacheKey(query, marketSearchLimit);
       const cached = marketSearchCacheRef.current.get(cacheKey);
+
       if (cached && Date.now() - cached.timestamp < MARKET_SEARCH_CACHE_TTL_MS) {
         setMarketSkills(cached.data);
         setMarketLoading(false);
         setMarketLoadingMore(false);
         setMarketPage(1);
         setMarketError(null);
+
         return;
       }
     }
 
     setMarketLoadingMore(loadingMore);
     setMarketLoading(true);
+
     if (!loadingMore) {
       setMarketPage(1);
     }
+
     setMarketError(null);
 
     let stale = false;
+
     const request = query
       ? api.searchSkillssh(query, marketSearchLimit)
       : api.fetchLeaderboard(marketTab);
@@ -82,11 +90,13 @@ export function useMarketSearch(active: boolean) {
       .then((result) => {
         if (stale) return;
         setMarketSkills(result);
+
         if (query.length > 0 && !loadingMore) {
           const cacheKey = marketSearchCacheKey(query, marketSearchLimit);
           marketSearchCacheRef.current.set(cacheKey, { timestamp: Date.now(), data: result });
           pruneMarketSearchCache(marketSearchCacheRef.current, Date.now());
         }
+
         if (!loadingMore) {
           setMarketSourceFilter("all");
         }
@@ -104,12 +114,14 @@ export function useMarketSearch(active: boolean) {
         setMarketLoadingMore(false);
       });
 
-    return () => { stale = true; };
+    return () => {
+      stale = true;
+    };
   }, [active, debouncedMarketQuery, marketReloadKey, marketSearchLimit, marketTab, t]);
 
   const sourceOptions = useMemo(
     () => Array.from(new Set(marketSkills.map((skill) => skill.source))),
-    [marketSkills]
+    [marketSkills],
   );
 
   return {

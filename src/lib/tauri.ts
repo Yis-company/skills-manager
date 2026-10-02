@@ -12,7 +12,7 @@ export interface ToolInfo {
   enabled: boolean;
   is_custom: boolean;
   has_path_override: boolean;
-  project_relative_skills_dir: string | null;
+  project_relative_skills_dir: null | string;
   has_project_path_override: boolean;
   category: ToolCategory;
 }
@@ -20,19 +20,19 @@ export interface ToolInfo {
 export interface ManagedSkill {
   id: string;
   name: string;
-  description: string | null;
+  description: null | string;
   /** SKILL.md frontmatter author, when the skill names one. */
-  author: string | null;
+  author: null | string;
   source_type: string;
-  source_ref: string | null;
-  source_ref_resolved: string | null;
-  source_subpath: string | null;
-  source_branch: string | null;
-  source_revision: string | null;
-  remote_revision: string | null;
+  source_ref: null | string;
+  source_ref_resolved: null | string;
+  source_subpath: null | string;
+  source_branch: null | string;
+  source_revision: null | string;
+  remote_revision: null | string;
   update_status: string;
-  last_checked_at: number | null;
-  last_check_error: string | null;
+  last_checked_at: null | number;
+  last_check_error: null | string;
   central_path: string;
   enabled: boolean;
   created_at: number;
@@ -50,7 +50,7 @@ export interface SkillTarget {
   target_path: string;
   mode: string;
   status: string;
-  synced_at: number | null;
+  synced_at: null | number;
 }
 
 export interface SkillToolToggle {
@@ -76,19 +76,16 @@ export interface SourceSkillDocument {
   revision: string;
 }
 
-export type SkillSourceDiffStatus = "added" | "removed" | "modified";
-export type SkillSourceDiffContentKind =
-  | "text"
-  | "binary"
-  | "too_large"
-  | "permission_only";
+export type SkillSourceDiffStatus = "added" | "modified" | "removed";
+
+export type SkillSourceDiffContentKind = "binary" | "permission_only" | "text" | "too_large";
 
 export interface SkillSourceDiffEntry {
   relative_path: string;
   status: SkillSourceDiffStatus;
   content_kind: SkillSourceDiffContentKind;
-  original_text: string | null;
-  updated_text: string | null;
+  original_text: null | string;
+  updated_text: null | string;
   executable_before: boolean;
   executable_after: boolean;
 }
@@ -103,8 +100,8 @@ export interface SkillSourceDiff {
 export interface Preset {
   id: string;
   name: string;
-  description: string | null;
-  icon: string | null;
+  description: null | string;
+  icon: null | string;
   sort_order: number;
   skill_count: number;
   created_at: number;
@@ -113,7 +110,7 @@ export interface Preset {
 
 export interface DiscoveredGroup {
   name: string;
-  fingerprint: string | null;
+  fingerprint: null | string;
   locations: { id: string; tool: string; found_path: string }[];
   imported: boolean;
   found_at: number;
@@ -145,8 +142,8 @@ export interface Project {
   id: string;
   name: string;
   path: string;
-  workspace_type: "project" | "linked";
-  linked_agent_name: string | null;
+  workspace_type: "linked" | "project";
+  linked_agent_name: null | string;
   supports_skill_toggle: boolean;
   sort_order: number;
   skill_count: number;
@@ -154,12 +151,12 @@ export interface Project {
   created_at: number;
   updated_at: number;
   /** Agents the project deploys to; null means it never chose and uses every available agent. */
-  agent_keys: string[] | null;
+  agent_keys: null | string[];
   /** "copy" vendors skills into the project's .agents/skills and links the other agents there. */
   deploy_mode: ProjectDeployMode;
 }
 
-export type ProjectDeployMode = "link" | "copy";
+export type ProjectDeployMode = "copy" | "link";
 
 export interface ProjectAgentTarget {
   key: string;
@@ -176,12 +173,12 @@ export interface ProjectAgentTarget {
 }
 
 export type AgentSkipReason =
-  | "overridden"
-  | "not_in_library"
-  | "real_directory"
   | "foreign_link"
-  | "unavailable_agent"
-  | "shared_dir";
+  | "not_in_library"
+  | "overridden"
+  | "real_directory"
+  | "shared_dir"
+  | "unavailable_agent";
 
 export interface SkippedAgent {
   agent: string;
@@ -211,7 +208,7 @@ export interface SkillAgentOutcome {
   failed: { agent: string; error: string }[];
 }
 
-export type ConvertAction = "relink" | "keep_real_dir" | "keep_foreign_link" | "keep_mixed_state";
+export type ConvertAction = "keep_foreign_link" | "keep_mixed_state" | "keep_real_dir" | "relink";
 
 export interface VariantConversion {
   agent: string;
@@ -222,7 +219,7 @@ export interface SkillConversion {
   relative_path: string;
   name: string;
   /** Where the vendored copy comes from; null when it is vendored already. */
-  copy_from: string | null;
+  copy_from: null | string;
   variants: VariantConversion[];
 }
 
@@ -234,16 +231,16 @@ export interface ConversionOutcome {
   kept: VariantConversion[];
   failed: { agent: string; error: string }[];
   /** Why the vendored copy could not be written; nothing was relinked. */
-  error: string | null;
+  error: null | string;
 }
 
 export interface ProjectSkill {
   name: string;
   dir_name: string;
   relative_path: string;
-  description: string | null;
+  description: null | string;
   /** SKILL.md frontmatter author, when the skill names one. */
-  author: string | null;
+  author: null | string;
   path: string;
   files: string[];
   enabled: boolean;
@@ -251,12 +248,12 @@ export interface ProjectSkill {
   agent_display_name: string;
   tags: string[];
   in_center: boolean;
-  sync_status: "project_only" | "in_sync" | "project_newer" | "center_newer" | "diverged";
-  center_skill_id: string | null;
+  sync_status: "center_newer" | "diverged" | "in_sync" | "project_newer" | "project_only";
+  center_skill_id: null | string;
   /** The skill's agents were chosen by hand, so bulk agent changes skip it. */
   agents_overridden: boolean;
   /** Relative path of the vendored skill this copy links to, when it links into .agents/skills. */
-  alias_of: string | null;
+  alias_of: null | string;
   /** This copy is a vendored copy: real files in .agents/skills, which links from other agents may read. */
   vendored: boolean;
 }
@@ -279,19 +276,14 @@ export const setAllToolsEnabled = (enabled: boolean) =>
 
 export const getToolOrder = () => invoke<string[]>("get_tool_order_cmd");
 
-export const setToolOrder = (order: string[]) =>
-  invoke<void>("set_tool_order_cmd", { order });
+export const setToolOrder = (order: string[]) => invoke<void>("set_tool_order_cmd", { order });
 
 export const setCustomToolPath = (key: string, path: string) =>
   invoke<void>("set_custom_tool_path", { key, path });
 
-export const resetCustomToolPath = (key: string) =>
-  invoke<void>("reset_custom_tool_path", { key });
+export const resetCustomToolPath = (key: string) => invoke<void>("reset_custom_tool_path", { key });
 
-export const setCustomToolProjectPath = (
-  key: string,
-  projectRelativeSkillsDir: string | null,
-) =>
+export const setCustomToolProjectPath = (key: string, projectRelativeSkillsDir: null | string) =>
   invoke<void>("set_custom_tool_project_path", {
     key,
     projectRelativeSkillsDir,
@@ -313,13 +305,11 @@ export const addCustomTool = (
     projectRelativeSkillsDir: projectRelativeSkillsDir ?? null,
   });
 
-export const removeCustomTool = (key: string) =>
-  invoke<void>("remove_custom_tool", { key });
+export const removeCustomTool = (key: string) => invoke<void>("remove_custom_tool", { key });
 
 // ── Skills ──
 
-export const getManagedSkills = () =>
-  invoke<ManagedSkill[]>("get_managed_skills");
+export const getManagedSkills = () => invoke<ManagedSkill[]>("get_managed_skills");
 
 export const getSkillsForPreset = (presetId: string) =>
   invoke<ManagedSkill[]>("get_skills_for_preset", {
@@ -356,7 +346,7 @@ export interface GitSkillPreview {
   /** Path relative to the resolved scan root, using `/` separators. Stable key. */
   rel_path: string;
   name: string;
-  description: string | null;
+  description: null | string;
 }
 
 export interface GitPreviewResult {
@@ -381,8 +371,7 @@ export const cancelGitPreview = (tempDir: string) =>
 export const installFromSkillssh = (source: string, skillId: string) =>
   invoke<void>("install_from_skillssh", { source, skillId });
 
-export const cancelInstall = (key: string) =>
-  invoke<boolean>("cancel_install", { key });
+export const cancelInstall = (key: string) => invoke<boolean>("cancel_install", { key });
 
 export const checkSkillUpdate = (skillId: string, force?: boolean) =>
   invoke<ManagedSkill>("check_skill_update", {
@@ -408,7 +397,7 @@ export interface UpdateSkillResult {
    * Identifies exactly what `pending_removals` describes. Passing it back
    * approves that list at that revision and nothing else.
    */
-  removal_approval: string | null;
+  removal_approval: null | string;
 }
 
 export interface PendingRemoval {
@@ -418,7 +407,7 @@ export interface PendingRemoval {
 }
 
 /** `approvedRemovals` carries back `removal_approval` from a declined call. */
-export const updateSkill = (skillId: string, approvedRemovals?: string | null) =>
+export const updateSkill = (skillId: string, approvedRemovals?: null | string) =>
   invoke<UpdateSkillResult>("update_skill", {
     skillId,
     approvedRemovals: approvedRemovals ?? null,
@@ -440,10 +429,10 @@ export interface ReimportSkillResult {
   /** Non-empty means nothing was changed — see UpdateSkillResult. */
   pending_removals: PendingRemoval[];
   /** Approves exactly `pending_removals` — see UpdateSkillResult. */
-  removal_approval: string | null;
+  removal_approval: null | string;
 }
 
-export const reimportLocalSkill = (skillId: string, approvedRemovals?: string | null) =>
+export const reimportLocalSkill = (skillId: string, approvedRemovals?: null | string) =>
   invoke<ReimportSkillResult>("reimport_local_skill", {
     skillId,
     approvedRemovals: approvedRemovals ?? null,
@@ -452,7 +441,7 @@ export const reimportLocalSkill = (skillId: string, approvedRemovals?: string | 
 export const relinkLocalSkillSource = (
   skillId: string,
   sourcePath: string,
-  approvedRemovals?: string | null,
+  approvedRemovals?: null | string,
 ) =>
   invoke<ReimportSkillResult>("relink_local_skill_source", {
     skillId,
@@ -480,8 +469,7 @@ export const setSkillTags = (skillId: string, tags: string[]) =>
 export const renameTag = (oldName: string, newName: string) =>
   invoke<void>("rename_tag", { oldName, newName });
 
-export const deleteTag = (name: string) =>
-  invoke<void>("delete_tag", { name });
+export const deleteTag = (name: string) => invoke<void>("delete_tag", { name });
 
 // ── Sync ──
 
@@ -498,9 +486,8 @@ export const setSkillToolToggle = (
   skillId: string,
   presetId: string,
   tool: string,
-  enabled: boolean
-) =>
-  invoke<void>("set_skill_tool_toggle", { skillId, presetId, tool, enabled });
+  enabled: boolean,
+) => invoke<void>("set_skill_tool_toggle", { skillId, presetId, tool, enabled });
 
 // ── Scan ──
 
@@ -509,8 +496,7 @@ export const scanLocalSkills = () => invoke<ScanResult>("scan_local_skills");
 export const importExistingSkill = (sourcePath: string, name?: string) =>
   invoke<void>("import_existing_skill", { sourcePath, name: name || null });
 
-export const importAllDiscovered = () =>
-  invoke<void>("import_all_discovered");
+export const importAllDiscovered = () => invoke<void>("import_all_discovered");
 
 // ── Browse ──
 
@@ -525,37 +511,33 @@ export const searchSkillssh = (query: string, limit?: number) =>
 
 // ── Settings ──
 
-export const getSettings = (key: string) =>
-  invoke<string | null>("get_settings", { key });
+export const getSettings = (key: string) => invoke<null | string>("get_settings", { key });
 
 /** This computer's value even while a host is active. */
 export const getLocalSettings = (key: string) =>
-  invokeLocal<string | null>("get_settings", { key });
+  invokeLocal<null | string>("get_settings", { key });
 
 export const setSettings = (key: string, value: string) =>
   invoke<void>("set_settings", { key, value });
 
-export const getCentralRepoPath = () =>
-  invoke<string>("get_central_repo_path");
+export const getCentralRepoPath = () => invoke<string>("get_central_repo_path");
 
 export const getCentralRepoPathOverride = () =>
-  invoke<string | null>("get_central_repo_path_override");
+  invoke<null | string>("get_central_repo_path_override");
 
 export const getCentralRepoPendingPath = () =>
-  invoke<string | null>("get_central_repo_pending_path");
+  invoke<null | string>("get_central_repo_pending_path");
 
-export const getCentralRepoWarnings = () =>
-  invoke<string[]>("get_central_repo_warnings");
+export const getCentralRepoWarnings = () => invoke<string[]>("get_central_repo_warnings");
 
-export const setCentralRepoPath = (path?: string | null) =>
+export const setCentralRepoPath = (path?: null | string) =>
   invoke<string>("set_central_repo_path", { path: path ?? null });
 
 export const appExit = () => invoke<void>("app_exit");
 
 export const hideToTray = () => invoke<void>("hide_to_tray");
 
-export const openCentralRepoFolder = () =>
-  invoke<void>("open_central_repo_folder");
+export const openCentralRepoFolder = () => invoke<void>("open_central_repo_folder");
 
 export interface AppUpdateInfo {
   has_update: boolean;
@@ -564,12 +546,10 @@ export interface AppUpdateInfo {
   release_url: string;
 }
 
-export const checkAppUpdate = () =>
-  invoke<AppUpdateInfo>("check_app_update");
+export const checkAppUpdate = () => invoke<AppUpdateInfo>("check_app_update");
 
 /** Non-null when the app runs from somewhere an in-app update cannot be applied. */
-export const updateInstallBlocker = () =>
-  invoke<string | null>("update_install_blocker");
+export const updateInstallBlocker = () => invoke<null | string>("update_install_blocker");
 
 export const restartApp = () => invoke<void>("restart_app");
 
@@ -582,8 +562,7 @@ export interface DiagnosticInfo {
   central_repo_path_overridden: boolean;
 }
 
-export const getDiagnosticInfo = () =>
-  invoke<DiagnosticInfo>("get_diagnostic_info");
+export const getDiagnosticInfo = () => invoke<DiagnosticInfo>("get_diagnostic_info");
 
 export interface LogExcerpt {
   log_path: string;
@@ -592,27 +571,23 @@ export interface LogExcerpt {
   has_warnings: boolean;
 }
 
-export const getRecentLogExcerpt = () =>
-  invoke<LogExcerpt>("get_recent_log_excerpt");
+export const getRecentLogExcerpt = () => invoke<LogExcerpt>("get_recent_log_excerpt");
 
 export interface LogExportResult {
   zip_path: string;
   file_count: number;
 }
 
-export const exportLogsZip = () =>
-  invoke<LogExportResult>("export_logs_zip");
+export const exportLogsZip = () => invoke<LogExportResult>("export_logs_zip");
 
 export interface PanicInfo {
   timestamp: string;
   message: string;
 }
 
-export const checkLastPanic = () =>
-  invoke<PanicInfo | null>("check_last_panic");
+export const checkLastPanic = () => invoke<null | PanicInfo>("check_last_panic");
 
-export const clearLastPanic = () =>
-  invoke<void>("clear_last_panic");
+export const clearLastPanic = () => invoke<void>("clear_last_panic");
 
 /**
  * Diagnostic-only: write a named startup event with elapsed ms (from
@@ -626,24 +601,24 @@ export const logStartupEvent = (label: string, elapsedMs: number) =>
 // ── Git Backup ──
 
 export type GitUpstreamHealth =
+  | "detached"
   | "healthy"
   | "no_remote"
   | "no_upstream"
-  | "unrelated_histories"
-  | "detached";
+  | "unrelated_histories";
 
 export interface GitBackupStatus {
   is_repo: boolean;
-  remote_url: string | null;
-  branch: string | null;
+  remote_url: null | string;
+  branch: null | string;
   has_changes: boolean;
   changed_skill_count: number;
   ahead: number;
   behind: number;
-  last_commit: string | null;
-  last_commit_time: string | null;
-  current_snapshot_tag: string | null;
-  restored_from_tag: string | null;
+  last_commit: null | string;
+  last_commit_time: null | string;
+  current_snapshot_tag: null | string;
+  restored_from_tag: null | string;
   upstream_health: GitUpstreamHealth;
 }
 
@@ -664,16 +639,14 @@ export interface GitBackupSizeReport {
   repo_warn_bytes: number;
 }
 
-export const gitBackupStatus = () =>
-  invoke<GitBackupStatus>("git_backup_status");
+export const gitBackupStatus = () => invoke<GitBackupStatus>("git_backup_status");
 
 export const gitBackupFetch = () => invoke<void>("git_backup_fetch");
 
 export const gitBackupInit = () => invoke<void>("git_backup_init");
 
 /** Returns the sanitized URL actually configured (credentials moved to the OS keychain). */
-export const gitBackupSetRemote = (url: string) =>
-  invoke<string>("git_backup_set_remote", { url });
+export const gitBackupSetRemote = (url: string) => invoke<string>("git_backup_set_remote", { url });
 
 /** Strip embedded credentials into the OS keychain; returns the URL safe to persist. */
 export const gitBackupSanitizeRemoteUrl = (url: string) =>
@@ -702,7 +675,7 @@ export interface GithubDeviceFlowStart {
 }
 
 export interface GithubDevicePollResult {
-  status: "pending" | "slow_down" | "connected";
+  status: "connected" | "pending" | "slow_down";
   result: GithubBackupConnectResult | null;
 }
 
@@ -716,10 +689,9 @@ export const githubDeviceFlowPoll = (deviceCode: string, repoName: string) =>
 
 /** Migrate token-in-URL remotes to the OS keychain. Returns the sanitized URL if migrated. */
 export const gitBackupMigrateCredentials = () =>
-  invoke<string | null>("git_backup_migrate_credentials");
+  invoke<null | string>("git_backup_migrate_credentials");
 
-export const gitBackupSizeReport = () =>
-  invoke<GitBackupSizeReport>("git_backup_size_report");
+export const gitBackupSizeReport = () => invoke<GitBackupSizeReport>("git_backup_size_report");
 
 /** This machine's device name (§4.3): saved setting or persisted hostname default. */
 export const backupDeviceName = () => invoke<string>("backup_device_name");
@@ -728,11 +700,9 @@ export const backupDeviceName = () => invoke<string>("backup_device_name");
 export const backupSetDeviceName = (name: string) =>
   invoke<string>("backup_set_device_name", { name });
 
-export const gitBackupRemoveRemote = () =>
-  invoke<void>("git_backup_remove_remote");
+export const gitBackupRemoveRemote = () => invoke<void>("git_backup_remove_remote");
 
-export const gitBackupCommit = (message: string) =>
-  invoke<void>("git_backup_commit", { message });
+export const gitBackupCommit = (message: string) => invoke<void>("git_backup_commit", { message });
 
 export const gitBackupPush = () => invoke<void>("git_backup_push");
 
@@ -753,7 +723,7 @@ export interface MergeSummary {
   kept_local: string[];
   new_conflicts: string[];
   pending_total: number;
-  old_client_warning: string | null;
+  old_client_warning: null | string;
   legacy_fallback: boolean;
 }
 
@@ -765,7 +735,7 @@ export interface SyncOutcome {
   committed: boolean;
   merge: MergeSummary | null;
   pushed: boolean;
-  snapshot_tag: string | null;
+  snapshot_tag: null | string;
 }
 
 export const gitBackupSync = (message: string) =>
@@ -775,33 +745,28 @@ export const gitBackupSync = (message: string) =>
 export interface PendingConflict {
   skill_id: string;
   theirs_commit: string;
-  theirs_path: string | null;
+  theirs_path: null | string;
   detected_at: number;
 }
 
 export const gitBackupPendingConflicts = () =>
   invoke<PendingConflict[]>("git_backup_pending_conflicts");
 
-export type ResolveConflictAction = "keep_local" | "use_remote" | "keep_both";
+export type ResolveConflictAction = "keep_both" | "keep_local" | "use_remote";
 
 /** Resolve a pending conflict; returns the safety snapshot tag. */
-export const gitBackupResolveConflict = (
-  skillId: string,
-  action: ResolveConflictAction,
-) => invoke<string>("git_backup_resolve_conflict", { skillId, action });
+export const gitBackupResolveConflict = (skillId: string, action: ResolveConflictAction) =>
+  invoke<string>("git_backup_resolve_conflict", { skillId, action });
 
-export const gitBackupClone = (url: string) =>
-  invoke<void>("git_backup_clone", { url });
+export const gitBackupClone = (url: string) => invoke<void>("git_backup_clone", { url });
 
-export const gitBackupReclone = (url: string) =>
-  invoke<void>("git_backup_reclone", { url });
+export const gitBackupReclone = (url: string) => invoke<void>("git_backup_reclone", { url });
 
-export const gitBackupCreateSnapshot = () =>
-  invoke<string>("git_backup_create_snapshot");
+export const gitBackupCreateSnapshot = () => invoke<string>("git_backup_create_snapshot");
 
 export const gitBackupListVersions = (limit?: number) =>
   invoke<GitBackupVersion[]>("git_backup_list_versions", {
-    limit: typeof limit === "number" ? limit : null,
+    limit: limit ?? null,
   });
 
 /** Returns the safety-point tag that captured the pre-restore state. */
@@ -812,8 +777,7 @@ export const gitBackupRestoreVersion = (tag: string) =>
 
 export const getPresets = () => invoke<Preset[]>("get_presets");
 
-export const getActivePreset = () =>
-  invoke<Preset | null>("get_active_preset");
+export const getActivePreset = () => invoke<null | Preset>("get_active_preset");
 
 export const createPreset = (name: string, description?: string, icon?: string) =>
   invoke<Preset>("create_preset", {
@@ -822,12 +786,7 @@ export const createPreset = (name: string, description?: string, icon?: string) 
     icon: icon || null,
   });
 
-export const updatePreset = (
-  id: string,
-  name: string,
-  description?: string,
-  icon?: string
-) =>
+export const updatePreset = (id: string, name: string, description?: string, icon?: string) =>
   invoke<void>("update_preset", {
     id,
     name,
@@ -835,15 +794,12 @@ export const updatePreset = (
     icon: icon || null,
   });
 
-export const deletePreset = (id: string) =>
-  invoke<void>("delete_preset", { id });
+export const deletePreset = (id: string) => invoke<void>("delete_preset", { id });
 
 /** @deprecated v1.16+: clicking a scene no longer applies. Use applyPresetToDefault. */
-export const switchPreset = (id: string) =>
-  invoke<void>("switch_preset", { id });
+export const switchPreset = (id: string) => invoke<void>("switch_preset", { id });
 
-export const applyPresetToDefault = (id: string) =>
-  invoke<void>("apply_preset_to_default", { id });
+export const applyPresetToDefault = (id: string) => invoke<void>("apply_preset_to_default", { id });
 
 export const addSkillToPreset = (skillId: string, presetId: string) =>
   invoke<void>("add_skill_to_preset", { skillId, presetId });
@@ -851,11 +807,9 @@ export const addSkillToPreset = (skillId: string, presetId: string) =>
 export const removeSkillFromPreset = (skillId: string, presetId: string) =>
   invoke<void>("remove_skill_from_preset", { skillId, presetId });
 
-export const reorderPresets = (ids: string[]) =>
-  invoke<void>("reorder_presets", { ids });
+export const reorderPresets = (ids: string[]) => invoke<void>("reorder_presets", { ids });
 
-export const reorderProjects = (ids: string[]) =>
-  invoke<void>("reorder_projects", { ids });
+export const reorderProjects = (ids: string[]) => invoke<void>("reorder_projects", { ids });
 
 export const getPresetSkillOrder = (presetId: string) =>
   invoke<string[]>("get_preset_skill_order", { presetId });
@@ -877,11 +831,9 @@ export const addLinkedWorkspace = (name: string, path: string, disabledPath?: st
     disabledPath: disabledPath ?? null,
   });
 
-export const removeProject = (id: string) =>
-  invoke<void>("remove_project", { id });
+export const removeProject = (id: string) => invoke<void>("remove_project", { id });
 
-export const scanProjects = (root: string) =>
-  invoke<string[]>("scan_projects", { root });
+export const scanProjects = (root: string) => invoke<string[]>("scan_projects", { root });
 
 export const getProjectAgentTargets = (projectId: string) =>
   invoke<ProjectAgentTarget[]>("get_project_agent_targets", { projectId });
@@ -889,29 +841,54 @@ export const getProjectAgentTargets = (projectId: string) =>
 export const getProjectSkills = (projectId: string) =>
   invoke<ProjectSkill[]>("get_project_skills", { projectId });
 
-export const getProjectSkillDocument = (projectId: string, skillRelativePath: string, agent: string) =>
-  invoke<ProjectSkillDocument>("get_project_skill_document", { projectId, skillRelativePath, agent });
+export const getProjectSkillDocument = (
+  projectId: string,
+  skillRelativePath: string,
+  agent: string,
+) =>
+  invoke<ProjectSkillDocument>("get_project_skill_document", {
+    projectId,
+    skillRelativePath,
+    agent,
+  });
 
-export const importProjectSkillToCenter = (projectId: string, skillRelativePath: string, agent: string) =>
-  invoke<void>("import_project_skill_to_center", { projectId, skillRelativePath, agent });
+export const importProjectSkillToCenter = (
+  projectId: string,
+  skillRelativePath: string,
+  agent: string,
+) => invoke<void>("import_project_skill_to_center", { projectId, skillRelativePath, agent });
 
 export const exportSkillToProject = (skillId: string, projectId: string, agents?: string[]) =>
   invoke<void>("export_skill_to_project", { skillId, projectId, agents: agents ?? null });
 
-export const updateProjectSkillToCenter = (projectId: string, skillRelativePath: string, agent: string) =>
-  invoke<void>("update_project_skill_to_center", { projectId, skillRelativePath, agent });
+export const updateProjectSkillToCenter = (
+  projectId: string,
+  skillRelativePath: string,
+  agent: string,
+) => invoke<void>("update_project_skill_to_center", { projectId, skillRelativePath, agent });
 
-export const updateProjectSkillFromCenter = (projectId: string, skillRelativePath: string, agent: string) =>
-  invoke<void>("update_project_skill_from_center", { projectId, skillRelativePath, agent });
+export const updateProjectSkillFromCenter = (
+  projectId: string,
+  skillRelativePath: string,
+  agent: string,
+) => invoke<void>("update_project_skill_from_center", { projectId, skillRelativePath, agent });
 
-export const toggleProjectSkill = (projectId: string, skillRelativePath: string, agent: string, enabled: boolean) =>
-  invoke<void>("toggle_project_skill", { projectId, skillRelativePath, agent, enabled });
+export const toggleProjectSkill = (
+  projectId: string,
+  skillRelativePath: string,
+  agent: string,
+  enabled: boolean,
+) => invoke<void>("toggle_project_skill", { projectId, skillRelativePath, agent, enabled });
 
 /** A vendored copy is only deleted with `wholeSkill`, which also removes every link to it. */
-export const deleteProjectSkill = (projectId: string, skillRelativePath: string, agent: string, wholeSkill = false) =>
-  invoke<void>("delete_project_skill", { projectId, skillRelativePath, agent, wholeSkill });
+export const deleteProjectSkill = (
+  projectId: string,
+  skillRelativePath: string,
+  agent: string,
+  wholeSkill = false,
+) => invoke<void>("delete_project_skill", { projectId, skillRelativePath, agent, wholeSkill });
 
-export const setProjectAgentKeys = (projectId: string, agentKeys: string[] | null) =>
+export const setProjectAgentKeys = (projectId: string, agentKeys: null | string[]) =>
   invoke<void>("set_project_agent_keys", { projectId, agentKeys });
 
 export const previewProjectAgentChange = (projectId: string, agentKeys: string[]) =>
@@ -920,8 +897,16 @@ export const previewProjectAgentChange = (projectId: string, agentKeys: string[]
 export const applyProjectAgentChange = (projectId: string, agentKeys: string[]) =>
   invoke<SkillAgentOutcome[]>("apply_project_agent_change", { projectId, agentKeys });
 
-export const setProjectSkillAgents = (projectId: string, skillRelativePath: string, agentKeys: string[]) =>
-  invoke<SkillAgentOutcome>("set_project_skill_agents", { projectId, skillRelativePath, agentKeys });
+export const setProjectSkillAgents = (
+  projectId: string,
+  skillRelativePath: string,
+  agentKeys: string[],
+) =>
+  invoke<SkillAgentOutcome>("set_project_skill_agents", {
+    projectId,
+    skillRelativePath,
+    agentKeys,
+  });
 
 export const clearProjectSkillAgents = (projectId: string, skillRelativePath: string) =>
   invoke<SkillAgentOutcome>("clear_project_skill_agents", { projectId, skillRelativePath });
@@ -981,7 +966,7 @@ export interface DirectoryEntry {
 
 export interface DirectoryListing {
   path: string;
-  parent: string | null;
+  parent: null | string;
   entries: DirectoryEntry[];
 }
 
@@ -997,7 +982,7 @@ export interface RemoteHost {
   /** `user@host` or an `~/.ssh/config` alias. */
   ssh_target: string;
   /** Explicit CLI path on the remote; null resolves it like `manage-skills` does. */
-  cli_path: string | null;
+  cli_path: null | string;
   created_at: number;
 }
 
@@ -1009,6 +994,7 @@ export interface RemoteProbe {
 }
 
 export type RemoteCliInstallStage = "checking" | "downloading" | "installing";
+
 export interface RemoteCliInstallProgress {
   host_id: string;
   stage: RemoteCliInstallStage;
@@ -1019,11 +1005,15 @@ export const remoteHostsList = () => invoke<RemoteHost[]>("remote_hosts_list");
 export const remoteHostAdd = (name: string, sshTarget: string, cliPath?: string) =>
   invoke<RemoteHost>("remote_host_add", { name, sshTarget, cliPath: cliPath || null });
 
-export const remoteHostUpdate = (hostId: string, name: string, sshTarget: string, cliPath?: string) =>
+export const remoteHostUpdate = (
+  hostId: string,
+  name: string,
+  sshTarget: string,
+  cliPath?: string,
+) =>
   invoke<RemoteHost>("remote_host_update", { hostId, name, sshTarget, cliPath: cliPath || null });
 
-export const remoteHostRemove = (hostId: string) =>
-  invoke<void>("remote_host_remove", { hostId });
+export const remoteHostRemove = (hostId: string) => invoke<void>("remote_host_remove", { hostId });
 
 /** Rejects with the reason the host cannot be used (unreachable, no CLI, not POSIX). */
 export const remoteHostProbe = (hostId: string) =>

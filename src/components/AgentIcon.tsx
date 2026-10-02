@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from "react";
 import { Globe } from "lucide-react";
+import { type ReactNode, useState } from "react";
+
+import { agentIconNeedsDarkInvert, getAgentIconSrc } from "../lib/agentIcons";
 import { cn } from "../utils";
-import { getAgentIconSrc, agentIconNeedsDarkInvert } from "../lib/agentIcons";
 
 interface AgentIconProps {
   agentKey: string;
@@ -19,14 +20,14 @@ export function AgentIcon({
   fallback,
 }: AgentIconProps) {
   const src = getAgentIconSrc(agentKey);
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const [failedSrc, setFailedSrc] = useState<null | string>(null);
   const hasFailed = src === failedSrc;
 
   return (
     <span
       className={cn(
         "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-border-subtle bg-surface",
-        className
+        className,
       )}
       title={displayName}
       aria-hidden="true"
@@ -39,12 +40,12 @@ export function AgentIcon({
           className={cn(
             "h-full w-full object-contain",
             agentIconNeedsDarkInvert(agentKey) && "dark:invert",
-            imageClassName
+            imageClassName,
           )}
           onError={() => setFailedSrc(src)}
         />
       ) : (
-        fallback ?? <Globe className="h-1/2 w-1/2 text-muted" />
+        (fallback ?? <Globe className="h-1/2 w-1/2 text-muted" />)
       )}
     </span>
   );

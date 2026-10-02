@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { X } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 interface Props {
@@ -33,27 +33,25 @@ export function CloseActionDialog({ open, onCancel, onClose, onHide }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={handleCancel} />
-      <div className="relative bg-surface border border-border rounded-xl w-full max-w-sm p-5 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[13px] font-semibold text-primary">
-            {t("closeAction.title")}
-          </h2>
+      <div className="relative w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold text-primary">{t("closeAction.title")}</h2>
           <button
             onClick={handleCancel}
-            className="text-muted hover:text-secondary p-1 rounded transition-colors outline-none"
+            className="rounded p-1 text-muted outline-none transition-colors hover:text-secondary"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <p className="text-[13px] text-tertiary mb-4">{t("closeAction.message")}</p>
+        <p className="mb-4 text-[13px] text-tertiary">{t("closeAction.message")}</p>
 
-        <label className="flex items-center gap-2 mb-5 cursor-pointer select-none">
+        <label className="mb-5 flex cursor-pointer select-none items-center gap-2">
           <input
             type="checkbox"
             checked={remember}
             onChange={(e) => setRemember(e.target.checked)}
-            className="w-3.5 h-3.5 accent-[var(--color-accent)]"
+            className="h-3.5 w-3.5 accent-[var(--color-accent)]"
           />
           <span className="text-[13px] text-muted">{t("closeAction.remember")}</span>
         </label>
@@ -61,13 +59,13 @@ export function CloseActionDialog({ open, onCancel, onClose, onHide }: Props) {
         <div className="flex justify-end gap-2">
           <button
             onClick={handleClose}
-            className="px-3 py-1.5 rounded-lg text-[13px] font-medium text-tertiary hover:text-secondary hover:bg-surface-hover transition-colors outline-none"
+            className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-tertiary outline-none transition-colors hover:bg-surface-hover hover:text-secondary"
           >
             {t("closeAction.close")}
           </button>
           <button
             onClick={handleHide}
-            className="px-3 py-1.5 rounded-lg bg-accent-dark hover:bg-accent text-white text-[13px] font-medium transition-colors border border-accent-border outline-none"
+            className="rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent"
           >
             {t("closeAction.hide")}
           </button>

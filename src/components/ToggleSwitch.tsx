@@ -1,4 +1,5 @@
 import { Loader2 } from "lucide-react";
+
 import { cn } from "../utils";
 
 interface Props {
@@ -12,14 +13,7 @@ interface Props {
 }
 
 /** 34x20 pill switch — the canonical on/off control (see UI spec in CLAUDE.md). */
-export function ToggleSwitch({
-  checked,
-  onChange,
-  disabled,
-  loading,
-  title,
-  className,
-}: Props) {
+export function ToggleSwitch({ checked, onChange, disabled, loading, title, className }: Props) {
   return (
     <button
       type="button"
@@ -42,13 +36,13 @@ export function ToggleSwitch({
           : disabled
             ? "cursor-not-allowed opacity-40"
             : "cursor-pointer",
-        className
+        className,
       )}
     >
       <span
         className={cn(
           "absolute top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-all",
-          checked ? "left-[16px]" : "left-0.5"
+          checked ? "left-[16px]" : "left-0.5",
         )}
       >
         {loading && <Loader2 className="h-2.5 w-2.5 animate-spin text-muted" />}

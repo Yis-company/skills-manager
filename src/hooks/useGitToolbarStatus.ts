@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+
 import * as api from "../lib/tauri";
 import type { GitBackupStatus, ManagedSkill } from "../lib/tauri";
 
@@ -36,7 +37,9 @@ export function useGitToolbarStatus(onRemote: boolean, skills: ManagedSkill[]) {
   useEffect(() => {
     if (onRemote) return;
     (async () => {
-      const savedRemote = (await api.getSettings("git_backup_remote_url").catch(() => null))?.trim() || "";
+      const savedRemote =
+        (await api.getSettings("git_backup_remote_url").catch(() => null))?.trim() || "";
+
       const status = await api.gitBackupStatus().catch(() => null);
       setGitStatus(status);
       // The saved setting is the single source of truth. Do not backfill from
@@ -47,9 +50,11 @@ export function useGitToolbarStatus(onRemote: boolean, skills: ManagedSkill[]) {
 
   useEffect(() => {
     if (onRemote) return;
+
     const handleWindowFocus = () => {
       refreshGitStatus();
     };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         refreshGitStatus();
@@ -58,6 +63,7 @@ export function useGitToolbarStatus(onRemote: boolean, skills: ManagedSkill[]) {
 
     window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -66,9 +72,11 @@ export function useGitToolbarStatus(onRemote: boolean, skills: ManagedSkill[]) {
 
   useEffect(() => {
     if (onRemote) return;
+
     const timer = window.setTimeout(() => {
       refreshGitStatusLocal();
     }, 400);
+
     return () => window.clearTimeout(timer);
   }, [skills, refreshGitStatusLocal, onRemote]);
 

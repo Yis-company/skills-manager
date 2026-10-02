@@ -1,6 +1,7 @@
-import { useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronUp, Circle, Loader2 } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
+
 import { cn } from "../utils";
 import { AgentIcon } from "./AgentIcon";
 
@@ -10,22 +11,17 @@ export interface AgentToggleItem {
   enabled: boolean;
   isAvailable: boolean;
   disabled?: boolean;
-  badgeLabel?: string | null;
+  badgeLabel?: null | string;
 }
 
 interface Props {
   items: AgentToggleItem[];
-  togglingKey?: string | null;
+  togglingKey?: null | string;
   onToggle: (key: string, enabled: boolean) => void;
   className?: string;
 }
 
-export function AgentToggleSection({
-  items,
-  togglingKey,
-  onToggle,
-  className,
-}: Props) {
+export function AgentToggleSection({ items, togglingKey, onToggle, className }: Props) {
   const { t } = useTranslation();
   const [showUnavailable, setShowUnavailable] = useState(false);
 
@@ -68,7 +64,11 @@ export function AgentToggleSection({
               onClick={() => setShowUnavailable((prev) => !prev)}
               className="inline-flex items-center gap-1 text-[12px] text-muted transition-colors hover:text-secondary"
             >
-              {showUnavailable ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {showUnavailable ? (
+                <ChevronUp className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
               <span>{t("mySkills.agentUnavailableCount", { count: unavailableItems.length })}</span>
             </button>
             {showUnavailable && (
@@ -100,6 +100,7 @@ function AgentToggle({
   onToggle: (key: string, enabled: boolean) => void;
 }) {
   const disabled = Boolean(item.disabled || loading);
+
   return (
     <button
       type="button"
@@ -109,7 +110,7 @@ function AgentToggle({
         "flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-[12px] transition-colors",
         item.enabled ? "border-border bg-surface" : "border-border-subtle bg-bg-secondary",
         !disabled && "hover:bg-surface-hover",
-        disabled && "opacity-55"
+        disabled && "opacity-55",
       )}
       title={item.badgeLabel ?? undefined}
     >

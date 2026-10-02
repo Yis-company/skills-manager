@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { applyStoredOrder } from "./storedOrder";
 
 function items(...keys: string[]) {
@@ -11,7 +12,11 @@ function keysOf(list: { key: string }[]) {
 
 describe("applyStoredOrder", () => {
   it("puts stored keys first, in stored order", () => {
-    expect(keysOf(applyStoredOrder(items("a", "b", "c"), ["c", "a", "b"]))).toEqual(["c", "a", "b"]);
+    expect(keysOf(applyStoredOrder(items("a", "b", "c"), ["c", "a", "b"]))).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
   });
 
   it("ignores stored keys with no matching item", () => {
@@ -19,7 +24,12 @@ describe("applyStoredOrder", () => {
   });
 
   it("appends items missing from the stored order in their original order", () => {
-    expect(keysOf(applyStoredOrder(items("a", "b", "c", "d"), ["c"]))).toEqual(["c", "a", "b", "d"]);
+    expect(keysOf(applyStoredOrder(items("a", "b", "c", "d"), ["c"]))).toEqual([
+      "c",
+      "a",
+      "b",
+      "d",
+    ]);
   });
 
   it("keeps the original order when nothing is stored", () => {

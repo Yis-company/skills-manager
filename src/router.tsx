@@ -1,19 +1,20 @@
-import { Navigate, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import { AppProvider } from "./context/AppContext";
-import { HelpDialog } from "./components/HelpDialog";
+import { createRootRoute, createRoute, createRouter, Navigate } from "@tanstack/react-router";
+
 import { CloseActionGuard } from "./components/CloseActionGuard";
 import { FirstRunRestoreDialog } from "./components/FirstRunRestoreDialog";
-import { RemotePickerHost } from "./components/RemoteDirectoryPicker";
+import { HelpDialog } from "./components/HelpDialog";
 import { Layout } from "./components/Layout";
-import { Dashboard } from "./views/Dashboard";
-import { MySkills } from "./views/MySkills";
-import { WorkspaceView } from "./views/WorkspaceView";
-import { CODING_WORKSPACE_CONFIG, LOBSTER_WORKSPACE_CONFIG } from "./views/workspaceConfigs";
-import { InstallSkills } from "./views/InstallSkills";
-import { parseInstallSearch } from "./views/installSearch";
-import { Settings } from "./views/Settings";
-import { ProjectDetail } from "./views/ProjectDetail";
+import { RemotePickerHost } from "./components/RemoteDirectoryPicker";
+import { AppProvider } from "./context/AppContext";
 import { Backup } from "./views/Backup";
+import { Dashboard } from "./views/Dashboard";
+import { parseInstallSearch } from "./views/installSearch";
+import { InstallSkills } from "./views/InstallSkills";
+import { MySkills } from "./views/MySkills";
+import { ProjectDetail } from "./views/ProjectDetail";
+import { Settings } from "./views/Settings";
+import { CODING_WORKSPACE_CONFIG, LOBSTER_WORKSPACE_CONFIG } from "./views/workspaceConfigs";
+import { WorkspaceView } from "./views/WorkspaceView";
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -30,14 +31,26 @@ const rootRoute = createRootRoute({
 
 // Each route is its own const: routes created inline in `addChildren` lose their
 // literal paths, and every `to`, `from` and `params` then type-checks as any string.
-const dashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: Dashboard });
+const dashboardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/",
+  component: Dashboard,
+});
 
-const parseResourceSearch = (search: Record<string, unknown>) => {
+const parseResourceSearch = (search: {
+  resource?: unknown;
+}): { resource?: "instructions" | "mcps" } => {
   const { resource, ...other } = search;
+
   return resource === "instructions" || resource === "mcps" ? { ...other, resource } : other;
 };
 
-const mySkillsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/my-skills", validateSearch: parseResourceSearch, component: MySkills });
+const mySkillsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/my-skills",
+  validateSearch: parseResourceSearch,
+  component: MySkills,
+});
 
 const globalWorkspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -60,9 +73,18 @@ const installRoute = createRoute({
   component: InstallSkills,
 });
 
-const backupRoute = createRoute({ getParentRoute: () => rootRoute, path: "/backup", component: Backup });
+const backupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/backup",
+  component: Backup,
+});
 
-const projectRoute = createRoute({ getParentRoute: () => rootRoute, path: "/project/$id", validateSearch: parseResourceSearch, component: ProjectDetail });
+const projectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/project/$id",
+  validateSearch: parseResourceSearch,
+  component: ProjectDetail,
+});
 
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,

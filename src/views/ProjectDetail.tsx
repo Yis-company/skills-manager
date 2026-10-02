@@ -1,135 +1,203 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useParams, useNavigate } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import {
-  FolderOpen,
-  Search,
-  LayoutGrid,
-  List,
-  RefreshCw,
-  Download,
-  Upload,
-  Layers,
-  X,
-  Trash2,
-  SquareCheck,
-  Plus,
-  CircleSlash,
   CheckCircle2,
   Circle,
-  Tag,
-  SlidersHorizontal,
+  CircleSlash,
+  Download,
+  FolderOpen,
   GitBranch,
+  Layers,
+  LayoutGrid,
+  List,
+  Plus,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  SquareCheck,
+  Tag,
+  Trash2,
+  Upload,
+  X,
 } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { useApp } from "../context/AppContext";
-import { useMultiSelect } from "../hooks/useMultiSelect";
-import { useProjectSkills } from "../hooks/useProjectSkills";
-import { useLastUsedExportAgents } from "../hooks/useLastUsedExportAgents";
-import { useProjectAgentTargets } from "../hooks/useProjectAgentTargets";
+
+import { AddSkillsSheet } from "../components/AddSkillsSheet";
+import { BatchTagDialog } from "../components/BatchTagDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
-import { BatchTagDialog } from "../components/BatchTagDialog";
 import { PresetBar } from "../components/PresetBar";
-import { ProjectSkillDetailPanel } from "../components/ProjectSkillDetailPanel";
+import { ProjectAgentsDialog } from "../components/ProjectAgentsDialog";
+import { ProjectGitDialog } from "../components/ProjectGitDialog";
 import { ProjectSkillCard } from "../components/ProjectSkillCard";
-import { ProjectSkillRow } from "../components/ProjectSkillRow";
+import { ProjectSkillDetailPanel } from "../components/ProjectSkillDetailPanel";
 import type { ProjectSkillItemProps } from "../components/projectSkillItem";
-import { getTagActiveColor, getTagColor, pruneStaleTagFilters, UNTAGGED_FILTER } from "../lib/skillTags";
+import { ProjectSkillRow } from "../components/ProjectSkillRow";
+import { ResourceWorkspace } from "../components/ResourceWorkspace";
+import { RetiredLinksBanner } from "../components/RetiredLinksBanner";
+import { useApp } from "../context/AppContext";
+import { useLastUsedExportAgents } from "../hooks/useLastUsedExportAgents";
+import { useMultiSelect } from "../hooks/useMultiSelect";
+import { useProjectAgentTargets } from "../hooks/useProjectAgentTargets";
+import { useProjectSkills } from "../hooks/useProjectSkills";
+import {
+  projectSkillsQueryOptions,
+  projectsQueryOptions,
+  queryKeys,
+  refreshQuery,
+} from "../lib/appQueries";
+import { getErrorMessage } from "../lib/error";
 import { enabledInstalledAgentKeys, getDefaultExportAgents } from "../lib/exportAgents";
+import { invokeHost } from "../lib/hostCall";
 import {
   filterProjectSkillGroups,
+  getAssignedAgents,
   getProjectUpdateCandidates,
   getProjectUpdateReviewCount,
-  getAssignedAgents,
   groupProjectSkills,
   isCenterUpdatable,
   pickInitialAgents,
   type ProjectSkillGroup,
 } from "../lib/projectSkillGroups";
 import { copyCreator } from "../lib/skillCreator";
-import { cn } from "../utils";
+import {
+  getTagActiveColor,
+  getTagColor,
+  pruneStaleTagFilters,
+  UNTAGGED_FILTER,
+} from "../lib/skillTags";
 import * as api from "../lib/tauri";
-import type { ProjectSkill, ManagedSkill } from "../lib/tauri";
-import { getErrorMessage } from "../lib/error";
-import { invokeHost } from "../lib/hostCall";
-import { projectSkillsQueryOptions, projectsQueryOptions, queryKeys, refreshQuery } from "../lib/appQueries";
-import { AddSkillsSheet } from "../components/AddSkillsSheet";
-import { ProjectAgentsDialog } from "../components/ProjectAgentsDialog";
-import { RetiredLinksBanner } from "../components/RetiredLinksBanner";
-import { ResourceWorkspace } from "../components/ResourceWorkspace";
-import { ProjectGitDialog } from "../components/ProjectGitDialog";
+import type { ManagedSkill, ProjectSkill } from "../lib/tauri";
+import { cn } from "../utils";
 
 export function ProjectDetail() {
   const { id } = useParams({ from: "/project/$id" });
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { projects, presets, managedSkills, refreshManagedSkills, refreshPresets, refreshProjects, loading: projectsLoading, activeHostId } = useApp();
+
+  const {
+    projects,
+    presets,
+    managedSkills,
+    refreshManagedSkills,
+    refreshPresets,
+    refreshProjects,
+    loading: projectsLoading,
+    activeHostId,
+  } = useApp();
+
   const queryClient = useQueryClient();
-  const projectMetadataLoaded = queryClient.getQueryState(queryKeys.projects(activeHostId))?.status === "success";
+
+  const projectMetadataLoaded =
+    queryClient.getQueryState(queryKeys.projects(activeHostId))?.status === "success";
+
   const deleteProjectSkillMutation = useMutation({
-    mutationFn: ({ hostId, projectId, relativePath, agent }: {
-      hostId: string | null;
+    mutationFn: ({
+      hostId,
+      projectId,
+      relativePath,
+      agent,
+    }: {
+      hostId: null | string;
       projectId: string;
       relativePath: string;
       agent: string;
-    }) => invokeHost<void>(hostId, "delete_project_skill", {
-      projectId,
-      skillRelativePath: relativePath,
-      agent,
-      wholeSkill: true,
-    }),
+    }) =>
+      invokeHost<void>(hostId, "delete_project_skill", {
+        projectId,
+        skillRelativePath: relativePath,
+        agent,
+        wholeSkill: true,
+      }),
   });
+
   const mountedRef = useRef(true);
-  const viewIdentityRef = useRef({ hostId: activeHostId, projectId: id, version: 0 });
-  if (viewIdentityRef.current.hostId !== activeHostId || viewIdentityRef.current.projectId !== id) {
-    viewIdentityRef.current = { hostId: activeHostId, projectId: id, version: viewIdentityRef.current.version + 1 };
-  }
+  // Bumped on every host or project switch, so async work started on one view
+  // can tell it no longer owns the screen.
+  const viewVersionRef = useRef(0);
+  useLayoutEffect(() => {
+    viewVersionRef.current += 1;
+  }, [activeHostId, id]);
+
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [filterMode, setFilterMode] = useState<"all" | "enabled" | "disabled">("all");
+  const [filterMode, setFilterMode] = useState<"all" | "disabled" | "enabled">("all");
   const [search, setSearch] = useState("");
   const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
-  const [detailSkill, setDetailSkill] = useState<ProjectSkillGroup | null>(null);
-  const [docContent, setDocContent] = useState<string | null>(null);
+  const [detailSkill, setDetailSkill] = useState<null | ProjectSkillGroup>(null);
+  const [docContent, setDocContent] = useState<null | string>(null);
   const [docLoading, setDocLoading] = useState(false);
-  const [centerDocContent, setCenterDocContent] = useState<string | null>(null);
+  const [centerDocContent, setCenterDocContent] = useState<null | string>(null);
   const [centerDocLoading, setCenterDocLoading] = useState(false);
-  const [updatingCenterSkill, setUpdatingCenterSkill] = useState<string | null>(null);
-  const [updatingProjectSkill, setUpdatingProjectSkill] = useState<string | null>(null);
+  const [updatingCenterSkill, setUpdatingCenterSkill] = useState<null | string>(null);
+  const [updatingProjectSkill, setUpdatingProjectSkill] = useState<null | string>(null);
   const [batchUpdatingCenter, setBatchUpdatingCenter] = useState(false);
   const [batchUpdatingProject, setBatchUpdatingProject] = useState(false);
   const projectUpdateInFlightRef = useRef(false);
-  const [togglingSkill, setTogglingSkill] = useState<string | null>(null);
-  const [togglingAgentTarget, setTogglingAgentTarget] = useState<{ skillKey: string; agent: string } | null>(null);
+  const [togglingSkill, setTogglingSkill] = useState<null | string>(null);
+
+  const [togglingAgentTarget, setTogglingAgentTarget] = useState<{
+    skillKey: string;
+    agent: string;
+  } | null>(null);
+
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showAgentsDialog, setShowAgentsDialog] = useState(false);
   const [showGitDialog, setShowGitDialog] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<ProjectSkillGroup | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<null | ProjectSkillGroup>(null);
+
   const [batchDeleteTarget, setBatchDeleteTarget] = useState<{
-    hostId: string | null;
+    hostId: null | string;
     projectId: string;
     projectName: string;
     viewVersion: number;
     skills: ProjectSkillGroup[];
   } | null>(null);
+
   const [batchDeleteRunning, setBatchDeleteRunning] = useState(false);
+
   const [batchDeleteFailure, setBatchDeleteFailure] = useState<{
     deleted: number;
     failures: Array<{ name: string; error: string }>;
   } | null>(null);
-  useEffect(() => {
+
+  const [viewScope, setViewScope] = useState({ hostId: activeHostId, projectId: id });
+
+  if (viewScope.hostId !== activeHostId || viewScope.projectId !== id) {
+    setViewScope({ hostId: activeHostId, projectId: id });
     setBatchDeleteTarget(null);
     setBatchDeleteFailure(null);
-  }, [activeHostId, id]);
+
+    if (viewScope.projectId !== id) {
+      setSearch("");
+      setFilterMode("all");
+      setTagFilters(new Set());
+      setDetailSkill(null);
+      setDocContent(null);
+      setCenterDocContent(null);
+    }
+  }
+
   const [batchTagDialogOpen, setBatchTagDialogOpen] = useState(false);
   const [batchToggling, setBatchToggling] = useState(false);
-  const batchSelectionLocked = batchDeleteRunning || batchDeleteTarget !== null || batchToggling || batchUpdatingCenter || batchUpdatingProject;
+
+  const batchSelectionLocked =
+    batchDeleteRunning ||
+    batchDeleteTarget !== null ||
+    batchToggling ||
+    batchUpdatingCenter ||
+    batchUpdatingProject;
+
   const PROJECT_ADD_CALLOUT_KEY = "skills-manager.projectAddCalloutDismissed";
+
   const [showAddCallout, setShowAddCallout] = useState(() => {
     try {
       return localStorage.getItem(PROJECT_ADD_CALLOUT_KEY) !== "1";
@@ -137,8 +205,10 @@ export function ProjectDetail() {
       return false;
     }
   });
+
   const dismissAddCallout = () => {
     setShowAddCallout(false);
+
     try {
       localStorage.setItem(PROJECT_ADD_CALLOUT_KEY, "1");
     } catch {
@@ -147,20 +217,12 @@ export function ProjectDetail() {
   };
 
   const project = projects.find((p) => p.id === id);
+
   const getSkillKey = useCallback((skill: Pick<ProjectSkillGroup, "id">) => {
     return skill.id;
   }, []);
 
   const { skills, loading, fetching, error: skillsError, loadSkills } = useProjectSkills(id);
-
-  useEffect(() => {
-    setSearch("");
-    setFilterMode("all");
-    setTagFilters(new Set());
-    setDetailSkill(null);
-    setDocContent(null);
-    setCenterDocContent(null);
-  }, [id]);
 
   const projectAgentTargets = useProjectAgentTargets(id, project?.agent_keys ?? null);
 
@@ -172,26 +234,14 @@ export function ProjectDetail() {
 
   const groupedSkills = useMemo(() => groupProjectSkills(skills), [skills]);
 
-  useEffect(() => {
-    if (!detailSkill) return;
-    const refreshed = groupedSkills.find((skill) => skill.id === detailSkill.id) ?? null;
-    if (!refreshed) {
-      setDetailSkill(null);
-      setDocContent(null);
-      return;
-    }
-    if (refreshed !== detailSkill) {
-      setDetailSkill(refreshed);
-    }
-  }, [detailSkill, groupedSkills]);
-
   const filtered = useMemo(
     () => filterProjectSkillGroups(groupedSkills, { search, tags: tagFilters, mode: filterMode }),
-    [groupedSkills, search, filterMode, tagFilters]
+    [groupedSkills, search, filterMode, tagFilters],
   );
 
   const {
-    isMultiSelect, setIsMultiSelect,
+    isMultiSelect,
+    setIsMultiSelect,
     selectedIds,
     toggleSelect,
     isAllSelected,
@@ -211,137 +261,181 @@ export function ProjectDetail() {
 
   const exportTargets = useMemo(() => {
     if (projectAgentTargets.length > 0) return projectAgentTargets;
-    return [{
-      key: "claude_code",
-      display_name: "Claude Code",
-      enabled: true,
-      installed: true,
-      is_custom: false,
-      selected: true,
-      relative_skills_dir: ".claude/skills",
-      agent_names: ["Claude Code"],
-    }];
+
+    return [
+      {
+        key: "claude_code",
+        display_name: "Claude Code",
+        enabled: true,
+        installed: true,
+        is_custom: false,
+        selected: true,
+        relative_skills_dir: ".claude/skills",
+        agent_names: ["Claude Code"],
+      },
+    ];
   }, [projectAgentTargets]);
 
   const isCopyMode = project?.deploy_mode === "copy";
+
   // The agent group holding a vendored copy stays on: removing it would remove
   // the files every other agent links to. Decided from the disk, so it holds
   // after the project switches back to linking.
   const vendoredLockOf = (skill: ProjectSkillGroup) => {
     const vendored = skill.vendoredVariant;
+
     if (!vendored) return null;
-    const agents = projectAgentTargets.find((target) => target.key === vendored.agent)?.display_name
-      ?? vendored.agent_display_name;
+
+    const agents =
+      projectAgentTargets.find((target) => target.key === vendored.agent)?.display_name ??
+      vendored.agent_display_name;
+
     return { key: vendored.agent, reason: t("project.vendored.lockedReason", { agents }) };
   };
 
   // Independent copies are handled together. Links into .agents/skills follow
   // their vendored copy: then one call per copy that is not such a link, in
   // turn, so no two calls race on the vendored copy.
-  const forEachCopy = async (skill: ProjectSkillGroup, run: (variant: ProjectSkill) => Promise<unknown>) => {
+  const forEachCopy = async (
+    skill: ProjectSkillGroup,
+    run: (variant: ProjectSkill) => Promise<void>,
+  ) => {
     if (!skill.variants.some((variant) => variant.alias_of)) {
       await Promise.all(skill.variants.map(run));
+
       return;
     }
+
     for (const variant of skill.effectiveVariants) await run(variant);
   };
 
-  const removeConfirmedProjectCopy = useCallback(async (hostId: string | null, projectId: string, removed: ProjectSkill) => {
-    const key = queryKeys.projectSkills(hostId, projectId);
-    await queryClient.cancelQueries({ queryKey: key, exact: true });
-    queryClient.setQueryData<ProjectSkill[]>(key, (current) => current?.filter((skill) => {
-      const sameCopy = skill.relative_path === removed.relative_path && skill.agent === removed.agent;
-      // Only a confirmed vendored deletion also removes the links into it.
-      const removedLink = removed.vendored && skill.alias_of === removed.relative_path;
-      return !sameCopy && !removedLink;
-    }));
-  }, [queryClient]);
+  const removeConfirmedProjectCopy = useCallback(
+    async (hostId: null | string, projectId: string, removed: ProjectSkill) => {
+      const key = queryKeys.projectSkills(hostId, projectId);
+      await queryClient.cancelQueries({ queryKey: key, exact: true });
+      queryClient.setQueryData<ProjectSkill[]>(key, (current) =>
+        current?.filter((skill) => {
+          const sameCopy =
+            skill.relative_path === removed.relative_path && skill.agent === removed.agent;
 
-  const refreshAfterProjectDelete = useCallback(async (hostId: string | null, projectId: string) => {
-    await Promise.allSettled([
-      refreshQuery(queryClient, projectSkillsQueryOptions(hostId, projectId)),
-      refreshQuery(queryClient, projectsQueryOptions(hostId)),
-    ]);
-  }, [queryClient]);
+          // Only a confirmed vendored deletion also removes the links into it.
+          const removedLink = removed.vendored && skill.alias_of === removed.relative_path;
 
-  const deleteProjectCopies = useCallback(async (skill: ProjectSkillGroup, hostId: string | null, projectId: string) => {
-    let firstError: unknown;
-    const removeCopy = async (variant: ProjectSkill) => {
-      try {
-        await deleteProjectSkillMutation.mutateAsync({
-          hostId,
-          projectId,
-          relativePath: variant.relative_path,
-          agent: variant.agent,
-        });
-        await removeConfirmedProjectCopy(hostId, projectId, variant);
-      } catch (error) {
-        firstError ??= error;
+          return !sameCopy && !removedLink;
+        }),
+      );
+    },
+    [queryClient],
+  );
+
+  const refreshAfterProjectDelete = useCallback(
+    async (hostId: null | string, projectId: string) => {
+      await Promise.allSettled([
+        refreshQuery(queryClient, projectSkillsQueryOptions(hostId, projectId)),
+        refreshQuery(queryClient, projectsQueryOptions(hostId)),
+      ]);
+    },
+    [queryClient],
+  );
+
+  const deleteProjectCopies = useCallback(
+    async (skill: ProjectSkillGroup, hostId: null | string, projectId: string) => {
+      let firstError: unknown;
+
+      const removeCopy = async (variant: ProjectSkill) => {
+        try {
+          await deleteProjectSkillMutation.mutateAsync({
+            hostId,
+            projectId,
+            relativePath: variant.relative_path,
+            agent: variant.agent,
+          });
+          await removeConfirmedProjectCopy(hostId, projectId, variant);
+        } catch (error) {
+          firstError ??= error;
+        }
+      };
+
+      if (skill.variants.some((variant) => variant.alias_of)) {
+        // Whole-skill deletion removes links from the vendored copy, so keep
+        // these calls ordered and never issue a delete for a link itself.
+        for (const variant of skill.effectiveVariants) await removeCopy(variant);
+      } else {
+        await Promise.all(skill.variants.map(removeCopy));
       }
-    };
-    if (skill.variants.some((variant) => variant.alias_of)) {
-      // Whole-skill deletion removes links from the vendored copy, so keep
-      // these calls ordered and never issue a delete for a link itself.
-      for (const variant of skill.effectiveVariants) await removeCopy(variant);
-    } else {
-      await Promise.all(skill.variants.map(removeCopy));
-    }
-    return { error: firstError };
-  }, [deleteProjectSkillMutation, removeConfirmedProjectCopy]);
+
+      return { error: firstError };
+    },
+    [deleteProjectSkillMutation, removeConfirmedProjectCopy],
+  );
 
   const projectSkillDirNamesByAgent = useMemo(() => {
     const map: Record<string, string[]> = {};
+
     for (const skill of skills) {
       if (!map[skill.agent]) {
         map[skill.agent] = [];
       }
+
       map[skill.agent].push(skill.relative_path.toLowerCase());
     }
+
     return map;
   }, [skills]);
 
   const projectCenterSkillIdsByAgent = useMemo(() => {
     const map: Record<string, string[]> = {};
+
     for (const skill of skills) {
       if (!skill.center_skill_id) continue;
+
       if (!map[skill.agent]) {
         map[skill.agent] = [];
       }
+
       map[skill.agent].push(skill.center_skill_id);
     }
+
     return map;
   }, [skills]);
 
   const projectPresetVariants = useMemo(() => {
     const map = new Map<string, ProjectSkill>();
+
     for (const skill of skills) {
       if (!skill.center_skill_id) continue;
       map.set(`${skill.center_skill_id}::${skill.agent}`, skill);
     }
+
     return map;
   }, [skills]);
 
   const findProjectPresetVariant = useCallback(
     (skill: ManagedSkill, agentKey: string) =>
       projectPresetVariants.get(`${skill.id}::${agentKey}`) ?? null,
-    [projectPresetVariants]
+    [projectPresetVariants],
   );
 
-  const selectedExportAgents = useMemo(() => getDefaultExportAgents(exportTargets), [exportTargets]);
+  const selectedExportAgents = useMemo(
+    () => getDefaultExportAgents(exportTargets),
+    [exportTargets],
+  );
 
   const { lastUsedExportAgents, handlePersistLastUsedAgents } = useLastUsedExportAgents(id);
 
   // A project that chose its agents always starts from them; the last-used
   // heuristic only stands in for projects that never chose.
   const hasAgentSelection = Boolean(project?.agent_keys);
+
   const initialSheetAgents = useMemo(
-    () => pickInitialAgents(
-      new Set(enabledInstalledAgentKeys(exportTargets)),
-      selectedExportAgents,
-      lastUsedExportAgents,
-      hasAgentSelection,
-    ),
-    [exportTargets, hasAgentSelection, lastUsedExportAgents, selectedExportAgents]
+    () =>
+      pickInitialAgents(
+        new Set(enabledInstalledAgentKeys(exportTargets)),
+        selectedExportAgents,
+        lastUsedExportAgents,
+        hasAgentSelection,
+      ),
+    [exportTargets, hasAgentSelection, lastUsedExportAgents, selectedExportAgents],
   );
 
   const presetBarAgentKeys = useMemo(() => {
@@ -351,33 +445,55 @@ export function ProjectDetail() {
     // reported — so keep the bar out of the DOM until the targets are real.
     if (projectAgentTargets.length === 0) return [];
     const availableKeys = new Set(enabledInstalledAgentKeys(exportTargets));
+
     return selectedExportAgents.filter((key) => availableKeys.has(key));
   }, [exportTargets, projectAgentTargets, selectedExportAgents]);
 
   const enabledCount = groupedSkills.filter((s) => s.enabledCount > 0).length;
+
   const allTags = useMemo(() => {
     const tags = new Set<string>();
+
     for (const skill of groupedSkills) {
       for (const tag of skill.tags) {
         if (tag.trim()) tags.add(tag);
       }
     }
+
     return Array.from(tags).sort((a, b) => a.localeCompare(b));
   }, [groupedSkills]);
 
-  // Prune tag filters whose pill disappeared (e.g. its last skill was deleted),
-  // otherwise a stale filter silently hides everything. An empty skill list
-  // says nothing about which tags are valid, so wait for one before pruning.
-  useEffect(() => {
-    if (groupedSkills.length === 0) return;
-    const hasUntagged = groupedSkills.some((skill) => skill.tags.length === 0);
-    setTagFilters((prev) => pruneStaleTagFilters(prev, allTags, hasUntagged));
-  }, [allTags, groupedSkills]);
+  const [prevGroupedSkills, setPrevGroupedSkills] = useState(groupedSkills);
+
+  if (prevGroupedSkills !== groupedSkills) {
+    setPrevGroupedSkills(groupedSkills);
+
+    // Keep the open detail on the refreshed group, or close it once it is gone.
+    if (detailSkill) {
+      const refreshed = groupedSkills.find((skill) => skill.id === detailSkill.id) ?? null;
+
+      if (!refreshed) {
+        setDetailSkill(null);
+        setDocContent(null);
+      } else if (refreshed !== detailSkill) {
+        setDetailSkill(refreshed);
+      }
+    }
+
+    // Prune tag filters whose pill disappeared (e.g. its last skill was deleted),
+    // otherwise a stale filter silently hides everything. An empty skill list
+    // says nothing about which tags are valid, so wait for one before pruning.
+    if (groupedSkills.length > 0) {
+      const hasUntagged = groupedSkills.some((skill) => skill.tags.length === 0);
+      setTagFilters((prev) => pruneStaleTagFilters(prev, allTags, hasUntagged));
+    }
+  }
 
   const selectedSkills = useMemo(
     () => groupedSkills.filter((skill) => selectedIds.has(getSkillKey(skill))),
-    [getSkillKey, groupedSkills, selectedIds]
+    [getSkillKey, groupedSkills, selectedIds],
   );
+
   /**
    * Tags live on the central skill, and one selected row can map to several of
    * them — so the button counts (and the dialog shows) the central skills that
@@ -385,41 +501,50 @@ export function ProjectDetail() {
    */
   const managedById = useMemo(
     () => new Map(managedSkills.map((skill) => [skill.id, skill])),
-    [managedSkills]
+    [managedSkills],
   );
+
   const creatorOf = (skill: ProjectSkillGroup) =>
     copyCreator(
       skill.centerSkillIds.map((centerId) => managedById.get(centerId)).find(Boolean),
-      skill.variants.find((variant) => variant.author)?.author
+      skill.variants.find((variant) => variant.author)?.author,
     );
+
   const selectedCenterSkills = useMemo(() => {
     const byId = new Map(managedSkills.map((skill) => [skill.id, skill]));
     const ids = new Set(selectedSkills.flatMap((skill) => skill.centerSkillIds));
-    return [...ids]
-      .map((centerId) => byId.get(centerId))
-      .filter((skill): skill is ManagedSkill => !!skill);
+
+    return [...ids].flatMap((centerId) => {
+      const skill = byId.get(centerId);
+
+      return skill ? [skill] : [];
+    });
   }, [managedSkills, selectedSkills]);
+
   // Counts, not booleans: the buttons must announce how many skills they will
   // actually touch, which is rarely the whole selection.
   const updatableCenterCount = useMemo(
     () => selectedSkills.filter((skill) => isCenterUpdatable(skill.status)).length,
-    [selectedSkills]
+    [selectedSkills],
   );
+
   const updatableProjectCount = useMemo(
     () => selectedSkills.filter((skill) => getProjectUpdateCandidates(skill).length > 0).length,
-    [selectedSkills]
+    [selectedSkills],
   );
+
   const updatableProjectVariantCount = useMemo(
-    () => groupedSkills.reduce((count, skill) => count + getProjectUpdateCandidates(skill).length, 0),
-    [groupedSkills]
+    () =>
+      groupedSkills.reduce((count, skill) => count + getProjectUpdateCandidates(skill).length, 0),
+    [groupedSkills],
   );
+
   const togglableSelectedCount = useMemo(
-    () => selectedSkills.filter((skill) => (
-      anyDisabled
-        ? skill.enabledCount !== skill.totalCount
-        : skill.enabledCount > 0
-    )).length,
-    [selectedSkills, anyDisabled]
+    () =>
+      selectedSkills.filter((skill) =>
+        anyDisabled ? skill.enabledCount !== skill.totalCount : skill.enabledCount > 0,
+      ).length,
+    [selectedSkills, anyDisabled],
   );
 
   const handleOpenDetail = async (skill: ProjectSkillGroup) => {
@@ -428,13 +553,15 @@ export function ProjectDetail() {
     setDocLoading(true);
     setCenterDocContent(null);
     setCenterDocLoading(false);
+
     if (!project || !id) return;
 
     const centerSkillId = skill.centerSkillIds.length > 0 ? skill.centerSkillIds[0] : null;
 
     if (centerSkillId) {
       setCenterDocLoading(true);
-      api.getSkillDocument(centerSkillId)
+      api
+        .getSkillDocument(centerSkillId)
         .then((doc) => setCenterDocContent(doc.content))
         .catch(() => setCenterDocContent(null))
         .finally(() => setCenterDocLoading(false));
@@ -444,8 +571,9 @@ export function ProjectDetail() {
       const doc = await api.getProjectSkillDocument(
         id,
         skill.primaryVariant.relative_path,
-        skill.primaryVariant.agent
+        skill.primaryVariant.agent,
       );
+
       setDocContent(doc.content);
     } catch {
       setDocContent(null);
@@ -470,13 +598,14 @@ export function ProjectDetail() {
   // project_newer, so nothing stops it. Refuse and name the conflict instead,
   // the way 1.34.0 answers a write that would destroy something.
   const pushSkillToCenterAndAlign = async (
-    skill: ProjectSkillGroup
+    skill: ProjectSkillGroup,
   ): Promise<{ alignFailed: number; conflicting: number }> => {
     if (!id) return { alignFailed: 0, conflicting: 0 };
 
     // Links into .agents/skills read their vendored copy, so they are not
     // copies of their own here.
     const unproven = skill.effectiveVariants.filter((v) => v.sync_status !== "in_sync");
+
     if (unproven.length > 1) {
       return { alignFailed: 0, conflicting: unproven.length };
     }
@@ -491,6 +620,7 @@ export function ProjectDetail() {
     // onto one real directory, and each realign removes and rebuilds its
     // target, so concurrent calls on one path make a call fail for no reason.
     let alignFailed = 0;
+
     for (const variant of skill.effectiveVariants.filter((v) => v !== winner)) {
       try {
         await api.updateProjectSkillFromCenter(id, variant.relative_path, variant.agent);
@@ -498,25 +628,27 @@ export function ProjectDetail() {
         alignFailed += 1;
       }
     }
+
     return { alignFailed, conflicting: 0 };
   };
 
   const handleUpdateCenter = async (skill: ProjectSkillGroup) => {
     if (!id) return;
     setUpdatingCenterSkill(getSkillKey(skill));
+
     try {
       const { alignFailed, conflicting } = await pushSkillToCenterAndAlign(skill);
+
       if (conflicting > 0) {
-        toast.warning(
-          t("project.updateCenterConflict", { name: skill.name, count: conflicting })
-        );
+        toast.warning(t("project.updateCenterConflict", { name: skill.name, count: conflicting }));
       } else if (alignFailed > 0) {
         toast.warning(
-          t("project.updateCenterAlignFailed", { name: skill.name, count: alignFailed })
+          t("project.updateCenterAlignFailed", { name: skill.name, count: alignFailed }),
         );
       } else {
         toast.success(t("project.updateCenterSuccess", { name: skill.name }));
       }
+
       await Promise.all([refreshManagedSkills(), refreshPresets(), loadSkills()]);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
@@ -527,16 +659,18 @@ export function ProjectDetail() {
 
   const runProjectUpdates = async (
     groups: ProjectSkillGroup[],
-    hostId: string | null,
+    hostId: null | string,
     projectId: string,
-    singleName?: string
+    singleName?: string,
   ) => {
     let updated = 0;
     let skipped = 0;
     let failed = 0;
     let firstError: unknown;
+
     for (const group of groups) {
       skipped += getProjectUpdateReviewCount(group);
+
       for (const variant of getProjectUpdateCandidates(group)) {
         try {
           await invokeHost<void>(hostId, "update_project_skill_from_center", {
@@ -551,18 +685,24 @@ export function ProjectDetail() {
         }
       }
     }
+
     const refreshResults = await Promise.allSettled([
       refreshQuery(queryClient, projectSkillsQueryOptions(hostId, projectId)),
       refreshQuery(queryClient, projectsQueryOptions(hostId)),
     ]);
+
     const refreshFailed = refreshResults.filter((result) => result.status === "rejected").length;
+
     if (singleName && updated > 0 && skipped === 0 && failed === 0) {
       toast.success(t("project.updateProjectSuccess", { name: singleName }));
     } else {
       toast.message(t("project.updateProjectOutcome", { updated, skipped, failed }));
     }
+
     if (firstError) toast.error(getErrorMessage(firstError, t("common.error")));
-    if (refreshFailed > 0) toast.error(t("project.updateProjectRefreshFailed", { count: refreshFailed }));
+
+    if (refreshFailed > 0)
+      toast.error(t("project.updateProjectRefreshFailed", { count: refreshFailed }));
   };
 
   const handleUpdateProject = async (skill: ProjectSkillGroup) => {
@@ -571,6 +711,7 @@ export function ProjectDetail() {
     const hostId = activeHostId;
     const projectId = id;
     setUpdatingProjectSkill(getSkillKey(skill));
+
     try {
       await runProjectUpdates([skill], hostId, projectId, skill.name);
     } finally {
@@ -582,16 +723,19 @@ export function ProjectDetail() {
   const handleToggleSkill = async (skill: ProjectSkillGroup) => {
     if (!id) return;
     setTogglingSkill(getSkillKey(skill));
+
     try {
       const nextEnabled = skill.enabledCount !== skill.totalCount;
       await forEachCopy(skill, (variant) =>
-        api.toggleProjectSkill(id, variant.relative_path, variant.agent, nextEnabled)
+        api.toggleProjectSkill(id, variant.relative_path, variant.agent, nextEnabled),
       );
+
       if (skill.enabledCount === skill.totalCount) {
         toast.success(t("project.skillDisabled", { name: skill.name }));
       } else {
         toast.success(t("project.skillEnabled", { name: skill.name }));
       }
+
       await loadSkills();
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
@@ -600,40 +744,57 @@ export function ProjectDetail() {
     }
   };
 
-  const handleToggleDetailAgent = async (skill: ProjectSkillGroup, agentKey: string, enabled: boolean) => {
+  const handleToggleDetailAgent = async (
+    skill: ProjectSkillGroup,
+    agentKey: string,
+    enabled: boolean,
+  ) => {
     if (!id) return;
+
     if (togglingAgentTarget) return;
     const target = exportTargets.find((item) => item.key === agentKey);
     const displayName = target?.display_name ?? agentKey;
     const existingVariant = skill.variants.find((variant) => variant.agent === agentKey);
 
     const centerSkillId = skill.centerSkillIds[0];
+
     if (!enabled && vendoredLockOf(skill)?.key === agentKey) return;
+
     // A new agent links to a vendored copy, so no library skill is needed.
     if (enabled && !centerSkillId && !skill.vendoredVariant) {
       toast.error(t("project.agentAddRequiresCenter", { agent: displayName }));
+
       return;
     }
+
     if (!enabled && !existingVariant) return;
 
     setTogglingAgentTarget({ skillKey: getSkillKey(skill), agent: agentKey });
+
     try {
       if (project?.workspace_type === "linked") {
         // One agent, nothing to choose between: add or delete the one copy.
         if (enabled) await api.exportSkillToProject(centerSkillId, id, [agentKey]);
-        else if (existingVariant) await api.deleteProjectSkill(id, existingVariant.relative_path, agentKey);
+        else if (existingVariant)
+          await api.deleteProjectSkill(id, existingVariant.relative_path, agentKey);
       } else {
         // Picking this skill's agents by hand keeps it out of project-wide
         // agent changes until "use project agents".
         const assigned = getAssignedAgents(skill.variants);
-        const nextAgents = enabled ? [...assigned, agentKey] : assigned.filter((key) => key !== agentKey);
+
+        const nextAgents = enabled
+          ? [...assigned, agentKey]
+          : assigned.filter((key) => key !== agentKey);
+
         const outcome = await api.setProjectSkillAgents(id, skill.relative_path, nextAgents);
+
         if (outcome.failed.length > 0) throw new Error(outcome.failed[0].error);
       }
+
       toast.success(
         enabled
           ? t("project.agentAdded", { agent: displayName, name: skill.name })
-          : t("project.agentRemoved", { agent: displayName, name: skill.name })
+          : t("project.agentRemoved", { agent: displayName, name: skill.name }),
       );
       await Promise.all([loadSkills(), refreshProjects()]);
     } catch (error: unknown) {
@@ -645,13 +806,16 @@ export function ProjectDetail() {
 
   const handleUseProjectAgents = async (skill: ProjectSkillGroup) => {
     if (!id) return;
+
     try {
       const outcome = await api.clearProjectSkillAgents(id, skill.relative_path);
+
       if (outcome.failed.length > 0) {
         toast.error(outcome.failed[0].error);
       } else {
         toast.success(t("project.useProjectAgentsDone", { name: skill.name }));
       }
+
       await Promise.all([loadSkills(), refreshProjects()]);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
@@ -662,11 +826,15 @@ export function ProjectDetail() {
     if (!id || !deleteTarget) return;
     const hostId = activeHostId;
     const projectId = id;
-    const viewVersion = viewIdentityRef.current.version;
-    const isCurrentView = () => mountedRef.current && viewIdentityRef.current.version === viewVersion;
+    const viewVersion = viewVersionRef.current;
+
+    const isCurrentView = () => mountedRef.current && viewVersionRef.current === viewVersion;
+
     try {
       const result = await deleteProjectCopies(deleteTarget, hostId, projectId);
+
       if (isCurrentView()) setDeleteTarget(null);
+
       if (result.error && isCurrentView()) {
         toast.error(getErrorMessage(result.error, t("common.error")));
       } else if (!result.error && isCurrentView()) {
@@ -680,36 +848,51 @@ export function ProjectDetail() {
 
   const handleBatchDeleteProject = async () => {
     const target = batchDeleteTarget;
+
     if (!target || batchDeleteRunning) return;
     const { hostId, projectId, viewVersion, skills: toDelete } = target;
-    const isCurrentView = () => mountedRef.current && viewIdentityRef.current.version === viewVersion;
+
+    const isCurrentView = () => mountedRef.current && viewVersionRef.current === viewVersion;
+
     if (!isCurrentView()) {
       setBatchDeleteTarget(null);
+
       return;
     }
+
     setBatchDeleteRunning(true);
     setBatchDeleteFailure(null);
     let deleted = 0;
     const failures: Array<{ name: string; error: string }> = [];
     const deletedIds: string[] = [];
+
     try {
       for (const skill of toDelete) {
         const result = await deleteProjectCopies(skill, hostId, projectId);
-        if (result.error) failures.push({ name: skill.name, error: getErrorMessage(result.error, t("common.error")) });
+
+        if (result.error)
+          failures.push({
+            name: skill.name,
+            error: getErrorMessage(result.error, t("common.error")),
+          });
         else {
           deleted++;
           deletedIds.push(skill.id);
         }
       }
+
       if (isCurrentView()) {
         removeSelected(deletedIds);
         setBatchDeleteFailure(failures.length > 0 ? { deleted, failures } : null);
+
         if (deleted > 0) toast.success(t("project.batchDeleted", { count: deleted }));
+
         if (failures.length > 0) {
           toast.error(t("project.batchDeleteFailed", { count: failures.length }));
         } else if (selectedIds.size === deletedIds.length) {
           exitMultiSelect();
         }
+
         setBatchDeleteTarget(null);
       }
     } finally {
@@ -725,17 +908,18 @@ export function ProjectDetail() {
     let count = 0;
     let failed = 0;
     setBatchToggling(true);
+
     try {
       for (const skill of selectedSkills) {
         try {
           if (enabling && skill.enabledCount !== skill.totalCount) {
             await forEachCopy(skill, (variant) =>
-              api.toggleProjectSkill(id, variant.relative_path, variant.agent, true)
+              api.toggleProjectSkill(id, variant.relative_path, variant.agent, true),
             );
             count++;
           } else if (!enabling && skill.enabledCount > 0) {
             await forEachCopy(skill, (variant) =>
-              api.toggleProjectSkill(id, variant.relative_path, variant.agent, false)
+              api.toggleProjectSkill(id, variant.relative_path, variant.agent, false),
             );
             count++;
           }
@@ -744,14 +928,17 @@ export function ProjectDetail() {
           // continue with remaining
         }
       }
+
       if (count > 0) {
-        toast.success(enabling
-          ? t("project.batchEnabled", { count })
-          : t("project.batchDisabled", { count }));
+        toast.success(
+          enabling ? t("project.batchEnabled", { count }) : t("project.batchDisabled", { count }),
+        );
       }
+
       if (failed > 0) {
         toast.error(t("project.batchToggleFailed", { count: failed }));
       }
+
       await loadSkills();
     } finally {
       setBatchToggling(false);
@@ -761,22 +948,28 @@ export function ProjectDetail() {
   const handleBatchUpdateCenter = async () => {
     if (!id) return;
     setBatchUpdatingCenter(true);
+
     try {
       let updated = 0;
       let failed = 0;
       let conflicting = 0;
+
       for (const skill of selectedSkills) {
         const canUpdateCenter = isCenterUpdatable(skill.status);
+
         if (!canUpdateCenter) continue;
+
         try {
           const { alignFailed, conflicting: conflictingForSkill } =
             await pushSkillToCenterAndAlign(skill);
+
           // Refused outright: neither written nor failed, so it is counted on
           // its own rather than folded into either total.
           if (conflictingForSkill > 0) {
             conflicting += 1;
             continue;
           }
+
           // The push landed but some sibling failed to realign → the group is
           // not fully in sync, so count it as failed rather than reporting a
           // clean success.
@@ -786,15 +979,19 @@ export function ProjectDetail() {
           failed++;
         }
       }
+
       if (updated > 0) {
         toast.success(t("project.batchUpdatedCenter", { count: updated }));
       }
+
       if (conflicting > 0) {
         toast.warning(t("project.batchUpdateCenterConflict", { count: conflicting }));
       }
+
       if (failed > 0) {
         toast.error(t("project.batchUpdateCenterFailed", { count: failed }));
       }
+
       await Promise.all([refreshManagedSkills(), refreshPresets(), loadSkills()]);
     } finally {
       setBatchUpdatingCenter(false);
@@ -807,6 +1004,7 @@ export function ProjectDetail() {
     const hostId = activeHostId;
     const projectId = id;
     setBatchUpdatingProject(true);
+
     try {
       await runProjectUpdates(selectedSkills, hostId, projectId);
     } finally {
@@ -821,6 +1019,7 @@ export function ProjectDetail() {
     const hostId = activeHostId;
     const projectId = id;
     setBatchUpdatingProject(true);
+
     try {
       await runProjectUpdates(groupedSkills, hostId, projectId);
     } finally {
@@ -836,12 +1035,15 @@ export function ProjectDetail() {
     for (const centerSkill of selectedCenterSkills) {
       const removeSet = new Set(removes);
       const nextTags = centerSkill.tags.filter((tag) => !removeSet.has(tag));
+
       for (const tag of adds) {
         if (!nextTags.includes(tag)) nextTags.push(tag);
       }
+
       const changed =
         nextTags.length !== centerSkill.tags.length ||
         nextTags.some((tag, index) => tag !== centerSkill.tags[index]);
+
       if (!changed) continue;
 
       try {
@@ -855,9 +1057,11 @@ export function ProjectDetail() {
     if (updated > 0) {
       toast.success(t("project.batchTagsUpdated", { count: updated }));
     }
+
     if (failed > 0) {
       toast.error(t("project.batchTagsFailed", { count: failed }));
     }
+
     await Promise.all([refreshManagedSkills(), loadSkills()]);
   };
 
@@ -865,7 +1069,7 @@ export function ProjectDetail() {
     (skill: ManagedSkill, agentKey: string) => {
       return findProjectPresetVariant(skill, agentKey) !== null;
     },
-    [findProjectPresetVariant]
+    [findProjectPresetVariant],
   );
 
   const handleAddPresetSkillToProject = useCallback(
@@ -873,17 +1077,18 @@ export function ProjectDetail() {
       if (!id) return;
       await api.exportSkillToProject(skill.id, id, [agentKey]);
     },
-    [id]
+    [id],
   );
 
   const handleRemovePresetSkillFromProject = useCallback(
     async (skill: ManagedSkill, agentKey: string) => {
       if (!id) return;
       const projectVariant = findProjectPresetVariant(skill, agentKey);
+
       if (!projectVariant) throw new Error(t("project.skillDirectoryNotFound"));
       await api.deleteProjectSkill(id, projectVariant.relative_path, agentKey);
     },
-    [findProjectPresetVariant, id, t]
+    [findProjectPresetVariant, id, t],
   );
 
   const handlePresetActionComplete = useCallback(async () => {
@@ -897,518 +1102,575 @@ export function ProjectDetail() {
       scope={{ kind: "project", projectId: id, agentKeys: project.agent_keys }}
       allowResources={project.workspace_type !== "linked"}
       skills={
-    <div className="app-page">
-      <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0 flex-[1_1_260px]">
-            <h1 className="app-page-title flex items-center gap-2.5">
-              <FolderOpen className="h-5 w-5 text-accent" />
-              {project.name}
-              <span className="app-badge">{groupedSkills.length}</span>
-            </h1>
-            <p className="mt-1 truncate text-[12px] leading-5 text-muted" title={project.path}>
-              {project.path}
-              {groupedSkills.length > 0 && ` \u00B7 ${enabledCount} / ${groupedSkills.length} ${t("project.enabled")}`}
-              {isCopyMode && ` \u00B7 ${t("project.settings.mode.copy")}`}
-            </p>
-          </div>
+        <div className="app-page">
+          <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 flex-[1_1_260px]">
+                <h1 className="app-page-title flex items-center gap-2.5">
+                  <FolderOpen className="h-5 w-5 text-accent" />
+                  {project.name}
+                  <span className="app-badge">{groupedSkills.length}</span>
+                </h1>
+                <p className="mt-1 truncate text-[12px] leading-5 text-muted" title={project.path}>
+                  {project.path}
+                  {groupedSkills.length > 0 &&
+                    ` \u00B7 ${enabledCount} / ${groupedSkills.length} ${t("project.enabled")}`}
+                  {isCopyMode && ` \u00B7 ${t("project.settings.mode.copy")}`}
+                </p>
+              </div>
 
-          <div className="flex min-w-0 flex-[2_1_560px] flex-wrap items-center justify-end gap-2">
-            <div className="relative w-full min-w-[220px] max-w-[300px]">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                disabled={batchSelectionLocked}
-                placeholder={t("project.searchPlaceholder")}
-                className="app-input w-full pl-8 font-medium"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-              />
-            </div>
-            <div className="app-segmented app-toolbar-segmented shrink-0">
-              {(["all", "enabled", "disabled"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  disabled={batchSelectionLocked}
-                  onClick={() => setFilterMode(mode)}
-                  className={cn(
-                    "app-segmented-button",
-                    filterMode === mode && "app-segmented-button-active"
-                  )}
-                >
-                  {t(`project.filters.${mode}`)}
-                </button>
-              ))}
-            </div>
-
-            <div className="app-segmented app-toolbar-segmented shrink-0">
-              <button
-                disabled={batchSelectionLocked}
-                onClick={loadSkills}
-                className="rounded-md p-2 text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary"
-                title={t("common.refresh")}
-              >
-                <RefreshCw className={cn("h-4 w-4", fetching && "animate-spin")} />
-              </button>
-              <button
-                onClick={() => setViewMode("grid")}
-                data-testid="view-grid"
-                className={cn(
-                  "rounded-md p-2 transition-colors outline-none",
-                  viewMode === "grid" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
-                )}
-              >
-                <LayoutGrid className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setViewMode("list")}
-                data-testid="view-list"
-                className={cn(
-                  "rounded-md p-2 transition-colors outline-none",
-                  viewMode === "list" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
-                )}
-              >
-                <List className="h-4 w-4" />
-              </button>
-
-              {/* Selection can stay active in either view. */}
-              <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle" />
-              <button
-                type="button"
-                aria-pressed={isMultiSelect}
-                disabled={batchSelectionLocked}
-                onClick={() => isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true)}
-                className={cn(
-                  "app-segmented-button inline-flex items-center gap-1.5 hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-border",
-                  isMultiSelect && "app-segmented-button-active hover:bg-surface-active hover:text-secondary"
-                )}
-              >
-                <SquareCheck className="h-4 w-4" />
-                {isMultiSelect ? t("project.cancelSelect") : t("project.selectMode")}
-              </button>
-            </div>
-
-            {project.workspace_type !== "linked" && (
-              <button
-                onClick={() => setShowGitDialog(true)}
-                className="app-toolbar-button app-toolbar-button-secondary"
-              >
-                <GitBranch className="h-3.5 w-3.5" />
-                {t("project.git.open")}
-              </button>
-            )}
-
-            {project.workspace_type !== "linked" && (
-              <button
-                onClick={() => setShowAgentsDialog(true)}
-                disabled={projectAgentTargets.length === 0}
-                className="app-toolbar-button app-toolbar-button-secondary"
-                title={t("project.agentsButtonHint")}
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                {t("project.agentsButton")}
-              </button>
-            )}
-
-            <button
-              onClick={handleUpdateAllProjectSkills}
-              disabled={updatableProjectVariantCount === 0 || batchUpdatingProject || updatingProjectSkill !== null}
-              className="app-toolbar-button app-toolbar-button-secondary"
-              title={t("project.updateAllFromLibraryHint")}
-            >
-              {batchUpdatingProject ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-              {t("project.updateAllFromLibrary", { count: updatableProjectVariantCount })}
-            </button>
-
-            <div className="relative shrink-0">
-              <button
-                onClick={() => {
-                  setShowExportDialog(true);
-                  dismissAddCallout();
-                }}
-                className="app-toolbar-button app-toolbar-button-primary"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {t("project.addSkill")}
-              </button>
-              {showAddCallout && groupedSkills.length > 0 && !isMultiSelect && (
-                <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-border bg-surface p-3 text-[12px] leading-snug shadow-lg">
-                  <button
-                    onClick={dismissAddCallout}
-                    className="absolute right-1.5 top-1.5 rounded p-0.5 text-faint hover:text-secondary"
-                    aria-label={t("common.close")}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                  <p className="pr-4 text-secondary">{t("project.addCallout")}</p>
+              <div className="flex min-w-0 flex-[2_1_560px] flex-wrap items-center justify-end gap-2">
+                <div className="relative w-full min-w-[220px] max-w-[300px]">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    disabled={batchSelectionLocked}
+                    placeholder={t("project.searchPlaceholder")}
+                    className="app-input w-full pl-8 font-medium"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
+                <div className="app-segmented app-toolbar-segmented shrink-0">
+                  {(["all", "enabled", "disabled"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      disabled={batchSelectionLocked}
+                      onClick={() => setFilterMode(mode)}
+                      className={cn(
+                        "app-segmented-button",
+                        filterMode === mode && "app-segmented-button-active",
+                      )}
+                    >
+                      {t(`project.filters.${mode}`)}
+                    </button>
+                  ))}
+                </div>
 
-        {project.workspace_type !== "linked" && <RetiredLinksBanner projectId={id} refreshKey={skills} />}
+                <div className="app-segmented app-toolbar-segmented shrink-0">
+                  <button
+                    disabled={batchSelectionLocked}
+                    onClick={loadSkills}
+                    className="rounded-md p-2 text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary"
+                    title={t("common.refresh")}
+                  >
+                    <RefreshCw className={cn("h-4 w-4", fetching && "animate-spin")} />
+                  </button>
+                  <button
+                    onClick={() => setViewMode("grid")}
+                    data-testid="view-grid"
+                    className={cn(
+                      "rounded-md p-2 transition-colors outline-none",
+                      viewMode === "grid"
+                        ? "bg-surface-active text-secondary"
+                        : "text-muted hover:text-tertiary",
+                    )}
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode("list")}
+                    data-testid="view-list"
+                    className={cn(
+                      "rounded-md p-2 transition-colors outline-none",
+                      viewMode === "list"
+                        ? "bg-surface-active text-secondary"
+                        : "text-muted hover:text-tertiary",
+                    )}
+                  >
+                    <List className="h-4 w-4" />
+                  </button>
 
-        {allTags.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[12px] text-muted">{t("mySkills.tags.filter")}</span>
-            <button
-              disabled={batchSelectionLocked}
-              onClick={() => setTagFilters(new Set())}
-              className={cn(
-                "rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
-                tagFilters.size === 0
-                  ? "bg-accent text-white dark:bg-accent dark:text-white"
-                  : "bg-surface-hover text-muted hover:text-secondary"
-              )}
-            >
-              {t("mySkills.tags.allTags")}
-            </button>
-            {groupedSkills.some((s) => s.tags.length === 0) && (() => {
-              const isActive = tagFilters.has(UNTAGGED_FILTER);
-              return (
+                  {/* Selection can stay active in either view. */}
+                  <span
+                    aria-hidden="true"
+                    className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle"
+                  />
+                  <button
+                    type="button"
+                    aria-pressed={isMultiSelect}
+                    disabled={batchSelectionLocked}
+                    onClick={() => (isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true))}
+                    className={cn(
+                      "app-segmented-button inline-flex items-center gap-1.5 hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-border",
+                      isMultiSelect &&
+                        "app-segmented-button-active hover:bg-surface-active hover:text-secondary",
+                    )}
+                  >
+                    <SquareCheck className="h-4 w-4" />
+                    {isMultiSelect ? t("project.cancelSelect") : t("project.selectMode")}
+                  </button>
+                </div>
+
+                {project.workspace_type !== "linked" && (
+                  <button
+                    onClick={() => setShowGitDialog(true)}
+                    className="app-toolbar-button app-toolbar-button-secondary"
+                  >
+                    <GitBranch className="h-3.5 w-3.5" />
+                    {t("project.git.open")}
+                  </button>
+                )}
+
+                {project.workspace_type !== "linked" && (
+                  <button
+                    onClick={() => setShowAgentsDialog(true)}
+                    disabled={projectAgentTargets.length === 0}
+                    className="app-toolbar-button app-toolbar-button-secondary"
+                    title={t("project.agentsButtonHint")}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    {t("project.agentsButton")}
+                  </button>
+                )}
+
                 <button
-                  disabled={batchSelectionLocked}
-                  onClick={() => {
-                    setTagFilters((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(UNTAGGED_FILTER)) next.delete(UNTAGGED_FILTER);
-                      else next.add(UNTAGGED_FILTER);
-                      return next;
-                    });
-                  }}
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
-                    isActive
-                      ? "bg-surface-active text-primary"
-                      : "border border-dashed border-border text-muted hover:text-secondary"
-                  )}
-                  title={t("mySkills.tags.untagged")}
+                  onClick={handleUpdateAllProjectSkills}
+                  disabled={
+                    updatableProjectVariantCount === 0 ||
+                    batchUpdatingProject ||
+                    updatingProjectSkill !== null
+                  }
+                  className="app-toolbar-button app-toolbar-button-secondary"
+                  title={t("project.updateAllFromLibraryHint")}
                 >
-                  <CircleSlash className="h-3 w-3" />
-                  {t("mySkills.tags.untagged")}
+                  {batchUpdatingProject ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  {t("project.updateAllFromLibrary", { count: updatableProjectVariantCount })}
                 </button>
-              );
-            })()}
-            {allTags.map((tag) => {
-              const active = tagFilters.has(tag);
-              return (
+
+                <div className="relative shrink-0">
+                  <button
+                    onClick={() => {
+                      setShowExportDialog(true);
+                      dismissAddCallout();
+                    }}
+                    className="app-toolbar-button app-toolbar-button-primary"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {t("project.addSkill")}
+                  </button>
+                  {showAddCallout && groupedSkills.length > 0 && !isMultiSelect && (
+                    <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-border bg-surface p-3 text-[12px] leading-snug shadow-lg">
+                      <button
+                        onClick={dismissAddCallout}
+                        className="absolute right-1.5 top-1.5 rounded p-0.5 text-faint hover:text-secondary"
+                        aria-label={t("common.close")}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                      <p className="pr-4 text-secondary">{t("project.addCallout")}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {project.workspace_type !== "linked" && (
+              <RetiredLinksBanner projectId={id} refreshKey={skills} />
+            )}
+
+            {allTags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[12px] text-muted">{t("mySkills.tags.filter")}</span>
                 <button
-                  key={tag}
                   disabled={batchSelectionLocked}
-                  onClick={() => {
-                    setTagFilters((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(tag)) next.delete(tag);
-                      else next.add(tag);
-                      return next;
-                    });
-                  }}
+                  onClick={() => setTagFilters(new Set())}
                   className={cn(
                     "rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
-                    active ? getTagActiveColor(tag, allTags) : getTagColor(tag, allTags)
+                    tagFilters.size === 0
+                      ? "bg-accent text-white dark:bg-accent dark:text-white"
+                      : "bg-surface-hover text-muted hover:text-secondary",
                   )}
                 >
-                  {tag}
+                  {t("mySkills.tags.allTags")}
                 </button>
-              );
-            })}
+                {groupedSkills.some((s) => s.tags.length === 0) &&
+                  (() => {
+                    const isActive = tagFilters.has(UNTAGGED_FILTER);
+
+                    return (
+                      <button
+                        disabled={batchSelectionLocked}
+                        onClick={() => {
+                          setTagFilters((prev) => {
+                            const next = new Set(prev);
+
+                            if (next.has(UNTAGGED_FILTER)) next.delete(UNTAGGED_FILTER);
+                            else next.add(UNTAGGED_FILTER);
+
+                            return next;
+                          });
+                        }}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
+                          isActive
+                            ? "bg-surface-active text-primary"
+                            : "border border-dashed border-border text-muted hover:text-secondary",
+                        )}
+                        title={t("mySkills.tags.untagged")}
+                      >
+                        <CircleSlash className="h-3 w-3" />
+                        {t("mySkills.tags.untagged")}
+                      </button>
+                    );
+                  })()}
+                {allTags.map((tag) => {
+                  const active = tagFilters.has(tag);
+
+                  return (
+                    <button
+                      key={tag}
+                      disabled={batchSelectionLocked}
+                      onClick={() => {
+                        setTagFilters((prev) => {
+                          const next = new Set(prev);
+
+                          if (next.has(tag)) next.delete(tag);
+                          else next.add(tag);
+
+                          return next;
+                        });
+                      }}
+                      className={cn(
+                        "rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
+                        active ? getTagActiveColor(tag, allTags) : getTagColor(tag, allTags),
+                      )}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Preset bar */}
+            {presets.length > 0 && presetBarAgentKeys.length > 0 && (
+              <PresetBar
+                presets={presets}
+                managedSkills={managedSkills}
+                agentKeys={presetBarAgentKeys}
+                statusMode="logical-skill"
+                existsInWorkspace={presetSkillExistsInProject}
+                onAddSkill={handleAddPresetSkillToProject}
+                onRemoveSkill={handleRemovePresetSkillFromProject}
+                onComplete={handlePresetActionComplete}
+              />
+            )}
           </div>
-        )}
 
-        {/* Preset bar */}
-        {presets.length > 0 && presetBarAgentKeys.length > 0 && (
-          <PresetBar
-            presets={presets}
-            managedSkills={managedSkills}
-            agentKeys={presetBarAgentKeys}
-            statusMode="logical-skill"
-            existsInWorkspace={presetSkillExistsInProject}
-            onAddSkill={handleAddPresetSkillToProject}
-            onRemoveSkill={handleRemovePresetSkillFromProject}
-            onComplete={handlePresetActionComplete}
-          />
-        )}
-      </div>
-
-      {isMultiSelect && (
-        <MultiSelectToolbar
-          selectedCount={selectedIds.size}
-          isAllSelected={isAllSelected}
-          actions={[
-            ...(project.supports_skill_toggle && togglableSelectedCount > 0
-              ? [{
-                  key: "toggle",
-                  tone: "primary" as const,
-                  label: anyDisabled
-                    ? t("project.batchEnable", { count: togglableSelectedCount })
-                    : t("project.batchDisable", { count: togglableSelectedCount }),
-                  icon: anyDisabled
-                    ? <CheckCircle2 className="h-3.5 w-3.5" />
-                    : <Circle className="h-3.5 w-3.5" />,
-                  busy: batchToggling,
-                  onSelect: handleBatchToggleProject,
-                }]
-              : []),
-            ...(updatableProjectCount > 0
-              ? [{
-                  key: "update-project",
-                  label: t("project.batchUpdateProject", { count: updatableProjectCount }),
-                  icon: <Download className="h-3.5 w-3.5" />,
-                  busy: batchUpdatingProject,
-                  onSelect: handleBatchUpdateProject,
-                }]
-              : []),
-            ...(updatableCenterCount > 0
-              ? [{
-                  key: "update-center",
-                  label: t("project.batchUpdateCenter", { count: updatableCenterCount }),
-                  icon: <Upload className="h-3.5 w-3.5" />,
-                  busy: batchUpdatingCenter,
-                  onSelect: handleBatchUpdateCenter,
-                }]
-              : []),
-            {
-              key: "delete",
-              tone: "danger" as const,
-              label: t("project.deleteSelected", { count: selectedIds.size }),
-              icon: <Trash2 className="h-3.5 w-3.5" />,
-              busy: batchDeleteRunning,
-              onSelect: () => {
-                if (!id || batchSelectionLocked) return;
-                setBatchDeleteFailure(null);
-                setBatchDeleteTarget({
-                  hostId: activeHostId,
-                  projectId: id,
-                  projectName: project?.name ?? "",
-                  viewVersion: viewIdentityRef.current.version,
-                  skills: [...selectedSkills],
-                });
-              },
-            },
-          ]}
-          overflowActions={[
-            ...(selectedCenterSkills.length > 0
-              ? [{
-                  key: "tags",
-                  label: t("project.batchEditTags", { count: selectedCenterSkills.length }),
-                  icon: <Tag className="h-3.5 w-3.5" />,
-                  onSelect: () => setBatchTagDialogOpen(true),
-                }]
-              : []),
-          ]}
-          labels={{
-            hint: t("project.selectHint"),
-            selected: t("project.selectedCount", { count: selectedIds.size }),
-            selectAll: t("project.selectAll"),
-            deselectAll: t("project.deselectAll"),
-            cancel: t("common.cancel"),
-            more: t("mySkills.moreActions"),
-          }}
-          onSelectAll={handleSelectAll}
-          onCancel={exitMultiSelect}
-          disabled={batchSelectionLocked}
-        />
-      )}
-
-      {batchDeleteFailure && (
-        <div role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-[12px] text-danger">
-          <p>{t("project.batchDeletePartialFailure", {
-            deleted: batchDeleteFailure.deleted,
-            failed: batchDeleteFailure.failures.length,
-            details: batchDeleteFailure.failures.map(({ name, error }) => `${name}: ${error}`).join("; "),
-          })}</p>
-        </div>
-      )}
-
-      {skillsError && skills.length > 0 && (
-        <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-[12px] text-danger">
-          <span>{getErrorMessage(skillsError, t("common.error"))}</span>
-          <button className="shrink-0 underline" onClick={() => void loadSkills()}>{t("common.retry")}</button>
-        </div>
-      )}
-      {loading ? (
-        <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
-          <div className="text-[13px] text-muted">{t("common.loading")}</div>
-        </div>
-      ) : skillsError && skills.length === 0 ? (
-        <div role="alert" className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
-          <p className="mb-3 text-[13px] text-danger">{getErrorMessage(skillsError, t("common.error"))}</p>
-          <button className="app-toolbar-button app-toolbar-button-secondary" onClick={() => void loadSkills()}>
-            {t("common.retry")}
-          </button>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
-          <Layers className="mb-4 h-12 w-12 text-faint" />
-          <h3 className="mb-1.5 text-[14px] font-semibold text-tertiary">
-            {groupedSkills.length === 0 ? t("project.noSkills") : t("mySkills.noMatch")}
-          </h3>
-          <p className="max-w-md text-[13px] text-muted">
-            {groupedSkills.length === 0 ? t("project.noSkillsHint") : ""}
-          </p>
-          {groupedSkills.length === 0 && (
-            <button
-              onClick={() => {
-                setShowExportDialog(true);
-                dismissAddCallout();
+          {isMultiSelect && (
+            <MultiSelectToolbar
+              selectedCount={selectedIds.size}
+              isAllSelected={isAllSelected}
+              actions={[
+                ...(project.supports_skill_toggle && togglableSelectedCount > 0
+                  ? [
+                      {
+                        key: "toggle",
+                        tone: "primary" as const,
+                        label: anyDisabled
+                          ? t("project.batchEnable", { count: togglableSelectedCount })
+                          : t("project.batchDisable", { count: togglableSelectedCount }),
+                        icon: anyDisabled ? (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <Circle className="h-3.5 w-3.5" />
+                        ),
+                        busy: batchToggling,
+                        onSelect: handleBatchToggleProject,
+                      },
+                    ]
+                  : []),
+                ...(updatableProjectCount > 0
+                  ? [
+                      {
+                        key: "update-project",
+                        label: t("project.batchUpdateProject", { count: updatableProjectCount }),
+                        icon: <Download className="h-3.5 w-3.5" />,
+                        busy: batchUpdatingProject,
+                        onSelect: handleBatchUpdateProject,
+                      },
+                    ]
+                  : []),
+                ...(updatableCenterCount > 0
+                  ? [
+                      {
+                        key: "update-center",
+                        label: t("project.batchUpdateCenter", { count: updatableCenterCount }),
+                        icon: <Upload className="h-3.5 w-3.5" />,
+                        busy: batchUpdatingCenter,
+                        onSelect: handleBatchUpdateCenter,
+                      },
+                    ]
+                  : []),
+                {
+                  key: "delete",
+                  tone: "danger" as const,
+                  label: t("project.deleteSelected", { count: selectedIds.size }),
+                  icon: <Trash2 className="h-3.5 w-3.5" />,
+                  busy: batchDeleteRunning,
+                  onSelect: () => {
+                    if (!id || batchSelectionLocked) return;
+                    setBatchDeleteFailure(null);
+                    setBatchDeleteTarget({
+                      hostId: activeHostId,
+                      projectId: id,
+                      projectName: project?.name ?? "",
+                      viewVersion: viewVersionRef.current,
+                      skills: [...selectedSkills],
+                    });
+                  },
+                },
+              ]}
+              overflowActions={
+                selectedCenterSkills.length > 0
+                  ? [
+                      {
+                        key: "tags",
+                        label: t("project.batchEditTags", { count: selectedCenterSkills.length }),
+                        icon: <Tag className="h-3.5 w-3.5" />,
+                        onSelect: () => setBatchTagDialogOpen(true),
+                      },
+                    ]
+                  : []
+              }
+              labels={{
+                hint: t("project.selectHint"),
+                selected: t("project.selectedCount", { count: selectedIds.size }),
+                selectAll: t("project.selectAll"),
+                deselectAll: t("project.deselectAll"),
+                cancel: t("common.cancel"),
+                more: t("mySkills.moreActions"),
               }}
-              className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover"
+              onSelectAll={handleSelectAll}
+              onCancel={exitMultiSelect}
+              disabled={batchSelectionLocked}
+            />
+          )}
+
+          {batchDeleteFailure && (
+            <div
+              role="alert"
+              className="border-danger/30 bg-danger/5 mb-3 rounded-lg border px-3 py-2 text-[12px] text-danger"
             >
-              <Plus className="h-3.5 w-3.5" />
-              {t("project.addSkillsCta")}
-            </button>
+              <p>
+                {t("project.batchDeletePartialFailure", {
+                  deleted: batchDeleteFailure.deleted,
+                  failed: batchDeleteFailure.failures.length,
+                  details: batchDeleteFailure.failures
+                    .map(({ name, error }) => `${name}: ${error}`)
+                    .join("; "),
+                })}
+              </p>
+            </div>
           )}
-        </div>
-      ) : (
-        <div
-          className={cn(
-            "pb-8",
-            viewMode === "grid"
-              ? "grid grid-cols-2 gap-3 lg:grid-cols-3"
-              : "flex flex-col gap-0.5"
+
+          {skillsError && skills.length > 0 && (
+            <div
+              role="alert"
+              className="border-danger/30 bg-danger/5 mb-3 flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-[12px] text-danger"
+            >
+              <span>{getErrorMessage(skillsError, t("common.error"))}</span>
+              <button className="shrink-0 underline" onClick={() => void loadSkills()}>
+                {t("common.retry")}
+              </button>
+            </div>
           )}
-        >
-          {filtered.map((skill) => {
-            const skillKey = getSkillKey(skill);
-            const itemProps: ProjectSkillItemProps = {
-              skill,
-              creator: creatorOf(skill),
-              allTags,
-              targets: exportTargets,
-              supportsSkillToggle: project.supports_skill_toggle,
-              isMultiSelect,
-              isSelected: selectedIds.has(skillKey),
-              isUpdatingCenter: updatingCenterSkill === skillKey,
-              isUpdatingProject: batchUpdatingProject || updatingProjectSkill !== null,
-              isToggling: togglingSkill === skillKey,
-              pendingAgent:
-                togglingAgentTarget?.skillKey === skillKey
+          {loading ? (
+            <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
+              <div className="text-[13px] text-muted">{t("common.loading")}</div>
+            </div>
+          ) : skillsError && skills.length === 0 ? (
+            <div
+              role="alert"
+              className="flex flex-1 flex-col items-center justify-center pb-20 text-center"
+            >
+              <p className="mb-3 text-[13px] text-danger">
+                {getErrorMessage(skillsError, t("common.error"))}
+              </p>
+              <button
+                className="app-toolbar-button app-toolbar-button-secondary"
+                onClick={() => void loadSkills()}
+              >
+                {t("common.retry")}
+              </button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
+              <Layers className="mb-4 h-12 w-12 text-faint" />
+              <h3 className="mb-1.5 text-[14px] font-semibold text-tertiary">
+                {groupedSkills.length === 0 ? t("project.noSkills") : t("mySkills.noMatch")}
+              </h3>
+              <p className="max-w-md text-[13px] text-muted">
+                {groupedSkills.length === 0 ? t("project.noSkillsHint") : ""}
+              </p>
+              {groupedSkills.length === 0 && (
+                <button
+                  onClick={() => {
+                    setShowExportDialog(true);
+                    dismissAddCallout();
+                  }}
+                  className="hover:bg-accent-hover mt-4 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("project.addSkillsCta")}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "pb-8",
+                viewMode === "grid"
+                  ? "grid grid-cols-2 gap-3 lg:grid-cols-3"
+                  : "flex flex-col gap-0.5",
+              )}
+            >
+              {filtered.map((skill) => {
+                const skillKey = getSkillKey(skill);
+
+                const itemProps: ProjectSkillItemProps = {
+                  skill,
+                  creator: creatorOf(skill),
+                  allTags,
+                  targets: exportTargets,
+                  supportsSkillToggle: project.supports_skill_toggle,
+                  isMultiSelect,
+                  isSelected: selectedIds.has(skillKey),
+                  isUpdatingCenter: updatingCenterSkill === skillKey,
+                  isUpdatingProject: batchUpdatingProject || updatingProjectSkill !== null,
+                  isToggling: togglingSkill === skillKey,
+                  pendingAgent:
+                    togglingAgentTarget?.skillKey === skillKey ? togglingAgentTarget.agent : null,
+                  vendoredLock: vendoredLockOf(skill),
+                  onToggleSelect: (key) => {
+                    if (!batchSelectionLocked) toggleSelect(key);
+                  },
+                  onOpenDetail: handleOpenDetail,
+                  onToggleAgent: handleToggleDetailAgent,
+                  onUpdateCenter: handleUpdateCenter,
+                  onUpdateProject: handleUpdateProject,
+                  onToggleSkill: handleToggleSkill,
+                  onDelete: setDeleteTarget,
+                };
+
+                return viewMode === "grid" ? (
+                  <ProjectSkillCard key={skillKey} {...itemProps} />
+                ) : (
+                  <ProjectSkillRow key={skillKey} {...itemProps} />
+                );
+              })}
+            </div>
+          )}
+
+          {/* Skill Document Detail Panel */}
+          {detailSkill && project && (
+            <ProjectSkillDetailPanel
+              skill={detailSkill}
+              creator={creatorOf(detailSkill)}
+              targets={exportTargets}
+              togglingAgent={
+                togglingAgentTarget?.skillKey === getSkillKey(detailSkill)
                   ? togglingAgentTarget.agent
-                  : null,
-              vendoredLock: vendoredLockOf(skill),
-              onToggleSelect: (key) => {
-                if (!batchSelectionLocked) toggleSelect(key);
-              },
-              onOpenDetail: handleOpenDetail,
-              onToggleAgent: handleToggleDetailAgent,
-              onUpdateCenter: handleUpdateCenter,
-              onUpdateProject: handleUpdateProject,
-              onToggleSkill: handleToggleSkill,
-              onDelete: setDeleteTarget,
-            };
+                  : null
+              }
+              onToggleAgent={(agentKey, enabled) =>
+                handleToggleDetailAgent(detailSkill, agentKey, enabled)
+              }
+              onUseProjectAgents={() => handleUseProjectAgents(detailSkill)}
+              vendoredPath={detailSkill.vendoredVariant?.path ?? null}
+              vendoredLock={vendoredLockOf(detailSkill)}
+              docContent={docContent}
+              docLoading={docLoading}
+              centerDocContent={centerDocContent}
+              centerDocLoading={centerDocLoading}
+              onClose={() => setDetailSkill(null)}
+            />
+          )}
 
-            return viewMode === "grid" ? (
-              <ProjectSkillCard key={skillKey} {...itemProps} />
-            ) : (
-              <ProjectSkillRow key={skillKey} {...itemProps} />
-            );
-          })}
+          {/* Delete Confirm Dialog */}
+          <ConfirmDialog
+            open={!!deleteTarget}
+            title={t("project.deleteSkill")}
+            message={t("project.deleteSkillConfirm", { name: deleteTarget?.name })}
+            tone="danger"
+            onClose={() => setDeleteTarget(null)}
+            onConfirm={handleDeleteSkill}
+          />
+
+          {/* Batch Delete Confirm Dialog */}
+          <ConfirmDialog
+            open={!!batchDeleteTarget}
+            title={t("project.deleteSkill")}
+            message={t("project.batchDeleteConfirm", {
+              count: batchDeleteTarget?.skills.length ?? 0,
+              project: batchDeleteTarget?.projectName ?? "",
+            })}
+            tone="danger"
+            lockWhilePending
+            onClose={() => setBatchDeleteTarget(null)}
+            onConfirm={handleBatchDeleteProject}
+            details={batchDeleteTarget?.skills.map((skill) => skill.name)}
+          />
+
+          <BatchTagDialog
+            open={batchTagDialogOpen}
+            skills={selectedCenterSkills}
+            allTags={allTags}
+            note={t("project.batchTagScopeNote")}
+            onClose={() => setBatchTagDialogOpen(false)}
+            onApply={handleBatchEditTags}
+          />
+
+          {id && (
+            <ProjectAgentsDialog
+              open={showAgentsDialog}
+              projectId={id}
+              deployMode={project.deploy_mode}
+              targets={projectAgentTargets}
+              onClose={() => setShowAgentsDialog(false)}
+              onApplied={async () => {
+                await Promise.all([loadSkills(), refreshProjects()]);
+              }}
+            />
+          )}
+          {showGitDialog && project.workspace_type !== "linked" && (
+            <ProjectGitDialog
+              key={`${activeHostId ?? "local"}:${id}`}
+              hostId={activeHostId}
+              projectId={id}
+              onClose={() => setShowGitDialog(false)}
+            />
+          )}
+
+          {id && (
+            <AddSkillsSheet
+              open={showExportDialog}
+              onClose={() => setShowExportDialog(false)}
+              target={{
+                kind: "project",
+                projectId: id,
+                projectName: project?.name ?? "",
+                exportTargets,
+                projectSkillDirNamesByAgent,
+                projectCenterSkillIdsByAgent,
+                initialSelectedAgents: initialSheetAgents,
+                onPersistLastUsed: handlePersistLastUsedAgents,
+              }}
+              managedSkills={managedSkills}
+              onInstalled={async () => {
+                await Promise.all([loadSkills(), refreshProjects()]);
+              }}
+            />
+          )}
         </div>
-      )}
-
-      {/* Skill Document Detail Panel */}
-      {detailSkill && project && (
-        <ProjectSkillDetailPanel
-          skill={detailSkill}
-          creator={creatorOf(detailSkill)}
-          targets={exportTargets}
-          togglingAgent={
-            togglingAgentTarget?.skillKey === getSkillKey(detailSkill)
-              ? togglingAgentTarget.agent
-              : null
-          }
-          onToggleAgent={(agentKey, enabled) => handleToggleDetailAgent(detailSkill, agentKey, enabled)}
-          onUseProjectAgents={() => handleUseProjectAgents(detailSkill)}
-          vendoredPath={detailSkill.vendoredVariant?.path ?? null}
-          vendoredLock={vendoredLockOf(detailSkill)}
-          docContent={docContent}
-          docLoading={docLoading}
-          centerDocContent={centerDocContent}
-          centerDocLoading={centerDocLoading}
-          onClose={() => setDetailSkill(null)}
-        />
-      )}
-
-      {/* Delete Confirm Dialog */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title={t("project.deleteSkill")}
-        message={t("project.deleteSkillConfirm", { name: deleteTarget?.name })}
-        tone="danger"
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={handleDeleteSkill}
-      />
-
-      {/* Batch Delete Confirm Dialog */}
-      <ConfirmDialog
-        open={!!batchDeleteTarget}
-        title={t("project.deleteSkill")}
-        message={t("project.batchDeleteConfirm", {
-          count: batchDeleteTarget?.skills.length ?? 0,
-          project: batchDeleteTarget?.projectName ?? "",
-        })}
-        tone="danger"
-        lockWhilePending
-        onClose={() => setBatchDeleteTarget(null)}
-        onConfirm={handleBatchDeleteProject}
-        details={batchDeleteTarget?.skills.map((skill) => skill.name)}
-      />
-
-      <BatchTagDialog
-        open={batchTagDialogOpen}
-        skills={selectedCenterSkills}
-        allTags={allTags}
-        note={t("project.batchTagScopeNote")}
-        onClose={() => setBatchTagDialogOpen(false)}
-        onApply={handleBatchEditTags}
-      />
-
-      {id && (
-        <ProjectAgentsDialog
-          open={showAgentsDialog}
-          projectId={id}
-          deployMode={project.deploy_mode}
-          targets={projectAgentTargets}
-          onClose={() => setShowAgentsDialog(false)}
-          onApplied={async () => {
-            await Promise.all([loadSkills(), refreshProjects()]);
-          }}
-        />
-      )}
-      {showGitDialog && project.workspace_type !== "linked" && (
-        <ProjectGitDialog
-          key={`${activeHostId ?? "local"}:${id}`}
-          hostId={activeHostId}
-          projectId={id}
-          onClose={() => setShowGitDialog(false)}
-        />
-      )}
-
-      {id && (
-        <AddSkillsSheet
-          open={showExportDialog}
-          onClose={() => setShowExportDialog(false)}
-          target={{
-            kind: "project",
-            projectId: id,
-            projectName: project?.name ?? "",
-            exportTargets,
-            projectSkillDirNamesByAgent,
-            projectCenterSkillIdsByAgent,
-            initialSelectedAgents: initialSheetAgents,
-            onPersistLastUsed: handlePersistLastUsedAgents,
-          }}
-          managedSkills={managedSkills}
-          onInstalled={async () => {
-            await Promise.all([loadSkills(), refreshProjects()]);
-          }}
-        />
-      )}
-    </div>
       }
     />
   );

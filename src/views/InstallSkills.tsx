@@ -1,47 +1,78 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { UploadCloud, Github, Box } from "lucide-react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Box, Github, UploadCloud } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { cn } from "../utils";
+
+import { GitInstallTab } from "../components/GitInstallTab";
+import { GitPreviewDialog } from "../components/GitPreviewDialog";
+import { LocalInstallTab } from "../components/LocalInstallTab";
+import { MarketTab } from "../components/MarketTab";
 import { useApp } from "../context/AppContext";
-import * as api from "../lib/tauri";
-import type { SkillsShSkill, BatchImportResult } from "../lib/tauri";
-import { useNavigate, useSearch } from "@tanstack/react-router";
-import type { InstallTab } from "./installSearch";
-import { listenOnActiveHost } from "../lib/hostEvents";
-import { pickPath } from "../lib/pickPath";
-import { useMarketSearch } from "../hooks/useMarketSearch";
-import { useSourceOverflow } from "../hooks/useSourceOverflow";
 import { useGitPreview } from "../hooks/useGitPreview";
 import { useLocalScan } from "../hooks/useLocalScan";
-import { findInstalledByGitUrl as findInstalledSkillByGitUrl } from "../lib/gitUrl";
-import { MarketTab } from "../components/MarketTab";
-import { GitInstallTab } from "../components/GitInstallTab";
-import { LocalInstallTab } from "../components/LocalInstallTab";
-import { GitPreviewDialog } from "../components/GitPreviewDialog";
-import { getErrorMessage, getErrorKind } from "../lib/error";
-import { getActiveHostId, invokeHost } from "../lib/hostCall";
+import { useMarketSearch } from "../hooks/useMarketSearch";
+import { useSourceOverflow } from "../hooks/useSourceOverflow";
 import { managedSkillsQueryOptions, presetsQueryOptions, refreshQuery } from "../lib/appQueries";
+import { getErrorKind, getErrorMessage } from "../lib/error";
+import { findInstalledByGitUrl as findInstalledSkillByGitUrl } from "../lib/gitUrl";
+import { getActiveHostId, invokeHost } from "../lib/hostCall";
+import { listenOnActiveHost } from "../lib/hostEvents";
+import { pickPath } from "../lib/pickPath";
+import * as api from "../lib/tauri";
+import type { BatchImportResult, SkillsShSkill } from "../lib/tauri";
+import { cn } from "../utils";
+import type { InstallTab } from "./installSearch";
+
+interface InstallBatch {
+  hostId: null | string;
+  stopRequested: boolean;
+  cancelKey: null | string;
+}
 
 export function InstallSkills() {
   const { t } = useTranslation();
-  const { refreshPresets, refreshManagedSkills, managedSkills, openSkillDetailById, activeHostId } = useApp();
+
+  const { refreshPresets, refreshManagedSkills, managedSkills, openSkillDetailById, activeHostId } =
+    useApp();
+
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { tab: tabParam } = useSearch({ from: "/install" });
-  const [activeTab, setActiveTab] = useState<InstallTab>("market");
+  const [activeTab, setActiveTab] = useState<InstallTab>(tabParam ?? "market");
+  const [prevTabParam, setPrevTabParam] = useState(tabParam);
+
+  if (tabParam !== prevTabParam) {
+    setPrevTabParam(tabParam);
+
+    if (tabParam) setActiveTab(tabParam);
+  }
+
   const market = useMarketSearch(activeTab === "market");
-  const [installing, setInstalling] = useState<string | null>(null);
-  const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [installing, setInstalling] = useState<null | string>(null);
+
+  const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number } | null>(
+    null,
+  );
+
   const [bulkLocked, setBulkLocked] = useState(false);
   const [bulkFailures, setBulkFailures] = useState<{ skill: SkillsShSkill; error: string }[]>([]);
   const [bulkRetrySkills, setBulkRetrySkills] = useState<SkillsShSkill[]>([]);
-  const [bulkSummary, setBulkSummary] = useState<{ installed: number; total: number; stopped: boolean } | null>(null);
-  const [bulkResultHostId, setBulkResultHostId] = useState<string | null>(null);
-  const batchRef = useRef<{ hostId: string | null; stopRequested: boolean; cancelKey: string | null } | null>(null);
+
+  const [bulkSummary, setBulkSummary] = useState<{
+    installed: number;
+    total: number;
+    stopped: boolean;
+  } | null>(null);
+
+  const [bulkResultHostId, setBulkResultHostId] = useState<null | string>(null);
+
+  const batchRef = useRef<InstallBatch | null>(null);
+
   const bulkEpochRef = useRef(0);
   const mountedRef = useRef(true);
+
   const {
     gitUrl,
     setGitUrl,
@@ -55,14 +86,10 @@ export function InstallSkills() {
     handleGitPreviewClose,
     handleGitConfirm,
   } = useGitPreview();
-  const {
-    scanResult,
-    scanLoading,
-    localError,
-    setLocalError,
-    runScan,
-    runScanSilent,
-  } = useLocalScan(activeTab === "local");
+
+  const { scanResult, scanLoading, localError, setLocalError, runScan, runScanSilent } =
+    useLocalScan(activeTab === "local");
+
   const [importingPaths, setImportingPaths] = useState<Set<string>>(new Set());
   const [importingAll, setImportingAll] = useState(false);
   const [renameEditing, setRenameEditing] = useState<Record<string, string>>({});
@@ -70,67 +97,86 @@ export function InstallSkills() {
 
   useEffect(() => {
     mountedRef.current = true;
+
     return () => {
       mountedRef.current = false;
       const batch = batchRef.current;
+
       if (!batch) return;
       batch.stopRequested = true;
+
       if (batch.cancelKey) {
-        invokeHost<boolean>(batch.hostId, "cancel_install", { key: batch.cancelKey }).catch(() => {});
+        invokeHost<boolean>(batch.hostId, "cancel_install", { key: batch.cancelKey }).catch(
+          () => {},
+        );
       }
     };
   }, []);
 
-  useEffect(() => {
-    bulkEpochRef.current++;
+  // A host or tab switch drops the bulk results. Progress is only ever set
+  // while a batch on this host and tab runs, and that batch is stopped below.
+  const [bulkScope, setBulkScope] = useState({ hostId: activeHostId, tab: activeTab });
+
+  if (bulkScope.hostId !== activeHostId || bulkScope.tab !== activeTab) {
+    setBulkScope({ hostId: activeHostId, tab: activeTab });
     setBulkFailures([]);
     setBulkRetrySkills([]);
     setBulkSummary(null);
+    setBulkProgress(null);
+  }
+
+  useEffect(() => {
+    bulkEpochRef.current++;
     const batch = batchRef.current;
+
     if (batch && (batch.hostId !== activeHostId || activeTab !== "market")) {
       batch.stopRequested = true;
+
       if (batch.cancelKey) {
-        invokeHost<boolean>(batch.hostId, "cancel_install", { key: batch.cancelKey }).catch(() => {});
+        invokeHost<boolean>(batch.hostId, "cancel_install", { key: batch.cancelKey }).catch(
+          () => {},
+        );
       }
-      setBulkProgress(null);
     }
   }, [activeHostId, activeTab]);
 
   const managedSkillsRef = useRef(managedSkills);
-  managedSkillsRef.current = managedSkills;
+  useEffect(() => {
+    managedSkillsRef.current = managedSkills;
+  }, [managedSkills]);
 
-  const goToSkill = useCallback((skillName: string) => {
-    // Use ref to get the latest managedSkills after refresh
-    const skills = managedSkillsRef.current;
-    const skill = skills.find(
-      (s) => s.name === skillName || s.source_ref === skillName
-    );
-    if (skill) {
-      openSkillDetailById(skill.id);
-    }
-    navigate({ to: "/my-skills" });
-  }, [navigate, openSkillDetailById]);
+  const goToSkill = useCallback(
+    (skillName: string) => {
+      // Use ref to get the latest managedSkills after refresh
+      const skills = managedSkillsRef.current;
+
+      const skill = skills.find((s) => s.name === skillName || s.source_ref === skillName);
+
+      if (skill) {
+        openSkillDetailById(skill.id);
+      }
+
+      navigate({ to: "/my-skills" });
+    },
+    [navigate, openSkillDetailById],
+  );
 
   const installedSourceRefs = useMemo(() => {
     const set = new Set<string>();
+
     for (const skill of managedSkills) {
       if (skill.source_type === "skillssh" && skill.source_ref) {
         set.add(skill.source_ref);
       }
     }
+
     return set;
   }, [managedSkills]);
 
   const findInstalledByGitUrl = useCallback(
     (url: string) => findInstalledSkillByGitUrl(managedSkills, url),
-    [managedSkills]
+    [managedSkills],
   );
-
-  useEffect(() => {
-    if (tabParam) {
-      setActiveTab(tabParam);
-    }
-  }, [tabParam]);
 
   const switchTab = (tab: InstallTab) => {
     setActiveTab(tab);
@@ -146,14 +192,17 @@ export function InstallSkills() {
   const installLocalSource = async (sourcePath: string) => {
     const name = sourcePath.split("/").pop() || sourcePath;
     const toastId = toast.loading(t("install.toast.installing", { name }));
+
     try {
       await api.installLocal(sourcePath);
     } catch (e) {
       const message = getErrorMessage(e, t("common.error"));
       setLocalError(message);
       toast.error(message, { id: toastId });
+
       return;
     }
+
     // Install succeeded — post-install refresh is best-effort and must not
     // surface as an install failure.
     const results = await Promise.allSettled([
@@ -161,6 +210,7 @@ export function InstallSkills() {
       refreshManagedSkills(),
       runScanSilent(),
     ]);
+
     warnRejected(results, "post-install refresh");
     toast.success(t("install.toast.success", { name }), {
       id: toastId,
@@ -174,6 +224,7 @@ export function InstallSkills() {
   const handleLocalFolderInstall = async () => {
     try {
       const selected = await pickPath({ directory: true });
+
       if (!selected) return;
       installLocalSource(selected);
     } catch (error: unknown) {
@@ -186,6 +237,7 @@ export function InstallSkills() {
   const handleLocalFileInstall = async () => {
     try {
       const selected = await pickPath({ files: ["zip", "skill"], filterName: "Skills" });
+
       if (!selected) return;
       installLocalSource(selected);
     } catch (error: unknown) {
@@ -197,8 +249,10 @@ export function InstallSkills() {
 
   const handleBatchImportFolder = async () => {
     let unlisten: (() => void) | null = null;
+
     try {
       const selected = await pickPath({ directory: true });
+
       if (!selected) return;
 
       const toastId = toast.loading(t("install.local.batchImporting"));
@@ -207,11 +261,10 @@ export function InstallSkills() {
         "batch-import-progress",
         (event) => {
           const { current, total, name } = event.payload;
-          toast.loading(
-            t("install.local.batchProgress", { current, total, name }),
-            { id: toastId }
-          );
-        }
+          toast.loading(t("install.local.batchProgress", { current, total, name }), {
+            id: toastId,
+          });
+        },
       );
 
       const result: BatchImportResult = await api.batchImportFolder(selected);
@@ -222,20 +275,19 @@ export function InstallSkills() {
         const detail = remaining > 0 ? `${previewErrors}; +${remaining} more` : previewErrors;
         toast.error(
           `${t("install.local.batchErrors", { count: result.errors.length })}: ${detail}`,
-          { id: toastId }
+          { id: toastId },
         );
       } else if (result.imported === 0) {
-        toast.info(
-          t("install.local.batchAllSkipped", { skipped: result.skipped }),
-          { id: toastId }
-        );
+        toast.info(t("install.local.batchAllSkipped", { skipped: result.skipped }), {
+          id: toastId,
+        });
       } else {
         toast.success(
           t("install.local.batchSuccess", {
             imported: result.imported,
             skipped: result.skipped,
           }),
-          { id: toastId }
+          { id: toastId },
         );
       }
 
@@ -264,16 +316,19 @@ export function InstallSkills() {
         "install-progress",
         (event) => {
           if (event.payload.skill_id !== cancelKey) return;
+
           if (event.payload.phase === "cloning") {
             const detail = event.payload.detail?.trim();
+
             const msg = detail
               ? `${t("install.toast.cloning")}\n${detail}`
               : t("install.toast.cloning");
+
             toast.loading(msg, { id: toastId });
           } else if (event.payload.phase === "installing") {
             toast.loading(t("install.toast.installing", { name: displayName }), { id: toastId });
           }
-        }
+        },
       );
       await api.installFromSkillssh(skill.source, skill.skill_id);
       await Promise.all([refreshPresets(), refreshManagedSkills()]);
@@ -300,7 +355,7 @@ export function InstallSkills() {
     if (skills.length === 0 || batchRef.current || installing !== null) return [];
     const hostId = activeHostId;
     const epoch = bulkEpochRef.current;
-    const batch = { hostId, stopRequested: false, cancelKey: null as string | null };
+    const batch: InstallBatch = { hostId, stopRequested: false, cancelKey: null };
     batchRef.current = batch;
     setBulkLocked(true);
     setBulkFailures([]);
@@ -317,13 +372,16 @@ export function InstallSkills() {
 
     for (let index = 0; index < skills.length; index++) {
       const skill = skills[index];
+
       if (batch.stopRequested) {
         stopped = true;
         retrySkills.push(...skills.slice(index));
         break;
       }
+
       const cancelKey = `${skill.source}/${skill.skill_id}`;
       batch.cancelKey = cancelKey;
+
       try {
         await invokeHost<void>(hostId, "install_from_skillssh", {
           source: skill.source,
@@ -337,10 +395,13 @@ export function InstallSkills() {
           retrySkills.push(...skills.slice(index));
           break;
         }
+
         failures.push({ skill, error: getErrorMessage(error, t("common.error")) });
         retrySkills.push(skill);
       }
+
       completed++;
+
       if (mountedRef.current && bulkEpochRef.current === epoch && getActiveHostId() === hostId) {
         setBulkProgress({ completed, total: skills.length });
       }
@@ -353,6 +414,7 @@ export function InstallSkills() {
       ]);
     } catch (error) {
       console.warn("Post-batch install refresh failed:", error);
+
       if (mountedRef.current && bulkEpochRef.current === epoch && getActiveHostId() === hostId) {
         toast.error(t("install.market.refreshError"));
       }
@@ -363,22 +425,28 @@ export function InstallSkills() {
       setBulkRetrySkills(retrySkills);
       setBulkSummary({ installed, total: skills.length, stopped });
       setBulkProgress(null);
+
       if (installed > 0) {
         toast.success(t("install.market.batchSummary", { installed, total: skills.length }));
       }
+
       if (failures.length > 0) {
         toast.error(t("install.market.batchInstallError", { count: failures.length }));
       }
     }
+
     if (batchRef.current === batch) batchRef.current = null;
     setBulkLocked(false);
+
     return installedIds;
   };
 
   const handleStopBulkInstall = () => {
     const batch = batchRef.current;
+
     if (!batch) return;
     batch.stopRequested = true;
+
     if (batch.cancelKey) {
       invokeHost<boolean>(batch.hostId, "cancel_install", { key: batch.cancelKey }).catch(() => {});
     }
@@ -394,24 +462,30 @@ export function InstallSkills() {
 
   const handleImportDiscovered = async (sourcePath: string, name: string) => {
     setImportingPaths((prev) => new Set(prev).add(sourcePath));
+
     try {
       try {
         await api.importExistingSkill(sourcePath, name);
       } catch (error: unknown) {
         toast.error(getErrorMessage(error, t("common.error")));
+
         return;
       }
+
       toast.success(t("install.scan.importedOne", { name }));
+
       const results = await Promise.allSettled([
         refreshPresets(),
         refreshManagedSkills(),
         runScanSilent(),
       ]);
+
       warnRejected(results, "post-import refresh");
     } finally {
       setImportingPaths((prev) => {
         const next = new Set(prev);
         next.delete(sourcePath);
+
         return next;
       });
     }
@@ -419,19 +493,24 @@ export function InstallSkills() {
 
   const handleImportAllDiscovered = async () => {
     setImportingAll(true);
+
     try {
       try {
         await api.importAllDiscovered();
       } catch (error: unknown) {
         toast.error(getErrorMessage(error, t("common.error")));
+
         return;
       }
+
       toast.success(t("install.scan.importedAll"));
+
       const results = await Promise.allSettled([
         refreshPresets(),
         refreshManagedSkills(),
         runScanSilent(),
       ]);
+
       warnRejected(results, "post-import refresh");
     } finally {
       setImportingAll(false);
@@ -450,6 +529,7 @@ export function InstallSkills() {
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
+
             return (
               <button
                 key={tab.id}
@@ -459,7 +539,7 @@ export function InstallSkills() {
                   "mr-4 flex items-center gap-1.5 border-b-2 px-1 pb-1.5 text-[13px] font-medium transition-colors outline-none disabled:cursor-not-allowed disabled:opacity-50",
                   isActive
                     ? "border-accent text-accent"
-                    : "border-transparent text-muted hover:text-tertiary"
+                    : "border-transparent text-muted hover:text-tertiary",
                 )}
               >
                 <Icon className="h-3.5 w-3.5" />
@@ -478,7 +558,7 @@ export function InstallSkills() {
           installing={installing}
           onInstall={handleInstallSkillssh}
           onCancelInstall={handleCancelInstall}
-          bulkProgress={activeHostId === batchRef.current?.hostId ? bulkProgress : null}
+          bulkProgress={activeHostId === bulkResultHostId ? bulkProgress : null}
           bulkFailures={activeHostId === bulkResultHostId ? bulkFailures : []}
           bulkSummary={activeHostId === bulkResultHostId ? bulkSummary : null}
           retryCount={bulkRetrySkills.length}

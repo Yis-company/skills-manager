@@ -1,4 +1,3 @@
-import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -12,24 +11,26 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { cn } from "../utils";
+
 import { formatSnapshotWhen } from "../lib/backupFormat";
 import { gitBackupMode, pendingBreakdown } from "../lib/gitBackupMode";
 import * as api from "../lib/tauri";
 import type { GitBackupStatus, GitUpstreamHealth } from "../lib/tauri";
+import { cn } from "../utils";
 
 interface BackupStatusCardProps {
   gitStatus: GitBackupStatus | null;
   /** Saved remote URL; may be set before the repo exists. */
   remoteConfig: string;
   /** Plain-language reason the last backup failed, if it did. */
-  backupError: string | null;
+  backupError: null | string;
   deviceName: string;
   setDeviceName: (name: string) => void;
   /** The view's in-flight action, if any; disables the actions. */
-  loading: string | null;
+  loading: null | string;
   /** The GitHub token was revoked or expired; offer a reconnect. */
   authErrorNeedsReconnect: boolean;
   setReconnectMode: (reconnect: boolean) => void;
@@ -75,6 +76,7 @@ export function BackupStatusCard({
         iconClassName: "text-red-500",
       };
     }
+
     switch (mode) {
       case "loading":
         return {
@@ -108,6 +110,7 @@ export function BackupStatusCard({
         const { local: localCount, remote: remoteCount } = pendingBreakdown(gitStatus);
         const remoteOnly = remoteCount > 0 && localCount === 0;
         const both = remoteCount > 0 && localCount > 0;
+
         return {
           icon: remoteOnly ? RefreshCw : Upload,
           title: remoteOnly ? t("backup.status.remoteOnly") : t("backup.status.pending"),
@@ -122,12 +125,15 @@ export function BackupStatusCard({
           iconClassName: "text-amber-600 dark:text-amber-400",
         };
       }
+
       case "up_to_date":
         return {
           icon: CheckCircle2,
           title: t("backup.status.synced"),
           description: t("backup.status.syncedDesc", {
-            when: formatSnapshotWhen(gitStatus?.current_snapshot_tag ?? null) ?? t("backup.status.noSnapshot"),
+            when:
+              formatSnapshotWhen(gitStatus?.current_snapshot_tag ?? null) ??
+              t("backup.status.noSnapshot"),
           }),
           className: "border-emerald-500/30 bg-emerald-500/10",
           iconClassName: "text-emerald-600 dark:text-emerald-400",
@@ -138,7 +144,9 @@ export function BackupStatusCard({
   const handleSaveDeviceName = async () => {
     const draft = deviceNameDraft.trim();
     setDeviceNameEditing(false);
+
     if (!draft || draft === deviceName) return;
+
     try {
       const saved = await api.backupSetDeviceName(draft);
       setDeviceName(saved);
@@ -166,7 +174,9 @@ export function BackupStatusCard({
             <div className="mt-3 grid gap-2 text-[12px] text-tertiary sm:grid-cols-2">
               <div className="min-w-0">
                 <div className="text-faint">{t("backup.connection.repository")}</div>
-                <div className="truncate font-mono text-secondary" title={remoteLabel}>{remoteLabel}</div>
+                <div className="truncate font-mono text-secondary" title={remoteLabel}>
+                  {remoteLabel}
+                </div>
               </div>
               <div>
                 <div className="text-faint">{t("backup.connection.branch")}</div>
@@ -182,6 +192,7 @@ export function BackupStatusCard({
                       onChange={(event) => setDeviceNameDraft(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") void handleSaveDeviceName();
+
                         if (event.key === "Escape") setDeviceNameEditing(false);
                       }}
                       autoFocus
@@ -250,7 +261,11 @@ export function BackupStatusCard({
               disabled={!!loading || !remoteConfig}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-accent-border bg-accent-dark px-3 text-[13px] font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
             >
-              {loading === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+              {loading === "start" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Cloud className="h-3.5 w-3.5" />
+              )}
               {t("settings.gitStartBackup")}
             </button>
           ) : (
@@ -260,7 +275,11 @@ export function BackupStatusCard({
               disabled={!!loading || !canBackupNow}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-accent-border bg-accent-dark px-3 text-[13px] font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
             >
-              {loading === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {loading === "sync" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="h-3.5 w-3.5" />
+              )}
               {backupError
                 ? t("backup.actions.retry")
                 : mode === "up_to_date"

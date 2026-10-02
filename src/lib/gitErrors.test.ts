@@ -1,5 +1,6 @@
-import type { TFunction } from "i18next";
+import { createInstance } from "i18next";
 import { describe, expect, it } from "vitest";
+
 import {
   isAuthFailureMessage,
   isRecoverableSetupError,
@@ -7,8 +8,12 @@ import {
   mapGithubErrorMessage,
 } from "./gitErrors";
 
-// Returns the key itself, so tests can assert which copy was picked.
-const t = ((key: string) => key) as unknown as TFunction;
+// Without resources, `t` returns the key itself, so tests can assert which copy was picked.
+const i18n = createInstance();
+
+i18n.init({ lng: "en", resources: {}, initAsync: false, showSupportNotice: false });
+
+const { t } = i18n;
 
 describe("isSyncConflictError", () => {
   it("matches the conflict markers", () => {
@@ -59,7 +64,9 @@ describe("mapGithubErrorMessage", () => {
   });
 
   it("falls back to the git error copy", () => {
-    expect(mapGithubErrorMessage(new Error("fatal: not a git repository"), t)).toBe("settings.gitErrorNotRepo");
+    expect(mapGithubErrorMessage(new Error("fatal: not a git repository"), t)).toBe(
+      "settings.gitErrorNotRepo",
+    );
   });
 });
 

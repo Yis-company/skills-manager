@@ -1,13 +1,21 @@
-import { useEffect } from "react";
 import { Outlet, useNavigate } from "@tanstack/react-router";
-import { Sidebar } from "./Sidebar";
-import { StatusBanner } from "./StatusBanner";
-import { RemoteBanner } from "./RemoteBanner";
-import { CommandPalette } from "./CommandPalette";
-import { useApp } from "../context/AppContext";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
+
+import { useApp } from "../context/AppContext";
 import { useDragWindow } from "../hooks/useDragWindow";
 import { cn } from "../utils";
+import { CommandPalette } from "./CommandPalette";
+import { RemoteBanner } from "./RemoteBanner";
+import { Sidebar } from "./Sidebar";
+import { StatusBanner } from "./StatusBanner";
+
+function isTyping(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+  );
+}
 
 export function Layout() {
   const { t } = useTranslation();
@@ -19,19 +27,20 @@ export function Layout() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+        if (isTyping(e.target)) return;
         e.preventDefault();
         navigate({ to: "/settings/{-$category}" });
       }
+
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "r") {
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+        if (isTyping(e.target)) return;
         e.preventDefault();
         refreshAppData();
       }
     };
+
     window.addEventListener("keydown", handleKeyDown);
+
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [navigate, refreshAppData]);
 
@@ -52,7 +61,7 @@ export function Layout() {
         <div
           className={cn(
             "flex-1 overflow-y-auto px-5 pb-5 scrollbar-hide",
-            activeHost ? "pt-5" : "pt-[calc(28px+20px)]"
+            activeHost ? "pt-5" : "pt-[calc(28px+20px)]",
           )}
         >
           <div className="mx-auto flex min-h-full max-w-[1200px] flex-col gap-4">

@@ -1,6 +1,7 @@
-import { expect, test } from "../fixtures";
-import { skill } from "../fake-backend/state";
 import type { Page } from "@playwright/test";
+
+import { skill } from "../fake-backend/state";
+import { expect, test } from "../fixtures";
 
 // F2 + F3: renaming and deleting a tag from the library filter's tag menu, and
 // the tag filter following the change.
@@ -14,7 +15,9 @@ const seed = {
 };
 
 const skillNames = (page: Page) => page.getByRole("heading", { level: 3 });
-const tagOption = (page: Page, tag: string) => page.getByRole("checkbox", { name: new RegExp(`^${tag}\\b`) });
+
+const tagOption = (page: Page, tag: string) =>
+  page.getByRole("checkbox", { name: new RegExp(`^${tag}\\b`) });
 
 async function openTagFilter(page: Page) {
   await page.getByRole("button", { name: "Filter" }).click();

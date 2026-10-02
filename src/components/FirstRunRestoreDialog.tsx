@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
 import { CloudDownload, Loader2, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+
 import { useApp } from "../context/AppContext";
 import { mapGitErrorMessage } from "../lib/gitErrors";
 import * as api from "../lib/tauri";
@@ -16,28 +17,43 @@ const PROMPT_SETTING_KEY = "backup_first_run_prompt";
  */
 export function FirstRunRestoreDialog() {
   const { t } = useTranslation();
-  const { managedSkills, loading: skillsLoading, refreshManagedSkills, refreshPresets, activeHost } = useApp();
+
+  const {
+    managedSkills,
+    loading: skillsLoading,
+    refreshManagedSkills,
+    refreshPresets,
+    activeHost,
+  } = useApp();
+
   const [open, setOpen] = useState(false);
-  const [checked, setChecked] = useState(false);
+  const checkedRef = useRef(false);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<null | string>(null);
 
   useEffect(() => {
     // The check is about this computer's library; a host's may be empty.
-    if (skillsLoading || checked || activeHost) return;
-    setChecked(true);
+    if (skillsLoading || checkedRef.current || activeHost) return;
+    checkedRef.current = true;
+
     if (managedSkills.length > 0) return;
     void (async () => {
       const dismissed = await api.getSettings(PROMPT_SETTING_KEY).catch(() => null);
+
       if (dismissed) return;
-      const savedRemote = (await api.getSettings("git_backup_remote_url").catch(() => null))?.trim();
+
+      const savedRemote = (
+        await api.getSettings("git_backup_remote_url").catch(() => null)
+      )?.trim();
+
       if (savedRemote) return;
       const status = await api.gitBackupStatus().catch(() => null);
+
       if (!status || status.is_repo) return;
       setOpen(true);
     })();
-  }, [skillsLoading, checked, managedSkills.length, activeHost]);
+  }, [skillsLoading, managedSkills.length, activeHost]);
 
   if (!open) return null;
 
@@ -49,9 +65,11 @@ export function FirstRunRestoreDialog() {
 
   const handleRestore = async () => {
     const trimmed = url.trim();
+
     if (!trimmed) return;
     setBusy(true);
     setError(null);
+
     try {
       // Same sanitize-first flow as the Backup page: embedded credentials go
       // to the OS keychain, only the clean URL is persisted (§3.7).
@@ -113,7 +131,7 @@ export function FirstRunRestoreDialog() {
             type="button"
             onClick={dismiss}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-tertiary transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50 outline-none"
+            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-tertiary outline-none transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
           >
             <Sparkles className="h-3.5 w-3.5" />
             {t("firstRun.startFresh")}
@@ -122,9 +140,13 @@ export function FirstRunRestoreDialog() {
             type="button"
             onClick={handleRestore}
             disabled={busy || !url.trim()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 outline-none"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-accent-border bg-accent-dark px-3 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CloudDownload className="h-3.5 w-3.5" />}
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <CloudDownload className="h-3.5 w-3.5" />
+            )}
             {busy ? t("firstRun.restoring") : t("firstRun.restore")}
           </button>
         </div>

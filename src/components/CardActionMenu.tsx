@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
 import { cn } from "../utils";
 
 export interface CardAction {
@@ -36,11 +37,16 @@ export function CardActionMenu({ actions, label, className, onOpenChange }: Prop
 
   useEffect(() => {
     if (!open) return;
+
     const handlePointer = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !(e.target instanceof Node && containerRef.current.contains(e.target))
+      ) {
         setOpenState(false);
       }
     };
+
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // The open menu consumes this Escape: it must not also reach the window
@@ -48,8 +54,10 @@ export function CardActionMenu({ actions, label, className, onOpenChange }: Prop
       e.stopPropagation();
       setOpenState(false);
     };
+
     document.addEventListener("mousedown", handlePointer);
     document.addEventListener("keydown", handleEscape);
+
     return () => {
       document.removeEventListener("mousedown", handlePointer);
       document.removeEventListener("keydown", handleEscape);
@@ -73,7 +81,7 @@ export function CardActionMenu({ actions, label, className, onOpenChange }: Prop
         }}
         className={cn(
           "flex h-5 w-5 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary",
-          open && "bg-surface-hover text-secondary"
+          open && "bg-surface-hover text-secondary",
         )}
       >
         <MoreHorizontal className="h-3.5 w-3.5" />
@@ -97,7 +105,7 @@ export function CardActionMenu({ actions, label, className, onOpenChange }: Prop
                 "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                 action.danger
                   ? "text-danger hover:bg-danger-bg"
-                  : "text-secondary hover:bg-surface-hover"
+                  : "text-secondary hover:bg-surface-hover",
               )}
             >
               <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center opacity-70">

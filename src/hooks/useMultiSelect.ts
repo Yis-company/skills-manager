@@ -40,18 +40,23 @@ export function useMultiSelect<T>({
   const [prevScope, setPrevScope] = useState(scopeSignal);
   const [prevFilter, setPrevFilter] = useState(filterSignal);
   let selectionAdjusted = false;
+
   if (prevScope !== scopeSignal) {
     setPrevScope(scopeSignal);
     setPrevFilter(filterSignal);
+
     if (rawSelectedIds.size > 0) setRawSelectedIds(new Set<string>());
     selectionAdjusted = true;
   } else if (prevFilter !== filterSignal) {
     setPrevFilter(filterSignal);
+
     if (rawSelectedIds.size > 0) {
       const visible = new Set(filtered.map(getKey));
       const pruned = new Set([...rawSelectedIds].filter((key) => visible.has(key)));
+
       if (pruned.size !== rawSelectedIds.size) setRawSelectedIds(pruned);
     }
+
     selectionAdjusted = true;
   }
 
@@ -64,6 +69,7 @@ export function useMultiSelect<T>({
     if (rawSelectedIds.size === 0) return rawSelectedIds;
     const existing = new Set(items.map(getKey));
     const live = new Set([...rawSelectedIds].filter((key) => existing.has(key)));
+
     return live.size === rawSelectedIds.size ? rawSelectedIds : live;
     // getKey is redeclared inline by most callers; items and the raw set drive this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,8 +85,10 @@ export function useMultiSelect<T>({
   const toggleSelect = (key: string) => {
     setRawSelectedIds((prev) => {
       const next = new Set(prev);
+
       if (next.has(key)) next.delete(key);
       else next.add(key);
+
       return next;
     });
   };
@@ -90,17 +98,12 @@ export function useMultiSelect<T>({
     setRawSelectedIds((prev) => new Set([...prev].filter((key) => !removed.has(key))));
   };
 
-  const isAllSelected =
-    filtered.length > 0 && filtered.every((s) => selectedIds.has(getKey(s)));
+  const isAllSelected = filtered.length > 0 && filtered.every((s) => selectedIds.has(getKey(s)));
 
-  const anyDisabled = items
-    .filter((s) => selectedIds.has(getKey(s)))
-    .some((s) => !isItemActive(s));
+  const anyDisabled = items.filter((s) => selectedIds.has(getKey(s))).some((s) => !isItemActive(s));
 
   const handleSelectAll = () => {
-    setRawSelectedIds(
-      isAllSelected ? new Set<string>() : new Set(filtered.map(getKey))
-    );
+    setRawSelectedIds(isAllSelected ? new Set<string>() : new Set(filtered.map(getKey)));
   };
 
   const exitMultiSelect = () => {
@@ -111,14 +114,18 @@ export function useMultiSelect<T>({
   // Escape leaves selection mode, unless a dialog is open and owns the key.
   useEffect(() => {
     if (!isMultiSelect || !escapeEnabled) return;
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      const target = e.target as HTMLElement | null;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
       setIsMultiSelect(false);
       setRawSelectedIds(new Set<string>());
     };
+
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
   }, [isMultiSelect, escapeEnabled]);
 

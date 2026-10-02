@@ -11,6 +11,6 @@ export interface InstallSearch {
  * `tab` key: the router layers the result over the raw query, so leaving the
  * key out would let an unknown `?tab=` value through.
  */
-export function parseInstallSearch(search: Record<string, unknown>): InstallSearch {
+export function parseInstallSearch(search: { tab?: unknown }): InstallSearch {
   return { tab: INSTALL_TABS.find((known) => known === search.tab) };
 }

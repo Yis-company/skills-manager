@@ -1,4 +1,9 @@
 import type {
+  ProjectGitPrReview,
+  ProjectGitPushReview,
+  ProjectGitStatus,
+} from "../../src/lib/projectGit";
+import type {
   GitBackupStatus,
   GithubBackupConnectResult,
   GithubDeviceFlowStart,
@@ -8,12 +13,11 @@ import type {
   Project,
   ProjectAgentTarget,
   ProjectSkill,
+  RemoteHost,
   ScanResult,
   SkillsShSkill,
   ToolInfo,
-  RemoteHost,
 } from "../../src/lib/tauri";
-import type { ProjectGitPrReview, ProjectGitPushReview, ProjectGitStatus } from "../../src/lib/projectGit";
 
 export type RemoteSeed = Omit<Seed, "remoteHosts" | "remoteStates">;
 
@@ -22,7 +26,7 @@ export interface Seed {
   skills?: ManagedSkill[];
   /** `skill_count` is computed from the skills' `preset_ids`. */
   presets?: Preset[];
-  activePresetId?: string | null;
+  activePresetId?: null | string;
   /** Saved skill order per preset id. */
   presetSkillOrder?: Record<string, string[]>;
   projects?: Project[];
@@ -30,18 +34,21 @@ export interface Seed {
   projectSkills?: Record<string, ProjectSkill[]>;
   /** Skills deployed in each global agent workspace. */
   globalLocalSkills?: Record<string, ProjectSkill[]>;
-  projectGit?: Record<string, {
-    status: ProjectGitStatus;
-    push: ProjectGitPushReview;
-    pr: ProjectGitPrReview;
-  }>;
+  projectGit?: Record<
+    string,
+    {
+      status: ProjectGitStatus;
+      push: ProjectGitPushReview;
+      pr: ProjectGitPrReview;
+    }
+  >;
   /** Agent targets of each project, by project id. */
   projectAgentTargets?: Record<string, ProjectAgentTarget[]>;
   tools?: ToolInfo[];
   settings?: Record<string, string>;
   centralRepoPath?: string;
-  centralRepoPathOverride?: string | null;
-  centralRepoPendingPath?: string | null;
+  centralRepoPathOverride?: null | string;
+  centralRepoPendingPath?: null | string;
   gitStatus?: GitBackupStatus;
   /** The skills.sh catalog: the leaderboard shows all of it, search filters it by name. */
   market?: SkillsShSkill[];
@@ -80,7 +87,7 @@ export interface Seed {
       content: string;
       revision: string;
       managed: boolean;
-      kind: "root" | "nested" | "override" | "native";
+      kind: "native" | "nested" | "override" | "root";
     }
   >;
   instructionWorktrees?: {
@@ -89,32 +96,64 @@ export interface Seed {
     branch?: string;
     is_main: boolean;
   }[];
-  mcpDefinitions?: {
-    id: string;
-    name: string;
-    transport: "stdio" | "http" | "sse";
-    server: Record<string, unknown>;
-    auth?: Record<string, unknown>;
-    revision: string;
-    updatedAt: string;
-  }[];
+  mcpDefinitions?: McpDefinition[];
   mcpTargets?: Record<
     string,
     {
       name: string;
       managedId: string;
-      status: "managed" | "unmanaged" | "conflict";
-      definition?: {
-        name: string;
-        transport: "stdio" | "http" | "sse";
-        server: Record<string, unknown>;
-      };
+      status: "conflict" | "managed" | "unmanaged";
+      definition?: McpServerDefinition;
     }[]
   >;
   resourcePreviews?: Record<
     string,
-    { kind: "instructions" | "mcps"; payload: unknown }
+    | { kind: "instructions"; payload: InstructionChange[] }
+    | { kind: "mcps"; payload: { target: McpTarget; operations: McpOperation[] } }
   >;
+}
+
+/** An MCP server as an agent config describes it. */
+export interface McpServerDefinition {
+  name: string;
+  transport: "http" | "sse" | "stdio";
+  server: {
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string;
+    headers?: Record<string, string>;
+    envFile?: string;
+    cwd?: string;
+  };
+}
+
+export interface McpDefinition extends McpServerDefinition {
+  id: string;
+  auth?: { bearerTokenEnvVar?: string; credentialRefs?: Record<string, string> };
+  revision: string;
+  updatedAt: string;
+}
+
+/** The agent config an MCP request reads or deploys to. */
+export interface McpTarget {
+  agentKey: string;
+  projectId?: string;
+}
+
+export interface McpOperation {
+  definitionId: string;
+  kind: string;
+  newName?: string;
+}
+
+/** One file an instruction deployment would write. */
+export interface InstructionChange {
+  path: string;
+  status: "conflict" | "create" | "unchanged";
+  content: string;
+  previous?: string;
+  conflict?: string;
 }
 
 /** The fake backend's in-memory data. Handlers read and change it. */
@@ -177,11 +216,7 @@ export function createState({ settings, ...seed }: Seed): State {
 
 // ── Factories for seeds: required fields only, sensible defaults for the rest ──
 
-export function tool(
-  key: string,
-  display_name: string,
-  extra: Partial<ToolInfo> = {},
-): ToolInfo {
+export function tool(key: string, display_name: string, extra: Partial<ToolInfo> = {}): ToolInfo {
   return {
     key,
     display_name,
@@ -197,11 +232,7 @@ export function tool(
   };
 }
 
-export function skill(
-  id: string,
-  name: string,
-  extra: Partial<ManagedSkill> = {},
-): ManagedSkill {
+export function skill(id: string, name: string, extra: Partial<ManagedSkill> = {}): ManagedSkill {
   return {
     id,
     name,
@@ -323,9 +354,7 @@ export function agentTarget(
   };
 }
 
-export function gitStatus(
-  extra: Partial<GitBackupStatus> = {},
-): GitBackupStatus {
+export function gitStatus(extra: Partial<GitBackupStatus> = {}): GitBackupStatus {
   return {
     is_repo: true,
     remote_url: "https://github.com/octo/skills-manager-backup.git",

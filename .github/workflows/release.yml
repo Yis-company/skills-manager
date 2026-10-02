@@ -252,7 +252,7 @@ jobs:
           # evaluates to '' still sets the variable, which Tauri reads as present.
         with:
           tagName: v__VERSION__
-          releaseName: 'Skills Manager v__VERSION__'
+          releaseName: "Skills Manager v__VERSION__"
           releaseBody: ${{ steps.changelog.outputs.body }}
           # Publish only after every platform is verified. v1.29.0 shipped with
           # Windows and Linux assets while both macOS legs were still notarizing,
