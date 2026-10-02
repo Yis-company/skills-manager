@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.46.0
+
+### Minor Changes
+
+- Integrate upstream 1.40.2 and 1.40.3: startup rebuilds empty sync metadata from an
+  intact database, git backups avoid the reftable format, the CLI bridge retries a
+  brief Windows sharing violation, and the update check ignores installed
+  dependencies. Presets gain an editable description shown on hover, the CLI gains
+  `agents add-custom`, and the UI fixes dark-theme diffs, overflowed agent toggles,
+  and Windows path separators.
+
+### Patch Changes
+
+- [#68](https://github.com/Yis-company/skills-manager/pull/68) [`40a068f`](https://github.com/Yis-company/skills-manager/commit/40a068f60402e85ab045fd445747c9fab5982be2) Thanks [@ybtam](https://github.com/ybtam)! - Stop retrying a failed local skill scan in a loop, and open Install Skills directly on the tab in its link.
+
 ## 1.45.0
 
 ### Minor Changes
