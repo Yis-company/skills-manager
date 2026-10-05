@@ -115,6 +115,7 @@ export function MySkills() {
 
   const {
     viewedPreset,
+    presets,
     tools,
     managedSkills: skills,
     refreshPresets,
@@ -796,16 +797,19 @@ export function MySkills() {
     }
   };
 
-  const handleTogglePreset = async (skill: ManagedSkill) => {
-    if (!viewedPreset) return;
-    const enabledInPreset = skill.preset_ids.includes(viewedPreset.id);
+  const handleTogglePreset = async (skill: ManagedSkill, presetId: string) => {
+    const preset = presets.find((p) => p.id === presetId)?.name ?? presetId;
 
-    if (enabledInPreset) {
-      await api.removeSkillFromPreset(skill.id, viewedPreset.id);
-      toast.success(`${skill.name} ${t("mySkills.disabledInPreset")}`);
-    } else {
-      await api.addSkillToPreset(skill.id, viewedPreset.id);
-      toast.success(`${skill.name} ${t("mySkills.enabledInPreset")}`);
+    try {
+      if (skill.preset_ids.includes(presetId)) {
+        await api.removeSkillFromPreset(skill.id, presetId);
+        toast.success(t("mySkills.disabledInPreset", { name: skill.name, preset }));
+      } else {
+        await api.addSkillToPreset(skill.id, presetId);
+        toast.success(t("mySkills.enabledInPreset", { name: skill.name, preset }));
+      }
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, t("common.error")));
     }
 
     await Promise.all([refreshManagedSkills(), refreshPresets()]);
@@ -1514,7 +1518,9 @@ export function MySkills() {
                             onRelinkSource: handleRelinkSource,
                             onDetachSource: handleDetachSource,
                             onDelete: setSkillToDelete,
-                            onTogglePreset: handleTogglePreset,
+                            onTogglePreset: (s) => {
+                              if (viewedPreset) void handleTogglePreset(s, viewedPreset.id);
+                            },
                             onToggleTarget: handleToggleSkillTarget,
                           };
 
@@ -1549,6 +1555,8 @@ export function MySkills() {
             toolToggles={toolToggles}
             togglingTool={togglingToolKey}
             onToggleTool={handleToggleSkillTool}
+            presets={presets}
+            onTogglePreset={handleTogglePreset}
             projects={projects}
             onProjectsChanged={refreshProjects}
           />
