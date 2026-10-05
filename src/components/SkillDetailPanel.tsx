@@ -8,6 +8,7 @@ import {
   getSkillSourceDiff,
   getSourceSkillDocument,
   type ManagedSkill,
+  type Preset,
   type Project,
   type SkillDocument,
   type SkillSourceDiff,
@@ -23,6 +24,7 @@ import { SkillMarkdown } from "./SkillMarkdown";
 import { SkillProjectsSection } from "./SkillProjectsSection";
 import { SkillSourceDiffViewer } from "./SkillSourceDiffViewer";
 import { SyncDots } from "./SyncDots";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 interface Props {
   skill: ManagedSkill | null;
@@ -31,6 +33,8 @@ interface Props {
   toolToggles?: null | SkillToolToggle[];
   togglingTool?: null | string;
   onToggleTool?: (tool: string, enabled: boolean) => void;
+  presets?: Preset[];
+  onTogglePreset?: (skill: ManagedSkill, presetId: string) => Promise<void>;
   projects?: Project[];
   onProjectsChanged?: () => void;
 }
@@ -42,6 +46,8 @@ export function SkillDetailPanel({
   toolToggles,
   togglingTool,
   onToggleTool,
+  presets,
+  onTogglePreset,
   projects,
   onProjectsChanged,
 }: Props) {
@@ -65,6 +71,8 @@ export function SkillDetailPanel({
       toolToggles={toolToggles}
       togglingTool={togglingTool}
       onToggleTool={onToggleTool}
+      presets={presets}
+      onTogglePreset={onTogglePreset}
       projects={projects}
       onProjectsChanged={onProjectsChanged}
     />
@@ -78,6 +86,8 @@ function SkillDetailPanelContent({
   toolToggles,
   togglingTool,
   onToggleTool,
+  presets,
+  onTogglePreset,
   projects,
   onProjectsChanged,
 }: {
@@ -87,6 +97,8 @@ function SkillDetailPanelContent({
   toolToggles?: null | SkillToolToggle[];
   togglingTool?: null | string;
   onToggleTool?: (tool: string, enabled: boolean) => void;
+  presets?: Preset[];
+  onTogglePreset?: (skill: ManagedSkill, presetId: string) => Promise<void>;
   projects?: Project[];
   onProjectsChanged?: () => void;
 }) {
@@ -98,6 +110,7 @@ function SkillDetailPanelContent({
   const [loading, setLoading] = useState(true);
   const [isMetadataExpanded, setIsMetadataExpanded] = useState(false);
   const [contentTab, setContentTab] = useState<"diff" | "local" | "source">("local");
+  const [togglingPresetId, setTogglingPresetId] = useState<null | string>(null);
   const localRequestIdRef = useRef(0);
   const sourceRequestIdRef = useRef(0);
   const diffRequestedRef = useRef(false);
@@ -219,6 +232,17 @@ function SkillDetailPanelContent({
   const sourceDiffLoading =
     contentTab === "diff" && supportsSourceDiff && !activeSourceDiff && !sourceDiffFailed;
 
+  const togglePreset = async (presetId: string) => {
+    if (!onTogglePreset) return;
+    setTogglingPresetId(presetId);
+
+    try {
+      await onTogglePreset(skill, presetId);
+    } finally {
+      setTogglingPresetId(null);
+    }
+  };
+
   const toggleItems: AgentToggleItem[] = (toolToggles ?? []).map((toggle) => ({
     key: toggle.tool,
     displayName: toggle.display_name,
@@ -327,6 +351,33 @@ function SkillDetailPanelContent({
       meta={meta}
       onClose={onClose}
     >
+      {presets && presets.length > 0 && onTogglePreset && (
+        <section
+          aria-label={t("mySkills.presetsTitle")}
+          className="mb-4 rounded-xl border border-border-subtle px-6 py-2.5"
+        >
+          <div className="text-[13px] font-medium text-secondary">{t("mySkills.presetsTitle")}</div>
+          <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-3">
+            {presets.map((preset) => (
+              <label
+                key={preset.id}
+                className="flex min-w-0 items-center justify-between gap-2 rounded-lg px-2 py-1.5"
+              >
+                <span className="truncate text-[12.5px] font-medium text-secondary">
+                  {preset.name}
+                </span>
+                <ToggleSwitch
+                  checked={skill.preset_ids.includes(preset.id)}
+                  loading={togglingPresetId === preset.id}
+                  onChange={() => void togglePreset(preset.id)}
+                  title={preset.name}
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
+
       {toolToggles && onToggleTool && (
         <AgentToggleSection
           items={toggleItems}

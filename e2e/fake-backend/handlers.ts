@@ -672,6 +672,31 @@ export const handlers = {
 
     return null;
   },
+  add_skill_to_preset: ({ skillId, presetId }: { skillId: string; presetId: string }, state) => {
+    const found = state.skills.find((s) => s.id === skillId);
+
+    if (found && !found.preset_ids.includes(presetId)) found.preset_ids.push(presetId);
+
+    return null;
+  },
+  remove_skill_from_preset: (
+    { skillId, presetId }: { skillId: string; presetId: string },
+    state,
+  ) => {
+    const found = state.skills.find((s) => s.id === skillId);
+
+    if (found) found.preset_ids = found.preset_ids.filter((id) => id !== presetId);
+
+    return null;
+  },
+  get_skill_tool_toggles: (_args, state) =>
+    state.tools.map((t) => ({
+      tool: t.key,
+      display_name: t.display_name,
+      installed: t.installed,
+      globally_enabled: t.enabled,
+      enabled: true,
+    })),
 
   // ── Projects ──
   get_projects: (_args, state) => [...state.projects].sort((a, b) => a.sort_order - b.sort_order),

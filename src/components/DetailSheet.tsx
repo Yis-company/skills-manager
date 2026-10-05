@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useId } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 
 const IS_MACOS = navigator.userAgent.includes("Mac");
 
@@ -21,6 +22,22 @@ export function DetailSheet({
   onClose,
   children,
 }: DetailSheetProps) {
+  const { t } = useTranslation();
+  const titleId = useId();
+
+  // Escape closes the drawer, unless a nested menu or dialog already handled it.
+  useEffect(() => {
+    if (!open) return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
+    };
+
+    window.addEventListener("keydown", onKey);
+
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return createPortal(
@@ -33,15 +50,31 @@ export function DetailSheet({
         }
         onClick={onClose}
       />
-      <div className="absolute inset-0 z-10 flex min-h-0 flex-col overflow-hidden border-l border-border-subtle bg-bg-secondary">
-        <button
-          onClick={onClose}
-          className="absolute right-5 top-4 z-10 shrink-0 rounded-md p-1.5 text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary"
-        >
-          <X className="h-4 w-4" />
-        </button>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="absolute inset-y-0 right-0 z-10 flex min-h-0 w-[min(760px,100%)] flex-col overflow-hidden border-l border-border-subtle bg-bg-secondary shadow-2xl"
+      >
+        <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border-subtle px-4 py-2">
+          <kbd className="rounded border border-border-subtle px-1.5 py-0.5 font-sans text-[11px] text-faint">
+            Esc
+          </kbd>
+          <button
+            type="button"
+            aria-label={t("common.close")}
+            onClick={onClose}
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] font-medium text-secondary outline-none transition-colors hover:bg-surface-hover hover:text-primary focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            <X className="h-4 w-4" />
+            {t("common.close")}
+          </button>
+        </div>
         <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-5">
-          <h2 className="mb-3 min-w-0 pr-10 text-[28px] font-semibold leading-tight tracking-tight text-primary">
+          <h2
+            id={titleId}
+            className="mb-3 min-w-0 text-[28px] font-semibold leading-tight tracking-tight text-primary"
+          >
             <span className="block">{title}</span>
           </h2>
           {description ? (

@@ -1303,28 +1303,34 @@ pub fn find_skill_dir(repo_dir: &Path, skill_id: Option<&str>) -> Result<PathBuf
 
         // Recursive search: match by directory name or SKILL.md name field.
         // The basename branch must check validity; the SKILL.md-name branch is
-        // implicitly validated by parsing the frontmatter.
-        let mut name_match: Option<PathBuf> = None;
+        // implicitly validated by parsing the frontmatter. Walk order is
+        // filesystem-dependent, so collect every match and pick by rank.
+        let mut dir_matches: Vec<PathBuf> = Vec::new();
+        let mut name_matches: Vec<PathBuf> = Vec::new();
         for e in walkdir::WalkDir::new(repo_dir)
             .max_depth(6)
             .into_iter()
+            .filter_entry(|e| {
+                e.depth() == 0 || !matches!(e.file_name().to_str(), Some(".git" | "node_modules"))
+            })
             .flatten()
         {
-            if e.file_type().is_dir() {
-                if e.file_name().to_string_lossy() == id
-                    && skill_metadata::is_valid_skill_dir(e.path())
-                {
-                    return Ok(e.path().to_path_buf());
+            if !e.file_type().is_dir() {
+                continue;
+            }
+            if e.file_name().to_string_lossy() == id {
+                if skill_metadata::is_valid_skill_dir(e.path()) {
+                    dir_matches.push(e.into_path());
                 }
-                if name_match.is_none() {
-                    let meta = skill_metadata::parse_skill_md(e.path());
-                    if meta.name.as_deref() == Some(id) {
-                        name_match = Some(e.path().to_path_buf());
-                    }
-                }
+            } else if skill_metadata::parse_skill_md(e.path()).name.as_deref() == Some(id) {
+                name_matches.push(e.into_path());
             }
         }
-        if let Some(path) = name_match {
+        let rank = |path: &PathBuf| variant_rank(path.strip_prefix(repo_dir).unwrap_or(path));
+        if let Some(path) = dir_matches.into_iter().min_by_key(rank) {
+            return Ok(path);
+        }
+        if let Some(path) = name_matches.into_iter().min_by_key(rank) {
             return Ok(path);
         }
 
@@ -1359,6 +1365,25 @@ pub fn find_skill_dir(repo_dir: &Path, skill_id: Option<&str>) -> Result<PathBuf
 
     // Default to root
     Ok(repo_dir.to_path_buf())
+}
+
+/// Orders candidate skill dirs (relative to the repo root) when a repo ships
+/// several variants of one skill: generic copies first, then Claude/Codex
+/// variants, then other provider dot-dirs (`.kiro`, `.cursor`, ...).
+fn variant_rank(rel: &Path) -> (u8, usize, PathBuf) {
+    let first = rel
+        .components()
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy());
+    let hidden = rel
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
+    let tier = match first.as_deref() {
+        _ if !hidden => 0,
+        Some(".claude" | ".codex") => 1,
+        _ => 2,
+    };
+    (tier, rel.components().count(), rel.to_path_buf())
 }
 
 pub fn cleanup_temp(path: &Path) {
@@ -1748,6 +1773,50 @@ mod tests {
         }
         let found = find_skill_dir(tmp.path(), Some("my-skill")).unwrap();
         assert_eq!(found, agents);
+    }
+
+    fn write_skills(dirs: &[&PathBuf]) {
+        for dir in dirs {
+            fs::create_dir_all(dir).unwrap();
+            fs::write(dir.join("SKILL.md"), "content").unwrap();
+        }
+    }
+
+    #[test]
+    fn find_skill_dir_prefers_claude_over_other_provider_variants() {
+        let tmp = tempdir().unwrap();
+        let kiro = tmp.path().join(".kiro").join("skills").join("my-skill");
+        let cursor = tmp.path().join(".cursor").join("skills").join("my-skill");
+        let claude = tmp.path().join(".claude").join("skills").join("my-skill");
+        write_skills(&[&kiro, &cursor, &claude]);
+        let found = find_skill_dir(tmp.path(), Some("my-skill")).unwrap();
+        assert_eq!(found, claude);
+    }
+
+    #[test]
+    fn find_skill_dir_prefers_generic_copy_over_provider_variants() {
+        let tmp = tempdir().unwrap();
+        let kiro = tmp.path().join(".kiro").join("skills").join("my-skill");
+        let codex = tmp.path().join(".codex").join("skills").join("my-skill");
+        let generic = tmp
+            .path()
+            .join("plugins")
+            .join("x")
+            .join("skills")
+            .join("my-skill");
+        write_skills(&[&kiro, &codex, &generic]);
+        let found = find_skill_dir(tmp.path(), Some("my-skill")).unwrap();
+        assert_eq!(found, generic);
+    }
+
+    #[test]
+    fn find_skill_dir_ignores_node_modules_copies() {
+        let tmp = tempdir().unwrap();
+        let vendored = tmp.path().join("node_modules").join("my-skill");
+        let kiro = tmp.path().join(".kiro").join("skills").join("my-skill");
+        write_skills(&[&vendored, &kiro]);
+        let found = find_skill_dir(tmp.path(), Some("my-skill")).unwrap();
+        assert_eq!(found, kiro);
     }
 
     #[test]

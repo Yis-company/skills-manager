@@ -254,8 +254,9 @@
     "disable": "Disable",
     "enableForPreset": "Enable for current preset",
     "disableForPreset": "Disable for current preset",
-    "enabledInPreset": "Added to current preset",
-    "disabledInPreset": "Removed from current preset",
+    "enabledInPreset": "{{name}} added to {{preset}}",
+    "disabledInPreset": "{{name}} removed from {{preset}}",
+    "presetsTitle": "Presets",
     "inPreset": "Enabled in current preset",
     "notInPreset": "Not enabled in current preset",
     "remove": "Remove from preset",
@@ -550,9 +551,7 @@
     "toast": {
       "cloning": "Cloning repository...",
       "installing": "Installing {{name}}...",
-      "syncing": "Syncing to tools...",
       "success": "{{name}} installed successfully",
-      "done": "Done",
       "cancelled": "Installation cancelled",
       "timeout": "Installation timed out — check your network",
       "view": "View"
@@ -614,15 +613,18 @@
       "exitSelectMode": "Cancel selection",
       "selectAllPage": "Select all on this page",
       "installSelected": "Install selected ({{count}})",
-      "installingProgress": "Installing {{completed}}/{{total}}",
-      "stopInstalling": "Stop",
       "batchSummary": "Installed {{installed}} of {{total}} skills",
-      "batchStopped": "Stopped after {{installed}} of {{total}} skills",
       "batchFailureDetail": "{{name}}: {{error}}",
-      "batchRetry": "Retry failed and unstarted ({{count}})",
-      "batchInstallError": "Could not install {{count}} skills",
       "refreshError": "The install results were saved, but the library could not be refreshed.",
       "selectSkill": "Select {{name}}"
+    },
+    "queue": {
+      "progress": "Installing {{current}}/{{total}} — {{name}}",
+      "queued": "Queued",
+      "remove": "Remove {{name}} from the queue",
+      "retry": "Retry failed ({{count}})",
+      "installed_one": "{{name}} installed successfully",
+      "installed_other": "Installed {{count}} skills"
     }
   },
   "settings": {
@@ -884,7 +886,8 @@
     "search": "Search",
     "goToSettings": "Settings",
     "expandAll": "Show all",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "close": "Close"
   },
   "addFromLibrary": {
     "title": "Add from Library",
