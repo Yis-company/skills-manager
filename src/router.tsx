@@ -6,6 +6,7 @@ import { HelpDialog } from "./components/HelpDialog";
 import { Layout } from "./components/Layout";
 import { RemotePickerHost } from "./components/RemoteDirectoryPicker";
 import { AppProvider } from "./context/AppContext";
+import { InstallQueueProvider } from "./context/InstallQueueContext";
 import { Backup } from "./views/Backup";
 import { Dashboard } from "./views/Dashboard";
 import { parseInstallSearch } from "./views/installSearch";
@@ -19,11 +20,13 @@ import { WorkspaceView } from "./views/WorkspaceView";
 const rootRoute = createRootRoute({
   component: () => (
     <AppProvider>
-      <Layout />
-      <HelpDialog />
-      <CloseActionGuard />
-      <FirstRunRestoreDialog />
-      <RemotePickerHost />
+      <InstallQueueProvider>
+        <Layout />
+        <HelpDialog />
+        <CloseActionGuard />
+        <FirstRunRestoreDialog />
+        <RemotePickerHost />
+      </InstallQueueProvider>
     </AppProvider>
   ),
   notFoundComponent: () => <Navigate to="/" replace />,

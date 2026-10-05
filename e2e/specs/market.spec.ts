@@ -45,6 +45,11 @@ test("pages through the leaderboard", async ({ page }) => {
   await expect(skillNames(page).first()).toHaveText("pdf-tool-01");
 });
 
+const card = (page: Page, name: string) =>
+  page
+    .locator(".app-panel")
+    .filter({ has: page.getByRole("heading", { level: 3, name, exact: true }) });
+
 test("installs selected market skills, continues after one failure, and retries only failures", async ({
   page,
   backend,
@@ -59,49 +64,93 @@ test("installs selected market skills, continues after one failure, and retries 
 
   await page.getByRole("button", { name: "Install selected (3)" }).click();
 
-  await expect.poll(async () => (await backend.calls("install_from_skillssh")).length).toBe(3);
+  await expect(page.getByText("Installed 2 of 3 skills")).toBeVisible();
   expect(await backend.calls("install_from_skillssh")).toEqual([
     { source: SOURCES[0], skillId: "pdf-tool-01" },
     { source: SOURCES[1], skillId: "skill-02" },
     { source: SOURCES[2], skillId: "skill-03" },
   ]);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Installed 2 of 3 skills" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Retry failed and unstarted (1)" }).click();
-  await expect.poll(async () => (await backend.calls("install_from_skillssh")).length).toBe(4);
+  await expect(page.getByText("skill-02: fake install failure for skill-02")).toBeVisible();
+  await expect(card(page, "pdf-tool-01").getByText("Installed")).toBeVisible();
+  await expect(card(page, "skill-03").getByText("Installed")).toBeVisible();
+
+  await backend.patch({ failedInstallSkillIds: [] });
+  await page.getByRole("button", { name: "Retry failed (1)" }).click();
+  await expect(card(page, "skill-02").getByText("Installed")).toBeVisible();
   expect((await backend.calls("install_from_skillssh")).at(-1)).toEqual({
     source: SOURCES[1],
     skillId: "skill-02",
   });
-  await expect(page.getByRole("checkbox", { name: "Select pdf-tool-01" })).toBeDisabled();
-  await expect(page.getByRole("checkbox", { name: "Select skill-03" })).toBeDisabled();
+  expect(await backend.calls("install_from_skillssh")).toHaveLength(4);
 });
 
-test("stopping a market install leaves later skills unstarted and retryable", async ({
+test("queues a second install behind a running one and installs both in order", async ({
   page,
   backend,
 }) => {
   await page.goto("/install");
   await backend.hold("install_from_skillssh");
-  await page.getByRole("button", { name: "Select skills" }).click();
+  await card(page, "pdf-tool-01").getByRole("button", { name: "Install" }).click();
+  await expect(card(page, "pdf-tool-01").getByRole("button", { name: "Cancel" })).toBeVisible();
+  await card(page, "skill-02").getByRole("button", { name: "Install" }).click();
 
-  for (const name of ["pdf-tool-01", "skill-02", "skill-03"]) {
-    await page.getByRole("checkbox", { name: `Select ${name}` }).check();
-  }
-
-  await page.getByRole("button", { name: "Install selected (3)" }).click();
-  await expect.poll(async () => (await backend.calls("install_from_skillssh")).length).toBe(1);
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("checkbox", { name: "Select pdf-tool-01" })).toBeChecked();
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
-  await backend.release("install_from_skillssh");
-
-  await expect(
-    page.getByRole("status").filter({ hasText: "Stopped after 1 of 3 skills" }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry failed and unstarted (2)" })).toBeVisible();
+  await expect(card(page, "skill-02").getByText("Queued")).toBeVisible();
+  await expect(page.getByText("Installing 1/2 — pdf-tool-01")).toBeVisible();
   expect(await backend.calls("install_from_skillssh")).toHaveLength(1);
+
+  await backend.release("install_from_skillssh");
+  await expect(page.getByText("Installed 2 skills")).toBeVisible();
+  expect(await backend.calls("install_from_skillssh")).toEqual([
+    { source: SOURCES[0], skillId: "pdf-tool-01" },
+    { source: SOURCES[1], skillId: "skill-02" },
+  ]);
+  await expect(card(page, "skill-02").getByText("Installed")).toBeVisible();
+});
+
+test("a queued install removed before it starts is never installed", async ({ page, backend }) => {
+  await page.goto("/install");
+  await backend.hold("install_from_skillssh");
+  await card(page, "pdf-tool-01").getByRole("button", { name: "Install" }).click();
+  await card(page, "skill-02").getByRole("button", { name: "Install" }).click();
+  await page.getByRole("button", { name: "Remove skill-02 from the queue" }).click();
+
+  await expect(card(page, "skill-02").getByRole("button", { name: "Install" })).toBeVisible();
+  await backend.release("install_from_skillssh");
+  await expect(page.getByText("pdf-tool-01 installed successfully")).toBeVisible();
+  expect(await backend.calls("install_from_skillssh")).toEqual([
+    { source: SOURCES[0], skillId: "pdf-tool-01" },
+  ]);
+});
+
+test("cancelling the running install asks the backend to stop it", async ({ page, backend }) => {
+  await page.goto("/install");
+  await backend.hold("install_from_skillssh");
+  await card(page, "pdf-tool-01").getByRole("button", { name: "Install" }).click();
+  await card(page, "pdf-tool-01").getByRole("button", { name: "Cancel" }).click();
+
+  await expect
+    .poll(() => backend.calls("cancel_install"))
+    .toEqual([{ key: `${SOURCES[0]}/pdf-tool-01` }]);
+  await backend.release("install_from_skillssh");
+});
+
+test("the install queue keeps running while the user visits another page", async ({
+  page,
+  backend,
+}) => {
+  await page.goto("/install");
+  await backend.hold("install_from_skillssh");
+  await card(page, "pdf-tool-01").getByRole("button", { name: "Install" }).click();
+  await card(page, "skill-02").getByRole("button", { name: "Install" }).click();
+
+  await page.getByRole("link", { name: "Library" }).click();
+  await backend.release("install_from_skillssh");
+  await expect(page.getByRole("heading", { level: 3, name: "skill-02" })).toBeVisible();
+  await page.getByRole("link", { name: "Install Skills" }).click();
+
+  await expect(card(page, "pdf-tool-01").getByText("Installed")).toBeVisible();
+  await expect(card(page, "skill-02").getByText("Installed")).toBeVisible();
+  expect(await backend.calls("install_from_skillssh")).toHaveLength(2);
 });
 
 test("market selection is cleared when moving to another result page", async ({ page }) => {
