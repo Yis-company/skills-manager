@@ -17,6 +17,7 @@
     "cli:install": "node scripts/run-rust-cli.mjs install",
     "test": "vitest run",
     "e2e": "playwright test -c e2e/playwright.config.ts",
+    "prototype:sync": "vite --mode e2e --port 1422 --open /backup?variant=A",
     "changeset": "changeset",
     "changeset:version": "changeset version && node scripts/sync-version.mjs",
     "lint:fix": "oxlint --fix",

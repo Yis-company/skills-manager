@@ -14,6 +14,7 @@ import { InstallSkills } from "./views/InstallSkills";
 import { MySkills } from "./views/MySkills";
 import { ProjectDetail } from "./views/ProjectDetail";
 import { Settings } from "./views/Settings";
+import { SyncPrototypeRoute } from "./views/sync-prototype";
 import { CODING_WORKSPACE_CONFIG, LOBSTER_WORKSPACE_CONFIG } from "./views/workspaceConfigs";
 import { WorkspaceView } from "./views/WorkspaceView";
 
@@ -79,7 +80,11 @@ const installRoute = createRoute({
 const backupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/backup",
-  component: Backup,
+  // PROTOTYPE (SID-106, SID-112): `?variant=` picks a Sync page prototype in dev builds.
+  validateSearch: (search: Record<string, unknown>): { variant?: string } => ({
+    variant: typeof search.variant === "string" ? search.variant : undefined,
+  }),
+  component: import.meta.env.DEV ? SyncPrototypeRoute : Backup,
 });
 
 const projectRoute = createRoute({
