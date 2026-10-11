@@ -1074,6 +1074,55 @@ fn recovery_before_ref_move_treats_merge_as_not_happened() {
 
 // ── old-client detection (§6) ──
 
+/// B writes like a newer version: a commit carrying protocol `trailer`,
+/// optionally with `protocol.json` raised to the same generation.
+fn push_newer_format_write(b: &Device, trailer: u32, raise_file: bool) {
+    b.activate();
+    if raise_file {
+        std::fs::write(
+            b.skills.join(protocol::PROTOCOL_FILE_REL),
+            format!(r#"{{"schema_version":1,"merge_protocol":{trailer}}}"#),
+        )
+        .unwrap();
+    }
+    b.write_skill("skill-2", "beta", "written by a newer version");
+    git(&b.skills, &["add", "-A"]);
+    git(
+        &b.skills,
+        &[
+            "commit",
+            "-m",
+            &format!("newer write\n\nSkills-Manager-Protocol: {trailer}"),
+        ],
+    );
+    b.push();
+}
+
+#[test]
+fn newer_remote_format_stops_the_merge_untouched() {
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    push_newer_format_write(&b, protocol::MERGE_PROTOCOL_VERSION + 1, true);
+
+    a.activate();
+    let tree_before = a.tree_oid();
+    let msg = format!("{:#}", a.pull_err());
+    assert!(msg.contains(protocol::UPDATE_REQUIRED), "{msg}");
+    assert_eq!(a.tree_oid(), tree_before);
+    assert!(!a.skills.join("beta").exists());
+}
+
+#[test]
+fn newer_protocol_trailer_alone_also_stops_the_merge() {
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    push_newer_format_write(&b, protocol::MERGE_PROTOCOL_VERSION + 1, false);
+
+    let msg = format!("{:#}", a.pull_err());
+    assert!(msg.contains(protocol::UPDATE_REQUIRED), "{msg}");
+    assert!(!a.skills.join("beta").exists());
+}
+
 #[test]
 fn old_client_line_merge_blocks_object_merge() {
     let env = setup();

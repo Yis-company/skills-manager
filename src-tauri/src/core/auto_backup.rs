@@ -7,8 +7,8 @@
 //! hands-free. The one deliberate exception (§4 收窄阻尼): while a remote
 //! change touches a skill that is pending a local conflict decision, the
 //! round backs off and waits for a manual sync — unrelated updates keep
-//! flowing. With the `merge_engine=system` escape hatch the old behavior
-//! (wait for manual sync whenever the remote is ahead) is kept.
+//! flowing. A remote written in a newer Sync format stops the round until
+//! the app is updated (SID-101).
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -82,13 +82,15 @@ pub(crate) enum Outcome {
     UpToDate,
     /// Committed and/or pushed successfully.
     BackedUp,
-    /// The remote moved ahead (another device pushed). With the system
-    /// engine this waits for a manual sync; with the object engine it is a
-    /// transient state — the re-armed next round merges and pushes.
+    /// Another device pushed inside this round's window. Transient: the
+    /// re-armed next round merges and pushes.
     RemoteAhead,
     /// §4 收窄阻尼: the remote touches a skill with an unresolved local
     /// conflict — deliberate backpressure until a manual decision.
     PausedOnConflict,
+    /// The remote uses a newer Sync format. Nothing was merged; retrying
+    /// cannot help until the app is updated, so the round is not re-armed.
+    UpdateRequired(String),
     Failed(String),
 }
 
@@ -200,6 +202,18 @@ fn handle_outcome<R: Runtime>(app: &AppHandle<R>, store: &SkillStore, outcome: O
                 error: None,
             });
         }
+        Outcome::UpdateRequired(msg) => {
+            CONSECUTIVE_FAILURES.store(0, Ordering::Release);
+            log::warn!("auto backup: stopped, update required: {msg}");
+            if let Err(e) = store.set_setting(SETTING_LAST_ERROR, &msg) {
+                log::warn!("auto backup: failed to persist error: {e:#}");
+            }
+            emit(AutoBackupPayload {
+                ok: false,
+                pending: false,
+                error: Some(msg),
+            });
+        }
         Outcome::Failed(msg) => {
             CONSECUTIVE_FAILURES.fetch_add(1, Ordering::AcqRel);
             log::warn!("auto backup: failed: {msg}");
@@ -284,11 +298,6 @@ pub(crate) fn run_round_blocking(store: &SkillStore) -> Outcome {
     }
 
     if status.behind > 0 {
-        // The system engine never line-merges in the background — the local
-        // commit is safe, the merge waits for a user-driven sync.
-        if !merge::object_merge_enabled(store) {
-            return Outcome::RemoteAhead;
-        }
         // §4 收窄阻尼: unrelated remote updates flow automatically; a remote
         // change to a skill awaiting a local conflict decision pauses the
         // round (deliberate backpressure, cleared by resolving + syncing).
@@ -297,7 +306,7 @@ pub(crate) fn run_round_blocking(store: &SkillStore) -> Outcome {
             Ok(false) => {}
             Err(e) => return Outcome::Failed(format!("{e:#}")),
         }
-        match merge::gated_pull_unlocked(store, &skills_dir) {
+        match merge::object_merge_pull_unlocked(store, &skills_dir) {
             Ok(_summary) => {
                 if let Err(e) =
                     crate::core::git_backup_store::reconcile_skills_index_unlocked(store)
@@ -305,7 +314,13 @@ pub(crate) fn run_round_blocking(store: &SkillStore) -> Outcome {
                     return Outcome::Failed(format!("{e:#}"));
                 }
             }
-            Err(e) => return Outcome::Failed(format!("{e:#}")),
+            Err(e) => {
+                let msg = format!("{e:#}");
+                if msg.contains(merge::protocol::UPDATE_REQUIRED) {
+                    return Outcome::UpdateRequired(msg);
+                }
+                return Outcome::Failed(msg);
+            }
         }
     }
 
@@ -532,28 +547,32 @@ mod tests {
     }
 
     #[test]
-    fn round_with_system_engine_waits_for_manual_sync_when_remote_ahead() {
+    fn round_stops_with_update_required_when_the_remote_format_is_newer() {
+        // SID-101: a remote written by a newer version is never merged with
+        // this build's rules. The stop is visible, and the round is not
+        // re-armed into a retry loop.
         let env = test_env();
-        // Escape hatch: the legacy engine never merges in the background.
-        env.store.set_setting("merge_engine", "system").unwrap();
         let other = clone_other_device(&env);
-        std::fs::write(other.join("from-b.md"), "b").unwrap();
+        std::fs::write(
+            other.join(merge::protocol::PROTOCOL_FILE_REL),
+            r#"{"schema_version":1,"merge_protocol":99}"#,
+        )
+        .unwrap();
+        std::fs::write(other.join("from-newer.md"), "b").unwrap();
         git(&other, &["add", "-A"]);
-        git(&other, &["commit", "-m", "from B"]);
+        git(
+            &other,
+            &["commit", "-m", "newer write\n\nSkills-Manager-Protocol: 99"],
+        );
         git(&other, &["push", "origin", "main"]);
 
-        std::fs::write(env.skills_dir.join("local.md"), "a").unwrap();
-
-        let outcome = run_round_blocking(&env.store);
-        assert_eq!(outcome, Outcome::RemoteAhead);
-        // The local change was still committed (protected locally)…
-        assert!(!git_backup::has_uncommitted_changes(&env.skills_dir).unwrap());
-        // …but nothing reached the remote and no failure is recorded.
-        assert_eq!(
-            git_out(&env.remote, &["log", "-1", "--format=%s", "main"]),
-            "from B"
-        );
-        assert_eq!(env.store.get_setting(SETTING_LAST_ERROR).unwrap(), None);
+        match run_round_blocking(&env.store) {
+            Outcome::UpdateRequired(msg) => {
+                assert!(msg.contains(merge::protocol::UPDATE_REQUIRED), "{msg}")
+            }
+            other => panic!("expected UpdateRequired, got {other:?}"),
+        }
+        assert!(!env.skills_dir.join("from-newer.md").exists());
     }
 
     #[test]

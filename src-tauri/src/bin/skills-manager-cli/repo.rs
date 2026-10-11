@@ -71,8 +71,7 @@ pub(crate) fn run_git(
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
         GitCommand::Pull => {
-            // Same engine gate as the GUI sync (object merge by default,
-            // merge_engine=system opts out). A raw line merge from this CLI
+            // Same object merge as the GUI sync. A raw line merge from this CLI
             // would read as an old-client violation on other devices (§6).
             let dir = central_repo::skills_dir();
             {
@@ -85,7 +84,7 @@ pub(crate) fn run_git(
                     .filter(|v| !v.is_empty())
                     .unwrap_or_else(git_backup::default_device_name);
                 let _ = git_backup::configure_device_identity(&dir, &device);
-                merge::gated_pull_unlocked(store, &dir)?;
+                merge::object_merge_pull_unlocked(store, &dir)?;
             }
             // Reconcile the DB from the merged metadata (takes its own lock).
             sync_metadata::reindex_from_metadata(store)?;

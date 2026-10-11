@@ -344,9 +344,7 @@ pub async fn git_backup_pull(
         git_backup::with_repo_lock("git pull", || {
             // Merge commits must carry this device's identity too.
             apply_device_identity(&store, &skills_dir);
-            // Object merge by default since 3d-β; merge_engine=system is the
-            // escape hatch back to the line-level git merge.
-            let summary = merge::gated_pull_unlocked(&store, &skills_dir)?;
+            let summary = merge::object_merge_pull_unlocked(&store, &skills_dir)?;
             reconcile_skills_index_unlocked(&store)?;
             store.log_audit(
                 crate::core::audit_log::AuditDraft::new("sync_merge")
@@ -440,7 +438,7 @@ fn run_sync_blocking(
     for attempt in 0..SYNC_PUSH_ATTEMPTS {
         let status = git_backup::get_status(skills_dir)?;
         if status.behind > 0 {
-            let summary = merge::gated_pull_unlocked(store, skills_dir)?;
+            let summary = merge::object_merge_pull_unlocked(store, skills_dir)?;
             reconcile_skills_index_unlocked(store)?;
             merge_summary = Some(summary);
         }

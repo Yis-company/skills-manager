@@ -90,6 +90,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     if theirs == ours {
         return Ok(up_to_date_summary(&repo, store));
     }
+    protocol::ensure_supported_format(&repo, &repo.find_commit(theirs)?)?;
     let base = repo
         .merge_base(ours, theirs)
         .context("no common history with the remote (unrelated histories)")?;

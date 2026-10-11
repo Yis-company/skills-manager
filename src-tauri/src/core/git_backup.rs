@@ -754,8 +754,8 @@ pub(crate) fn fetch_branch(skills_dir: &Path, branch: &str) -> Result<()> {
 }
 
 /// Line-level merge of the already-fetched remote branch via system git —
-/// used by the `merge_engine=system` escape hatch and as the legacy fallback
-/// of the object engine (merge-engine design §6).
+/// the legacy fallback of the object engine for a remote written only by
+/// pre-protocol clients (merge-engine design §6).
 ///
 /// The merge commit carries the protocol trailer (`app_commit`): without it,
 /// this app's own line merge would read as an old-client double-parent

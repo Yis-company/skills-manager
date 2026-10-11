@@ -16,8 +16,6 @@ export function BackupSection() {
   const [gitRemoteSaving, setGitRemoteSaving] = useState(false);
   const [gitRemoteDisconnecting, setGitRemoteDisconnecting] = useState(false);
   const [gitEngineGit2, setGitEngineGit2] = useState(false);
-  // Object merge is the default since 3d-β; "system" is the opt-out.
-  const [gitMergeEngineObject, setGitMergeEngineObject] = useState(true);
 
   useEffect(() => {
     // The saved setting is the single source of truth. Do not backfill from
@@ -32,12 +30,6 @@ export function BackupSection() {
       .getSettings("git_backup_engine")
       .then((v) => {
         setGitEngineGit2(v?.trim() === "git2");
-      })
-      .catch(() => {});
-    api
-      .getSettings("merge_engine")
-      .then((v) => {
-        setGitMergeEngineObject((v ?? "").trim() !== "system");
       })
       .catch(() => {});
   }, []);
@@ -146,33 +138,6 @@ export function BackupSection() {
                   toast.success(t("common.success"));
                 } catch {
                   setGitEngineGit2(!next);
-                  toast.error(t("common.error"));
-                }
-              }}
-            />
-          </div>
-          <div className="mt-3 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[14px] font-semibold text-primary">
-                {t("settings.gitMergeEngineObject")}
-              </div>
-              <p className="mt-0.5 text-[12px] text-muted">
-                {t("settings.gitMergeEngineObjectDesc")}
-              </p>
-            </div>
-            <ToggleSwitch
-              className="mt-1"
-              checked={gitMergeEngineObject}
-              title={t("settings.gitMergeEngineObject")}
-              onChange={async () => {
-                const next = !gitMergeEngineObject;
-                setGitMergeEngineObject(next);
-
-                try {
-                  await api.setSettings("merge_engine", next ? "object" : "system");
-                  toast.success(t("common.success"));
-                } catch {
-                  setGitMergeEngineObject(!next);
                   toast.error(t("common.error"));
                 }
               }}
