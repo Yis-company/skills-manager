@@ -179,8 +179,8 @@ pub async fn remote_host_disconnect(sessions: State<'_, RemoteSessions>) -> Resu
     Ok(())
 }
 
-/// Run one host-scoped command on the host, connecting first if its session
-/// is not live. `args` is the object the command takes locally.
+/// Run one host-scoped command on the host over its session, which only
+/// `remote_host_connect` opens. `args` is the object the command takes locally.
 #[tauri::command]
 pub async fn remote_invoke(
     host_id: String,
@@ -188,11 +188,7 @@ pub async fn remote_invoke(
     args: Value,
     sessions: State<'_, RemoteSessions>,
 ) -> Result<Value, AppError> {
-    sessions
-        .session_for(&host_id)
-        .await?
-        .call(&command, args)
-        .await
+    sessions.call(&host_id, &command, args).await
 }
 
 #[cfg(test)]

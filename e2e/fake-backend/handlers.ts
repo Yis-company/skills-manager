@@ -122,6 +122,22 @@ export const handlers = {
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
   remote_hosts_list: (_args, state) => state.remoteHosts,
+  remote_host_update: (
+    {
+      hostId,
+      name,
+      sshTarget,
+      cliPath,
+    }: { hostId: string; name: string; sshTarget: string; cliPath: null | string },
+    state,
+  ) => {
+    const host = state.remoteHosts.find((other) => other.id === hostId);
+
+    if (!host) throw new Error("Remote host not found");
+    Object.assign(host, { name, ssh_target: sshTarget, cli_path: cliPath });
+
+    return host;
+  },
   remote_host_connect: ({ hostId }: { hostId: string }, state) => {
     if (state.remoteCliNeedsUpdate) {
       throw {

@@ -13,6 +13,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { RemoteCliUpdateDialog } from "../components/RemoteCliUpdateDialog";
 import i18n from "../i18n";
 import {
@@ -38,13 +39,19 @@ import type {
 import * as api from "../lib/tauri";
 import { applyTextSize } from "../lib/textScale";
 import { settingsLink } from "../views/settings/categories";
+import { useInstallQueueControl } from "./InstallQueueContext";
 
 /** The live link to the active remote host. */
 export interface HostSession {
   info: HostSessionInfo;
-  /** Set when the link dropped; the next call or Reconnect connects again. */
+  /** Set when the link dropped; Reconnect connects again. */
   lostMessage: null | string;
+  /** The link dropped and the app is reconnecting on its own. */
+  reconnecting: boolean;
 }
+
+/** Quiet retries after a dropped link, about 30 s in all, before it shows as lost. */
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
 
 interface AppState {
   presets: Preset[];
@@ -67,8 +74,8 @@ interface AppState {
   openRemoteCliUpdate: (hostId: string) => void;
   getHostSwitchToken: () => number;
   /** Operate on `hostId`, or on this computer for null. Resolves false when
-   *  the host could not be reached; the app is then on this computer, or
-   *  still on the host with its link marked lost when reconnecting. */
+   *  the switch did not happen; the app then stays where it was, with the
+   *  link marked lost when it was reconnecting. */
   switchHost: (hostId: null | string, allowDuringRemoteUpdate?: boolean) => Promise<boolean>;
   /** Start the active host's session again, e.g. so it picks up a new
    *  library path. Resolves like `switchHost`. */
@@ -147,6 +154,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeHostId, setActiveHostIdState] = useState<null | string>(null);
   const [hostSession, setHostSession] = useState<HostSession | null>(null);
   const [connectingHostId, setConnectingHostId] = useState<null | string>(null);
+  const connectingHostIdRef = useRef(connectingHostId);
+  const installQueue = useInstallQueueControl();
+
+  /** Answers the "installs not finished" question a switch asks. */
+  const [installsPrompt, setInstallsPrompt] = useState<{
+    count: number;
+    answer: (cancelThem: boolean) => void;
+  } | null>(null);
+
   const [remoteCliUpdateHostId, setRemoteCliUpdateHostId] = useState<null | string>(null);
   const [updatingRemoteCliHostId, setUpdatingRemoteCliHostId] = useState<null | string>(null);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -320,6 +336,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const isLatest = () => switchSeqRef.current === seq;
       const previous = getActiveHostId();
 
+      // Installs run on the host they were queued for, whose session the
+      // switch closes: leave only once they are cancelled.
+      const installs = installQueue.activeCount();
+
+      if (hostId !== previous && installs > 0) {
+        const cancelThem = await new Promise<boolean>((answer) =>
+          setInstallsPrompt({ count: installs, answer }),
+        );
+
+        if (!cancelThem || !isLatest()) return false;
+        setConnectingHostId(hostId);
+        await installQueue.cancelAll();
+
+        if (!isLatest()) return false;
+      }
+
       if (hostId === null) {
         setConnectingHostId(null);
         // Also abandons a connect in flight. This computer's data does not
@@ -342,7 +374,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!isLatest()) return false;
 
         if (previous !== hostId) enterHost(hostId);
-        setHostSession({ info, lostMessage: null });
+        setHostSession({ info, lostMessage: null, reconnecting: false });
         await refreshAppDataForHost(hostId);
 
         return true;
@@ -350,16 +382,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!isLatest()) return false;
         const message = getErrorMessage(e, i18n.t("common.error"));
         const name = remoteHosts.find((h) => h.id === hostId)?.name ?? hostId;
-
-        if (previous === hostId) {
-          // Reconnecting: stay on the host with its link marked lost.
-          setHostSession((s) => s && { ...s, lostMessage: message });
-        } else if (previous !== null) {
-          // Connecting closed the previous host's session.
-          enterHost(null);
-          setHostSession(null);
-          await refreshAppDataForHost(null);
-        }
+        // Stay where the app was: the previous session is still open. A link
+        // that was reconnecting on its own is now shown as lost.
+        setHostSession(
+          (s) =>
+            s && {
+              ...s,
+              lostMessage: previous === hostId ? message : s.lostMessage,
+              reconnecting: false,
+            },
+        );
 
         const versionMismatch = getErrorKind(e) === "remote_version_mismatch";
         toast.error(i18n.t("hostSwitcher.connectFailed", { name }), {
@@ -378,7 +410,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (isLatest()) setConnectingHostId(null);
       }
     },
-    [enterHost, refreshAppDataForHost, remoteHosts, updatingRemoteCliHostId],
+    [enterHost, installQueue, refreshAppDataForHost, remoteHosts, updatingRemoteCliHostId],
+  );
+
+  useEffect(() => {
+    connectingHostIdRef.current = connectingHostId;
+  }, [connectingHostId]);
+
+  // The active host's link dropped, or a call heard nothing for 30 s:
+  // reconnect quietly, then say it is lost. Any switch stops the retries.
+  const reconnectQuietly = useCallback(
+    async (hostId: string, dropped: string) => {
+      // A switch in flight decides where the app ends up.
+      const switching = connectingHostIdRef.current !== null;
+      setHostSession((s) => s && { ...s, lostMessage: dropped, reconnecting: !switching });
+
+      if (switching) return;
+      const seq = ++switchSeqRef.current;
+      let message = dropped;
+
+      for (const delay of RECONNECT_DELAYS_MS) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+
+        if (switchSeqRef.current !== seq) return;
+
+        try {
+          const info = await api.remoteHostConnect(hostId);
+
+          if (switchSeqRef.current !== seq) return;
+          setHostSession({ info, lostMessage: null, reconnecting: false });
+          await refreshAppDataForHost(hostId);
+
+          return;
+        } catch (e) {
+          message = getErrorMessage(e, message);
+        }
+      }
+
+      if (switchSeqRef.current === seq) {
+        setHostSession((s) => s && { ...s, lostMessage: message, reconnecting: false });
+      }
+    },
+    [refreshAppDataForHost],
   );
 
   const reconnectHost = useCallback(async () => {
@@ -518,15 +591,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshAppDataForHost]);
 
-  // The active host's link dropped (say so and offer Reconnect), or a call
-  // connected it again.
+  // Connects are answered where they are made; only a drop is news here.
   useEffect(() => {
     type SessionState = { host_id: string; state: string; message?: string };
 
     const unlistenPromise = listen<SessionState>("remote-session-state", ({ payload }) => {
-      if (payload.host_id !== getActiveHostId()) return;
-      const lostMessage = payload.state === "disconnected" ? (payload.message ?? "") : null;
-      setHostSession((s) => s && { ...s, lostMessage });
+      if (payload.host_id !== getActiveHostId() || payload.state !== "disconnected") return;
+      void reconnectQuietly(payload.host_id, payload.message ?? "");
     });
 
     return () => {
@@ -536,7 +607,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           console.error("Failed to unlisten remote-session-state:", error);
         });
     };
-  }, []);
+  }, [reconnectQuietly]);
 
   const notifyUpdatableSkills = useCallback(
     (skills: ManagedSkill[]) => {
@@ -786,6 +857,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         getHostSwitchToken={getHostSwitchToken}
         onClose={() => setRemoteCliUpdateHostId(null)}
         onBusyChange={(hostId) => setUpdatingRemoteCliHostId(hostId)}
+      />
+      <ConfirmDialog
+        open={installsPrompt !== null}
+        title={i18n.t("hostSwitcher.installsTitle")}
+        message={i18n.t("hostSwitcher.installsRunning", { count: installsPrompt?.count ?? 0 })}
+        confirmLabel={i18n.t("hostSwitcher.cancelInstalls")}
+        cancelLabel={i18n.t("hostSwitcher.waitForInstalls")}
+        onConfirm={async () => installsPrompt?.answer(true)}
+        onClose={() => {
+          installsPrompt?.answer(false);
+          setInstallsPrompt(null);
+        }}
       />
     </AppContext.Provider>
   );

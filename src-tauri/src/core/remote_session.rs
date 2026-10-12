@@ -3,9 +3,10 @@
 //! host-scoped commands for another machine. See `core::serve` for the
 //! protocol.
 //!
-//! Only the active host has a session. Nothing reconnects in the background:
-//! when the link drops, pending calls fail, a `remote-session-state` event
-//! tells the UI, and the next call connects again and says so with another.
+//! Only the active host has a session, except during a switch: the old one
+//! stays open until the new one is ready. Calls never connect: when the link
+//! drops, or a call hears nothing from the host for 30 s, pending calls fail,
+//! a `remote-session-state` event tells the UI, and the UI reconnects.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -27,6 +28,9 @@ use super::serve::{Hello, HelloLine, PROTOCOL};
 use super::skill_store::{RemoteHostRecord, SkillStore};
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long a host may stay silent while a call waits. A busy host is not
+/// silent: the server says it is alive every 10 s (see `core::serve`).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const EXIT_GRACE: Duration = Duration::from_secs(2);
 /// Enough of the remote's stderr to classify a failure before hello.
 const STDERR_KEPT: usize = 16 * 1024;
@@ -60,13 +64,14 @@ pub struct HostSessionInfo {
 
 type Reply = Result<Value, AppError>;
 
-#[derive(Default)]
 struct Calls {
     pending: HashMap<u64, oneshot::Sender<Reply>>,
     /// The stream ended; every later call fails at once.
     ended: bool,
     /// We are closing it ourselves, so its end is not news to the UI.
     closing: bool,
+    /// When the host last said anything.
+    heard: Instant,
 }
 
 #[derive(Deserialize)]
@@ -93,6 +98,7 @@ pub struct RemoteSession {
     child: Mutex<Child>,
     calls: Arc<Mutex<Calls>>,
     next_id: AtomicU64,
+    timeout: Duration,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -155,7 +161,12 @@ impl RemoteSession {
         let stderr = drain_stderr(child.stderr.take().expect("stderr is piped"), &host.name);
         let stdin = child.stdin.take();
 
-        let calls = Arc::new(Mutex::new(Calls::default()));
+        let calls = Arc::new(Mutex::new(Calls {
+            pending: HashMap::new(),
+            ended: false,
+            closing: false,
+            heard: Instant::now(),
+        }));
         let (hello_tx, hello_rx) = mpsc::channel();
         let reader = Reader {
             calls: calls.clone(),
@@ -206,6 +217,7 @@ impl RemoteSession {
             child: Mutex::new(child),
             calls,
             next_id: AtomicU64::new(1),
+            timeout: REQUEST_TIMEOUT,
         };
         Ok(Answer::Serving(Box::new(session), hello))
     }
@@ -219,11 +231,12 @@ impl RemoteSession {
         !calls.ended && !calls.closing
     }
 
-    /// Run one host-scoped command there. There is no timeout: installs can
-    /// take long and are cancelled with a request of their own.
+    /// Run one host-scoped command there. A command may run long, as an
+    /// install does, but the host must not fall silent: after 30 s without a
+    /// word the call fails and the link is dropped, as if it had broken.
     pub async fn call(&self, cmd: &str, args: Value) -> Result<Value, AppError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         {
             let mut calls = lock(&self.calls);
             if calls.ended || calls.closing {
@@ -236,7 +249,32 @@ impl RemoteSession {
             lock(&self.calls).pending.remove(&id);
             return Err(self.lost());
         }
-        rx.await.unwrap_or_else(|_| Err(self.lost()))
+        // Silence counts from the request, then from each word the host says.
+        let mut since = Instant::now();
+        loop {
+            let deadline = tokio::time::Instant::from_std(since + self.timeout);
+            if let Ok(reply) = tokio::time::timeout_at(deadline, &mut rx).await {
+                return reply.unwrap_or_else(|_| Err(self.lost()));
+            }
+            let heard = lock(&self.calls).heard;
+            if heard <= since {
+                break;
+            }
+            since = heard;
+        }
+        log::warn!(
+            "{} said nothing for {cmd}; dropping the link",
+            self.host_name
+        );
+        lock(&self.calls).pending.remove(&id);
+        // Killing the server ends the reader, which fails the other calls
+        // and tells the UI the link dropped.
+        let _ = lock(&self.child).kill();
+        Err(AppError::network(format!(
+            "{} did not answer within {} s",
+            self.host_name,
+            self.timeout.as_secs()
+        )))
     }
 
     fn send(&self, message: &Value) -> io::Result<()> {
@@ -368,6 +406,7 @@ impl Reader {
         if greeted {
             for line in lines {
                 let Ok(line) = line else { break };
+                lock(&self.calls).heard = Instant::now();
                 self.route(&line);
             }
         }
@@ -465,6 +504,24 @@ struct Slot {
     attempts: u64,
 }
 
+impl Slot {
+    /// The session for `host_id`, if its link is up.
+    fn live(&self, host_id: &str) -> Option<Arc<RemoteSession>> {
+        self.session
+            .as_ref()
+            .filter(|session| session.info.host_id == host_id && session.is_alive())
+            .cloned()
+    }
+
+    /// What to wait on while `host_id` connects.
+    fn connecting_to(&self, host_id: &str) -> Option<watch::Receiver<Option<Outcome>>> {
+        self.connecting
+            .as_ref()
+            .filter(|connecting| connecting.host_id == host_id)
+            .map(|connecting| connecting.done.subscribe())
+    }
+}
+
 /// The app's one active session. Its lock is never held while connecting,
 /// so a disconnect never waits behind a slow or unreachable host.
 pub struct RemoteSessions {
@@ -489,35 +546,44 @@ impl RemoteSessions {
     }
 
     /// The live session for `host_id`, connecting when there is none.
-    /// Parallel callers share one connect and its result. Asking for another
-    /// host closes the current session and abandons a connect in flight.
+    /// Parallel callers share one connect and its result. Asking for a host
+    /// abandons a connect to any other. The current session stays open until
+    /// a new one is ready, so a failed switch leaves it in place.
     pub async fn session_for(&self, host_id: &str) -> Result<Arc<RemoteSession>, AppError> {
-        let (mut done, old) = {
+        let done = {
             let mut slot = lock(&self.slot);
-            if let Some(session) = &slot.session {
-                if session.info.host_id == host_id && session.is_alive() {
-                    return Ok(session.clone());
-                }
+            if slot
+                .connecting
+                .as_ref()
+                .is_some_and(|connecting| connecting.host_id != host_id)
+            {
+                slot.connecting = None;
             }
-            match &slot.connecting {
-                Some(connecting) if connecting.host_id == host_id => {
-                    (connecting.done.subscribe(), None)
-                }
-                _ => (self.start_connect(&mut slot, host_id), slot.session.take()),
+            if let Some(session) = slot.live(host_id) {
+                return Ok(session);
+            }
+            match slot.connecting_to(host_id) {
+                Some(done) => done,
+                None => self.start_connect(&mut slot, host_id),
             }
         };
-        if let Some(old) = old {
-            tokio::task::spawn_blocking(move || old.close());
-        }
-        let outcome = done
-            .wait_for(Option::is_some)
-            .await
-            .map(|outcome| outcome.clone());
-        // The connect was abandoned before it answered.
-        outcome
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| Err(AppError::cancelled("The connection was cancelled")))
+        outcome(done).await
+    }
+
+    /// Run one command on `host_id`. A call never connects: it uses the live
+    /// session or waits for one connecting, and fails at once otherwise, so
+    /// a late call for a host the app has left cannot take the session back.
+    pub async fn call(&self, host_id: &str, cmd: &str, args: Value) -> Result<Value, AppError> {
+        let (live, connecting) = {
+            let slot = lock(&self.slot);
+            (slot.live(host_id), slot.connecting_to(host_id))
+        };
+        let session = match (live, connecting) {
+            (Some(session), _) => session,
+            (None, Some(done)) => outcome(done).await?,
+            (None, None) => return Err(AppError::network("This host is not connected")),
+        };
+        session.call(cmd, args).await
     }
 
     /// Connect to `host_id` on a blocking thread, abandoning any other
@@ -545,9 +611,10 @@ impl RemoteSessions {
                 return;
             }
             let connecting = slot.connecting.take().expect("checked above");
-            if let Ok(session) = &outcome {
-                slot.session = Some(session.clone());
-            }
+            let replaced = match &outcome {
+                Ok(session) => slot.session.replace(session.clone()),
+                Err(_) => None,
+            };
             drop(slot);
             if outcome.is_ok() {
                 events.emit(
@@ -556,6 +623,9 @@ impl RemoteSessions {
                 );
             }
             let _ = connecting.done.send(Some(outcome));
+            if let Some(old) = replaced {
+                old.close();
+            }
         });
         waiting
     }
@@ -580,6 +650,19 @@ impl RemoteSessions {
         slot.connecting = None;
         slot.session.take()
     }
+}
+
+/// Wait for a connect to answer.
+async fn outcome(mut done: watch::Receiver<Option<Outcome>>) -> Outcome {
+    let outcome = done
+        .wait_for(Option::is_some)
+        .await
+        .map(|outcome| outcome.clone());
+    // The connect was abandoned before it answered.
+    outcome
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| Err(AppError::cancelled("The connection was cancelled")))
 }
 
 fn connect(
@@ -877,16 +960,26 @@ mod tests {
         assert!(second.is_alive());
     }
 
-    /// The link drops after one request; the next call connects again and
-    /// tells the UI the host is back.
+    /// The link drops after one request. Calls fail until the UI connects
+    /// again, which says the host is back.
     #[tokio::test]
-    async fn the_next_call_reconnects_after_a_drop_and_says_so() {
+    async fn after_a_drop_calls_fail_until_the_host_is_connected_again() {
         let (sessions, events, _tmp) = sessions(fake_cli(
             r#"printf '%s\n' "$1"; read line; exit 0"#,
             &hello_line(VERSION),
         ));
         let first = sessions.session_for("h1").await.unwrap();
-        first.call("get_presets", json!({})).await.unwrap_err();
+        sessions
+            .call("h1", "get_presets", json!({}))
+            .await
+            .unwrap_err();
+
+        let err = sessions
+            .call("h1", "get_presets", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Network);
+        assert!(lock(&sessions.slot).connecting.is_none());
 
         let second = sessions.session_for("h1").await.unwrap();
         assert!(!Arc::ptr_eq(&first, &second));
@@ -906,6 +999,127 @@ mod tests {
                 (&json!("h1"), &json!("connected")),
             ]
         );
+    }
+
+    /// `h1` serves; `h2` fails after `delay` seconds.
+    fn h2_fails_after(
+        delay: &str,
+    ) -> impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static {
+        let serving = serving();
+        let failing = fake_cli(
+            &format!("sleep {delay}; echo CLI_NOT_FOUND >&2; exit 3"),
+            "",
+        );
+        move |host: &RemoteHostRecord, args: &[&str]| match host.id.as_str() {
+            "h2" => failing(host, args),
+            _ => serving(host, args),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_switch_keeps_the_current_session() {
+        let (sessions, _events, _tmp) = sessions(h2_fails_after("0"));
+        let first = sessions.session_for("h1").await.unwrap();
+
+        sessions.session_for("h2").await.err().unwrap();
+        assert!(first.is_alive());
+        assert!(Arc::ptr_eq(
+            &first,
+            &sessions.session_for("h1").await.unwrap()
+        ));
+    }
+
+    /// Asking for the current host while a switch connects cancels the
+    /// switch at once; the current session is kept.
+    #[tokio::test]
+    async fn asking_for_the_current_host_cancels_a_switch() {
+        let (sessions, _events, _tmp) = sessions(h2_fails_after("1"));
+        let sessions = Arc::new(sessions);
+        let first = sessions.session_for("h1").await.unwrap();
+        let switching = tokio::spawn({
+            let sessions = sessions.clone();
+            async move { sessions.session_for("h2").await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let started = Instant::now();
+        let again = sessions.session_for("h1").await.unwrap();
+        assert!(Arc::ptr_eq(&first, &again));
+        let err = switching.await.unwrap().err().unwrap();
+        assert_eq!(err.kind, ErrorKind::Cancelled);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert!(first.is_alive());
+    }
+
+    /// A late call for a host the app has switched away from fails, and does
+    /// not connect that host again.
+    #[tokio::test]
+    async fn a_call_for_a_host_left_behind_does_not_take_the_session_back() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counted = runs.clone();
+        let serving = serving();
+        let (sessions, _events, _tmp) = sessions(move |host: &RemoteHostRecord, args: &[&str]| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            serving(host, args)
+        });
+        sessions.session_for("h1").await.unwrap();
+        let second = sessions.session_for("h2").await.unwrap();
+
+        let err = sessions
+            .call("h1", "get_presets", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Network);
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+        assert!(second.is_alive());
+        assert!(Arc::ptr_eq(
+            &second,
+            &sessions.session_for("h2").await.unwrap()
+        ));
+    }
+
+    /// The server takes a request and falls silent.
+    #[tokio::test]
+    async fn a_silent_host_times_out_and_counts_as_a_drop() {
+        let cli = fake_cli(
+            r#"printf '%s\n' "$1"; read line; exec sleep 30"#,
+            &hello_line(VERSION),
+        );
+        let events = Arc::new(RecordingEvents::default());
+        let mut session = RemoteSession::spawn(&cli, &host(), events.clone()).unwrap();
+        session.timeout = Duration::from_millis(300);
+
+        let started = Instant::now();
+        let err = session.call("get_presets", json!({})).await.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Network);
+        assert!(err.message.contains("did not answer"), "{}", err.message);
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while session.is_alive() {
+            assert!(Instant::now() < deadline, "the link is still up");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let recorded = events.0.lock().unwrap();
+        assert_eq!(recorded[0].0, SESSION_STATE_EVENT);
+        assert_eq!(recorded[0].1["state"], "disconnected");
+    }
+
+    /// The server works on a request for longer than the timeout but keeps
+    /// saying it is alive, then answers.
+    #[tokio::test]
+    async fn a_busy_host_that_keeps_saying_so_does_not_time_out() {
+        let cli = fake_cli(
+            r#"printf '%s\n' "$1"; read line
+               for i in 1 2 3 4 5 6; do echo '{"event":"keepalive","payload":null}'; sleep 0.1; done
+               echo '{"id":1,"ok":true,"result":42}'; cat >/dev/null"#,
+            &hello_line(VERSION),
+        );
+        let mut session = RemoteSession::spawn(&cli, &host(), Arc::new(NoopEvents)).unwrap();
+        session.timeout = Duration::from_millis(300);
+
+        assert_eq!(session.call("get_presets", json!({})).await.unwrap(), 42);
+        assert!(session.is_alive());
     }
 
     #[test]

@@ -19,15 +19,15 @@ import { WorkspaceView } from "./views/WorkspaceView";
 
 const rootRoute = createRootRoute({
   component: () => (
-    <AppProvider>
-      <InstallQueueProvider>
+    <InstallQueueProvider>
+      <AppProvider>
         <Layout />
         <HelpDialog />
         <CloseActionGuard />
         <FirstRunRestoreDialog />
         <RemotePickerHost />
-      </InstallQueueProvider>
-    </AppProvider>
+      </AppProvider>
+    </InstallQueueProvider>
   ),
   notFoundComponent: () => <Navigate to="/" replace />,
 });
