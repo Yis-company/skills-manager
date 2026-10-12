@@ -437,7 +437,7 @@ fn directory_has_entries(path: &Path) -> Result<bool> {
     Ok(fs::read_dir(path)?.next().is_some())
 }
 
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
+pub(crate) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
     for entry in WalkDir::new(source) {
         let entry = entry?;
         let relative = entry.path().strip_prefix(source)?;

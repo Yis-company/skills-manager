@@ -75,11 +75,13 @@ export function LibrarySection() {
       .getCentralRepoPendingPath()
       .then(setCentralRepoPendingPath)
       .catch(() => {});
+    // SID-105: on by default for this computer's app, off for an SSH host,
+    // which runs no updater of its own.
     api.getSettings("auto_update_check_interval").then((v) => {
-      if (v) setAutoUpdateInterval(v);
+      setAutoUpdateInterval(v ?? (activeHost ? "off" : "24h"));
     });
     api.getSettings("auto_update_apply").then((v) => {
-      if (v) setAutoUpdateApply(v);
+      setAutoUpdateApply(v ?? (activeHost ? "off" : "on"));
     });
     // The `skills-auto-updated` listener may populate this concurrently, so
     // keep whichever timestamp is newer rather than blindly overwriting.
@@ -87,7 +89,7 @@ export function LibrarySection() {
       if (!v) return;
       setAutoUpdateLastRun((prev) => (prev && Date.parse(prev) >= Date.parse(v) ? prev : v));
     });
-  }, []);
+  }, [activeHost]);
 
   const handleSyncModeChange = async (mode: string) => {
     setSyncMode(mode);

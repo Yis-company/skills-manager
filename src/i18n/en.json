@@ -8,7 +8,7 @@
     "globalWorkspace": "Global Workspace",
     "lobsterAgents": "Lobster Agents",
     "installSkills": "Install Skills",
-    "backup": "Backup",
+    "backup": "Sync",
     "presets": "Presets",
     "newPreset": "New Preset",
     "projects": "Project Workspaces",
@@ -92,9 +92,111 @@
     "errorNotFound": "The management skill installed but could not be found in the library.",
     "errorGeneric": "Could not set this up."
   },
+  "sync": {
+    "overview": "Overview",
+    "needsReview": "Needs review",
+    "hosts": "Hosts",
+    "thisHost": "this host",
+    "thisComputer": "this computer",
+    "neverSynced": "Not synced yet",
+    "recentChanges": "Recent changes",
+    "lastSync": "last sync {{when}}",
+    "syncNow": "Sync now",
+    "pause": "Pause",
+    "resume": "Resume",
+    "openHost": "Open host",
+    "noChanges": "No changes from this host yet.",
+    "tabs": {
+      "log": "Agent log",
+      "history": "Changes from this host",
+      "details": "Details"
+    },
+    "review": {
+      "empty": "Nothing needs review.",
+      "desc": "Choices are recorded in Sync. Each host applies them on its next pull, even when it isn't connected.",
+      "skill": "Skill changed on two hosts",
+      "changedOnBoth": "Changed on {{one}} and on {{other}}.",
+      "anotherHost": "another host",
+      "keep": "Keep {{host}}'s version",
+      "keepBoth": "Keep both"
+    },
+    "log": {
+      "empty": "Nothing has changed on this host's agents yet.",
+      "edited": "{{item}} on {{agent}}: Edited here. Sync has a newer version.",
+      "editedLeft": "{{item}} on {{agent}}: Edited here. Sync no longer puts it on this agent.",
+      "useSync": "Use Sync version",
+      "keepMine": "Keep my edit",
+      "agent_deploy": "Added {{item}} to {{agent}}",
+      "agent_deploy_failed": "Couldn't add {{item}} to {{agent}}: {{detail}}",
+      "agent_remove": "Removed {{item}} from {{agent}}",
+      "agent_flag": "{{item}} on {{agent}}: Edited here",
+      "agent_review_failed": "{{item}} on {{agent}} needs review: {{detail}}",
+      "agent_resolve_edit": "{{item}} on {{agent}}: {{detail}}"
+    },
+    "details": {
+      "runner": "Automatic sync",
+      "timer": "systemd timer, every 5 minutes",
+      "onConnect": "Only when the app connects, or on Sync now",
+      "access": "Access",
+      "deployKey": "Deploy key “{{key}}”",
+      "notInSync": "Not in Sync",
+      "preJoinCopy": "Copy from before joining",
+      "undoJoin": "Undo join",
+      "undoConfirm": "Put back the library and database from {{copy}} and leave Sync? The copy is kept.",
+      "undone": "Join undone. This host has left Sync.",
+      "deleteBackup": "Delete backup",
+      "dangerZone": "Remove",
+      "removeHost": "Remove host…"
+    },
+    "add": {
+      "title": "Add host",
+      "desc": "A machine you reach over SSH. It gets its own access to Sync and keeps syncing while this app is closed.",
+      "name": "Name",
+      "target": "SSH target",
+      "start": "Connect and add",
+      "settingUp": "Setting up {{name}}",
+      "settingUpShort": "setting up",
+      "join": "Join Sync",
+      "another": "Add another host",
+      "startOver": "Start over",
+      "pasteKey": "GitHub didn't take the key from this app. Add it to the Sync repository under Settings › Deploy keys as “{{title}}”, with write access:",
+      "copyKey": "Copy key",
+      "openDeployKeys": "Open Deploy keys",
+      "added": "I've added it",
+      "steps": {
+        "connect": "Connect over SSH",
+        "install": "Install the Agents Manager CLI",
+        "access": "Give the host access to Sync",
+        "preview": "Review what joining changes",
+        "join": "Join Sync and turn on automatic sync",
+        "apply": "Apply the active preset"
+      }
+    },
+    "kinds": {
+      "skill": "skill",
+      "preset": "preset",
+      "instruction": "instruction",
+      "mcp": "MCP"
+    },
+    "preview": {
+      "remoteEmpty": "Sync is empty: this host starts it.",
+      "localEmpty": "This host has nothing yet: it takes Sync as it is.",
+      "adds": "Adds to Sync: {{items}}.",
+      "replaced": "Sync's version replaces: {{items}}.",
+      "activePreset": "Active preset: {{preset}}.",
+      "undo": "A copy from before joining is kept, so you can undo the join."
+    },
+    "notice": {
+      "title": "Backup is now Sync",
+      "hosts": "Your other hosts can join and share this library and its presets.",
+      "presets": "Switching a preset now switches it on every host.",
+      "agents": "Nothing changes on your agents until you switch.",
+      "dismiss": "Dismiss"
+    }
+  },
   "backup": {
-    "title": "Backup",
-    "subtitle": "Connect once, then back up or restore your skill library from one place.",
+    "title": "Sync",
+    "subtitle": "Share your library and presets with your other hosts.",
     "status": {
       "loading": "Checking backup status",
       "loadingDesc": "Reading the local library and remote backup state.",
@@ -156,7 +258,7 @@
       "repoLabel": "Repository name",
       "connect": "Connect",
       "connecting": "Connecting…",
-      "connectedRestored": "Connected — existing backup restored.",
+      "connectedRestored": "Connected — joined the existing backup. Your own items were added, and a copy from before joining is kept.",
       "repoCreated": "Created private repository {{repo}}.",
       "tokenHint": "Create a token on GitHub (repo scope, pre-filled)",
       "errorToken": "GitHub rejected the token. Check that it hasn't expired and was copied completely.",
@@ -177,7 +279,7 @@
     },
     "history": {
       "title": "Backup History",
-      "empty": "No history yet. Run a backup to start it."
+      "empty": "No history yet. It starts with the first sync."
     },
     "scope": {
       "title": "Backup Scope",
@@ -291,7 +393,7 @@
     "gitRepoNeedRemote": "Set remote first",
     "gitRepoFixSetup": "Fix Sync Setup",
     "needsAttention": "Needs review",
-    "needsAttentionHint": "This skill was changed on two hosts — review it on the Backup page",
+    "needsAttentionHint": "This skill was changed on two hosts — review it on the Sync page",
     "gitInlineUpToDate": "Git · Up to date",
     "gitInlineNotConfigured": "Git · Backup not set up",
     "gitInlineNeedFix": "Git · Sync setup needs fixing",
@@ -1301,7 +1403,21 @@
     "add": "Add host",
     "edit": "Edit",
     "remove": "Remove",
-    "removeConfirm": "Remove host \"{{name}}\"? Nothing on that host is changed.",
+    "removeConfirm": "Remove host \"{{name}}\"? Its library and the skills on its agents stay.",
+    "alsoLeaveSync": "Also remove from Sync",
+    "syncStuck": "{{name}} isn't syncing: {{reason}}",
+    "syncState": "Sync: {{state}}",
+    "syncStates": {
+      "up_to_date": "Up to date",
+      "paused": "Paused",
+      "offline": "Offline",
+      "needs_review": "Needs review",
+      "update_required": "Update required",
+      "not_set_up": "Not in Sync",
+      "syncing": "Syncing"
+    },
+    "alsoLeaveSyncHint": "Deletes its access key on GitHub now and stops its sync timer. Unchecked, the host keeps syncing on its own.",
+    "deleteKeyByHand": "GitHub didn't delete the host's key. Delete \"{{key}}\" under the Sync repository's Settings > Deploy keys.",
     "removed": "Host removed",
     "saved": "Host saved",
     "form": {

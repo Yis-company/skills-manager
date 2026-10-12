@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::central_repo;
 use super::git_backup;
@@ -24,7 +24,7 @@ use super::skill_store::SkillStore;
 use super::sync_metadata;
 
 /// Off-switch setting. Anything except an explicit "off"-ish value means on.
-const SETTING_ENABLED: &str = "backup_auto_enabled";
+pub const SETTING_ENABLED: &str = "backup_auto_enabled";
 /// Last auto-backup failure, kept until a successful push (auto or manual)
 /// clears it, so the Backup page failure card survives navigation/restart.
 pub const SETTING_LAST_ERROR: &str = "backup_last_auto_error";
@@ -129,7 +129,17 @@ pub fn start<R: Runtime>(app: AppHandle<R>, store: Arc<SkillStore>) {
                 })
                 .await
                 .unwrap_or_else(|e| (Outcome::Failed(format!("join error: {e}")), None));
+                let merged = summary.is_some();
                 handle_outcome(&app, &store, outcome, summary);
+                // Deployed instructions and MCPs follow the merge (SID-99),
+                // after the round released the repo lock.
+                if let Some(ctx) = app.try_state::<super::host::HostCtx>().filter(|_| merged) {
+                    let ctx = ctx.inner().clone();
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        super::sync_apply::reapply_resources(&ctx)
+                    })
+                    .await;
+                }
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
@@ -186,6 +196,7 @@ fn handle_outcome<R: Runtime>(
         }
         Outcome::UpToDate => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Release);
+            super::sync_service::stamp_last_sync(store);
             // Only worth telling the UI if the round pulled something or a
             // stale failure card should clear.
             if clear_error(store) || merged {
@@ -194,6 +205,7 @@ fn handle_outcome<R: Runtime>(
         }
         Outcome::BackedUp => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Release);
+            super::sync_service::stamp_last_sync(store);
             clear_error(store);
             log::info!("auto backup: committed/pushed");
             emit(true, false, None);

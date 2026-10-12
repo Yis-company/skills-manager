@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   Bot,
   Bug,
-  GitBranch,
   Globe,
   Info,
   Library,
@@ -24,7 +23,6 @@ import * as api from "../lib/tauri";
 import { cn } from "../utils";
 import { AboutSection } from "./settings/AboutSection";
 import { AgentsSection } from "./settings/AgentsSection";
-import { BackupSection } from "./settings/BackupSection";
 import {
   resolveSettingsCategory,
   SETTINGS_CATEGORIES,
@@ -41,7 +39,6 @@ const CATEGORY_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: SlidersHorizontal,
   agents: Bot,
   library: Library,
-  backup: GitBranch,
   network: Globe,
   remote: Server,
   about: Info,
@@ -297,9 +294,6 @@ export function Settings() {
           </div>
           <div hidden={category !== "library"}>
             <LibrarySection />
-          </div>
-          <div hidden={category !== "backup"}>
-            <BackupSection />
           </div>
           <div hidden={category !== "network"}>
             <NetworkSection />

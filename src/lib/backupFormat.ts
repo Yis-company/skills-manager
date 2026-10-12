@@ -27,3 +27,11 @@ export function formatBytes(bytes: number) {
 
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
+
+/** A date as local date and time, or null when there is none. */
+export function formatWhen(ms: null | number | string) {
+  if (ms === null) return null;
+  const date = new Date(ms);
+
+  return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
+}

@@ -4,18 +4,15 @@ import {
   Cloud,
   ExternalLink,
   Loader2,
-  RefreshCw,
   Save,
   ShieldCheck,
   Unlink,
   XCircle,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
-import { BackupConflicts } from "../components/BackupConflicts";
-import { BackupHistoryList } from "../components/BackupHistoryList";
 import { BackupStatusCard } from "../components/BackupStatusCard";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { GithubConnectCard } from "../components/GithubConnectCard";
@@ -45,7 +42,12 @@ const DEFAULT_GITHUB_REPO = "skills-manager-backup";
 
 type RecoveryReason = "conflict" | GitUpstreamHealth;
 
-export function Backup() {
+/**
+ * This computer's Sync setup and settings: connecting to GitHub or a Git
+ * remote, recovery, what syncs, automatic sync, the git engine and
+ * disconnecting. The Sync page shows it in "This host" › Details.
+ */
+export function ThisHostSettings() {
   const { t } = useTranslation();
   const { managedSkills, refreshManagedSkills, refreshPresets, activeHost } = useApp();
   // Backup is this computer's, but while a host is active the shared skill
@@ -60,9 +62,7 @@ export function Backup() {
     remoteConfig,
     setRemoteConfig,
     versions,
-    versionsLoading,
     refreshVersions,
-    pendingConflicts,
     refreshPendingConflicts,
     sizeReport,
     backupError,
@@ -81,8 +81,6 @@ export function Backup() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [recoveryReason, setRecoveryReason] = useState<RecoveryReason>("unrelated_histories");
-  const [restoreTarget, setRestoreTarget] = useState<api.SyncHistoryEntry | null>(null);
-  const [restoringVersionTag, setRestoringVersionTag] = useState<null | string>(null);
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [githubToken, setGithubToken] = useState("");
   const [githubRepoName, setGithubRepoName] = useState(DEFAULT_GITHUB_REPO);
@@ -90,10 +88,29 @@ export function Backup() {
   const [patMode, setPatMode] = useState(false);
   const { deviceInfo, runDeviceFlow, cancelDeviceFlow: stopDeviceFlow } = useGithubDeviceFlow();
   const [autoBackupSaving, setAutoBackupSaving] = useState(false);
-  const [resolvingConflict, setResolvingConflict] = useState<null | string>(null);
   const [revokeConfirmOpen, setRevokeConfirmOpen] = useState(false);
   const [deleteRemoteConfirmOpen, setDeleteRemoteConfirmOpen] = useState(false);
   const [reconnectMode, setReconnectMode] = useState(false);
+  const [gitEngineGit2, setGitEngineGit2] = useState(false);
+
+  useEffect(() => {
+    api
+      .getSettings("git_backup_engine")
+      .then((v) => setGitEngineGit2(v?.trim() === "git2"))
+      .catch(() => {});
+  }, []);
+
+  const handleToggleGitEngine = async () => {
+    const next = !gitEngineGit2;
+    setGitEngineGit2(next);
+
+    try {
+      await api.setSettings("git_backup_engine", next ? "git2" : "system");
+    } catch {
+      setGitEngineGit2(!next);
+      toast.error(t("common.error"));
+    }
+  };
 
   const mapGitError = useCallback((cause: unknown) => mapGitErrorMessage(cause, t), [t]);
 
@@ -293,28 +310,6 @@ export function Backup() {
     }
   };
 
-  const handleResolveConflict = async (skillId: string, action: api.ResolveConflictAction) => {
-    setResolvingConflict(skillId);
-
-    try {
-      await api.gitBackupResolveConflict(skillId, action);
-      toast.success(t("backup.conflicts.resolved"));
-      await Promise.all([
-        refreshPendingConflicts(),
-        refreshGitStatus(),
-        refreshVersions(),
-        refreshManagedSkills(),
-        // "Use remote"/"keep both" reindex metadata, which can move preset
-        // memberships — keep the sidebar in sync (#302).
-        refreshPresets(),
-      ]);
-    } catch (error) {
-      toast.error(mapGitError(error));
-    } finally {
-      setResolvingConflict(null);
-    }
-  };
-
   const mapGithubError = (cause: unknown) => mapGithubErrorMessage(cause, t);
 
   /** Shared tail of both connect paths: wire the repo locally and either
@@ -343,13 +338,9 @@ export function Backup() {
     const status = await api.gitBackupStatus();
 
     if (res.remote_has_content) {
-      // Existing backup: restore it (or just rewire when a repo already exists).
-      if (!status.is_repo) {
-        await api.gitBackupClone(res.url);
-      } else {
-        await api.gitBackupSetRemote(res.url);
-      }
-
+      // Existing backup: join it (SID-100). Matching items take its version,
+      // this computer's extras are added, and a pre-join copy is kept.
+      await api.gitBackupClone(res.url);
       toast.success(t("backup.github.connectedRestored"));
       await Promise.all([
         refreshGitStatus(true),
@@ -416,30 +407,6 @@ export function Backup() {
     setLoading(null);
   };
 
-  const restoreWhen = restoreTarget ? new Date(restoreTarget.committed_at).toLocaleString() : "";
-
-  const handleRestoreVersion = async () => {
-    if (!restoreTarget) return;
-    setRestoringVersionTag(restoreTarget.commit);
-
-    try {
-      await api.gitBackupRestoreVersion(restoreTarget.commit);
-      toast.success(t("mySkills.gitVersionRestoreSuccess", { when: restoreWhen }));
-      toast.info(t("backup.restoreSafetyPoint"));
-      await Promise.all([
-        refreshGitStatus(),
-        refreshVersions(),
-        refreshManagedSkills(),
-        refreshPresets(),
-      ]);
-      setRestoreTarget(null);
-    } catch (error) {
-      toast.error(mapGitError(error));
-    } finally {
-      setRestoringVersionTag(null);
-    }
-  };
-
   const handleDisconnect = async () => {
     setLoading("disconnect");
 
@@ -502,23 +469,7 @@ export function Backup() {
   };
 
   return (
-    <div className="app-page">
-      <div className="app-page-header flex items-center justify-between gap-3 pb-1 pr-2">
-        <div>
-          <h1 className="app-page-title">{t("backup.title")}</h1>
-          <p className="mt-1 text-[13px] text-muted">{t("backup.subtitle")}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => refreshGitStatus(true)}
-          disabled={!!loading}
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-[13px] font-medium text-tertiary transition-colors hover:bg-surface-hover disabled:opacity-50"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          {t("settings.refresh")}
-        </button>
-      </div>
-
+    <div className="space-y-4">
       <LocalBackupNotice />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -537,16 +488,6 @@ export function Backup() {
             setSetupOpen={setSetupOpen}
             onBackupNow={handleBackupNow}
           />
-
-          {pendingConflicts.length > 0 && (
-            <BackupConflicts
-              conflicts={pendingConflicts}
-              localSkills={localSkills}
-              resolvingConflict={resolvingConflict}
-              loading={loading}
-              onResolve={handleResolveConflict}
-            />
-          )}
 
           {(reconnectMode || (!gitStatus?.remote_url && !remoteConfig)) && (
             <GithubConnectCard
@@ -601,15 +542,6 @@ export function Backup() {
               </button>
             </div>
           </section>
-
-          <BackupHistoryList
-            versions={versions}
-            versionsLoading={versionsLoading}
-            gitStatus={gitStatus}
-            restoringVersionTag={restoringVersionTag}
-            onRefresh={refreshVersions}
-            onRestore={setRestoreTarget}
-          />
         </div>
 
         <aside className="space-y-4">
@@ -678,6 +610,22 @@ export function Backup() {
                 loading={autoBackupSaving}
                 onChange={handleToggleAutoBackup}
                 title={t("backup.auto.title")}
+              />
+            </div>
+            <div className="mt-3 flex items-start justify-between gap-3 border-t border-border-subtle pt-3">
+              <div className="min-w-0">
+                <h2 className="text-[14px] font-semibold text-secondary">
+                  {t("settings.gitEngineGit2")}
+                </h2>
+                <p className="mt-1 text-[12px] leading-5 text-muted">
+                  {t("settings.gitEngineGit2Desc")}
+                </p>
+              </div>
+              <ToggleSwitch
+                className="mt-0.5"
+                checked={gitEngineGit2}
+                onChange={handleToggleGitEngine}
+                title={t("settings.gitEngineGit2")}
               />
             </div>
           </section>
@@ -767,15 +715,6 @@ export function Backup() {
         </aside>
       </div>
 
-      <ConfirmDialog
-        open={restoreTarget !== null}
-        title={t("mySkills.gitVersionRestoreTitle")}
-        message={t("mySkills.gitVersionRestoreConfirm", { when: restoreWhen })}
-        tone="warning"
-        confirmLabel={t("mySkills.gitVersionRestore")}
-        onClose={() => setRestoreTarget(null)}
-        onConfirm={handleRestoreVersion}
-      />
       <ConfirmDialog
         open={disconnectConfirmOpen}
         title={t("backup.disconnect.confirmTitle")}

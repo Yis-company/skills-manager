@@ -7,6 +7,9 @@ import type {
   GithubDevicePollResult,
   Preset,
   ProjectSkill,
+  SyncCallArgs,
+  SyncConflict,
+  SyncStatus,
 } from "../../src/lib/tauri";
 import { projectGitHandler } from "./projectGit";
 import {
@@ -122,6 +125,70 @@ export const handlers = {
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
   remote_hosts_list: (_args, state) => state.remoteHosts,
+  host_sync_status_all: (_args, state) =>
+    state.hostsInSync.flatMap((hostId) => {
+      const host = state.remoteHosts.find((h) => h.id === hostId);
+
+      return host
+        ? [
+            {
+              host_id: hostId,
+              name: host.name,
+              key_title: `Agents Manager · ${host.name}`,
+              timer: true,
+              status: syncStatus(state, host.name, []),
+              error: null,
+            },
+          ]
+        : [];
+    }),
+  host_sync_call: ({ hostId, command }: { hostId: string; command: string }, state) => {
+    const host = state.remoteHosts.find((h) => h.id === hostId);
+
+    return syncCommand(command, syncStatus(state, host?.name ?? hostId, []));
+  },
+  sync_screen_call: ({ command, args }: { command: string; args: SyncCallArgs }, state) => {
+    if (command === "sync_resolve") {
+      state.syncConflicts = state.syncConflicts.filter((c) => c.skill_id !== args.skill);
+    }
+
+    return syncCommand(command, syncStatus(state, "e2e-machine", state.syncConflicts));
+  },
+  host_sync_prepare: ({ pasted }: { pasted: boolean }, state) =>
+    state.pasteKeyFirst && !pasted
+      ? {
+          paste: {
+            title: "Agents Manager · gpu-2",
+            key: "ssh-ed25519 AAAAE2E gpu-2",
+            settings_url: "https://github.com/octo/skills-manager-backup/settings/keys/new",
+            reason: "GitHub refused to add the deploy key (HTTP 404)",
+          },
+          url: null,
+        }
+      : { paste: null, url: "git@github.com:octo/skills-manager-backup.git" },
+  host_sync_preview: () => JOIN_PREVIEW,
+  host_sync_join: ({ hostId }: { hostId: string }, state) => {
+    state.hostsInSync.push(hostId);
+
+    return { preview: JOIN_PREVIEW, timer: { installed: true, warning: null } };
+  },
+  remote_host_add: ({ name, sshTarget }: { name: string; sshTarget: string }, state) => {
+    const host = {
+      id: `host-${state.remoteHosts.length + 1}`,
+      name,
+      ssh_target: sshTarget,
+      cli_path: null,
+      created_at: 1,
+    };
+
+    state.remoteHosts.push(host);
+
+    return host;
+  },
+  host_sync_leave: () => ({ delete_key_by_hand: null, host_reached: true }),
+  remote_host_remove: ({ hostId }: { hostId: string }, state) => {
+    state.remoteHosts = state.remoteHosts.filter((host) => host.id !== hostId);
+  },
   remote_host_connect: ({ hostId }: { hostId: string }, state) => {
     if (state.remoteCliNeedsUpdate) {
       throw {
@@ -781,7 +848,7 @@ export const handlers = {
   git_backup_fetch: nothing,
   git_backup_migrate_credentials: nothing,
   git_backup_pending_conflicts: () => [],
-  sync_history: () => [],
+  git_backup_history: () => [],
   git_backup_size_report: (): GitBackupSizeReport => ({
     total_bytes: 1024,
     oversized: [],
@@ -792,6 +859,11 @@ export const handlers = {
     state.gitStatus.remote_url = url;
 
     return url;
+  },
+  // Joining an existing remote (SID-100) leaves this computer connected to it.
+  git_backup_clone: ({ url }: { url: string }, state) => {
+    state.gitStatus.is_repo = true;
+    state.gitStatus.remote_url = url;
   },
   backup_device_name: () => "e2e-machine",
   github_device_flow_start: (_args, state) => state.deviceFlow.start,
@@ -821,4 +893,36 @@ export function findHandler(cmd: string): Handler<InvokeArgs> | undefined {
   // SAFETY: the app invokes each command through its typed wrapper, with the
   // args the real command (and so this handler) declares.
   return handlers[cmd] as Handler<InvokeArgs>;
+}
+
+const JOIN_PREVIEW = {
+  remote_empty: false,
+  local_empty: false,
+  adds: [{ kind: "skill", name: "gamma" }],
+  replaced: [{ kind: "preset", name: "Web" }],
+  active_preset: "Web",
+};
+
+/** A host's `sync status`: in Sync once this computer has a remote. */
+function syncStatus(state: State, host: string, conflicts: SyncConflict[]): SyncStatus {
+  return {
+    state: state.gitStatus.remote_url ? "up_to_date" : "not_set_up",
+    reason: null,
+    host,
+    remote: state.gitStatus.remote_url,
+    last_sync: null,
+    conflicts,
+    edited_here: [],
+    version: "1.40.0",
+    format: 2,
+  };
+}
+
+/** The answer to a Sync screen command; actions answer nothing. */
+function syncCommand(command: string, status: SyncStatus) {
+  if (command === "sync_status") return status;
+
+  if (["sync_agent_log", "sync_pre_join_copies", "sync_history"].includes(command)) return [];
+
+  return null;
 }

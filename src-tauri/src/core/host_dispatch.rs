@@ -7,13 +7,14 @@
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::commands::{
     agent_workspace, directory, presets, projects, scan, settings, skills, sync, tools,
 };
 use crate::core::error::AppError;
 use crate::core::host::HostCtx;
+use crate::core::{sync_access, sync_join, sync_service, sync_timer};
 
 /// Every command [`dispatch`] accepts.
 pub const COMMANDS: &[&str] = &[
@@ -62,8 +63,28 @@ pub const COMMANDS: &[&str] = &[
     // Sync
     "sync_skill_to_tool",
     "unsync_skill_from_tool",
+    "resolve_edited_copy",
     "get_skill_tool_toggles",
     "set_skill_tool_toggle",
+    // Sync (SID-110): the app runs a host's Sync over its session.
+    "sync_access_key",
+    "sync_access_setup",
+    "sync_access_check",
+    "sync_join_preview",
+    "sync_join",
+    "sync_undo_join",
+    "sync_leave",
+    "sync_pre_join_copies",
+    "sync_delete_pre_join_copy",
+    "sync_agent_log",
+    "sync_status",
+    "sync_now",
+    "sync_history",
+    "sync_conflicts",
+    "sync_resolve",
+    "sync_restore",
+    "sync_pause",
+    "sync_resume",
     // Scan
     "scan_local_skills",
     "import_existing_skill",
@@ -307,6 +328,52 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.req("skillId")?,
             a.req("tool")?,
         )),
+        "resolve_edited_copy" => reply(sync::resolve_edited_copy_core(
+            ctx,
+            a.req("skillId")?,
+            a.req("tool")?,
+            a.req("keepMine")?,
+        )),
+        "sync_access_key" => reply(sync_access::public_key(&a.req::<String>("comment")?)),
+        "sync_access_setup" => reply(sync_access::write_known_hosts(
+            &a.req::<Vec<String>>("hostKeys")?,
+        )),
+        "sync_access_check" => reply(sync_access::check(&a.req::<String>("url")?)),
+        "sync_join_preview" => reply(sync_join::preview(&ctx.store, &a.req::<String>("url")?)),
+        "sync_join" => reply(
+            sync_join::join(ctx, &a.req::<String>("url")?)
+                .map(|preview| json!({ "preview": preview, "timer": sync_timer::install() })),
+        ),
+        "sync_undo_join" => reply(sync_join::undo_join(
+            ctx,
+            a.opt::<String>("copy")?.as_deref(),
+        )),
+        "sync_leave" => reply(sync_join::leave(&ctx.store).map(|()| sync_timer::remove())),
+        "sync_pre_join_copies" => reply(Ok(sync_join::pre_join_copies())),
+        "sync_delete_pre_join_copy" => {
+            reply(sync_join::delete_pre_join_copy(&a.req::<String>("name")?))
+        }
+        "sync_agent_log" => reply(sync_service::agent_log(&ctx.store)),
+        "sync_status" => reply(Ok(sync_service::sync_status(&ctx.store))),
+        "sync_now" => reply(sync_service::sync_now(
+            ctx,
+            sync_service::SYNC_COMMIT_MESSAGE,
+        )),
+        "sync_history" => reply(sync_service::history(a.opt("limit")?)),
+        "sync_conflicts" => reply(Ok(sync_service::conflicts(&ctx.store))),
+        "sync_resolve" => reply((|| {
+            let keep: Option<String> = a.opt("keep")?;
+            let (skill_id, action) = sync_service::resolve_choice(
+                &ctx.store,
+                &a.req::<String>("skill")?,
+                keep.as_deref(),
+                a.opt("both")?.unwrap_or(false),
+            )?;
+            sync_service::resolve(ctx, &skill_id, action)
+        })()),
+        "sync_restore" => reply(sync_service::restore(ctx, &a.req::<String>("point")?)),
+        "sync_pause" => reply(sync_service::set_paused(&ctx.store, true)),
+        "sync_resume" => reply(sync_service::set_paused(&ctx.store, false)),
         "get_skill_tool_toggles" => reply(sync::get_skill_tool_toggles_core(
             ctx,
             a.req("skillId")?,
