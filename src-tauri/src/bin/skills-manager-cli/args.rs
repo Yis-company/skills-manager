@@ -349,12 +349,14 @@ pub(crate) enum GitCommand {
         #[arg(short, long)]
         message: String,
     },
+    /// The Sync history: commits, newest first, with the host that made each.
     Versions {
         #[arg(long)]
         limit: Option<usize>,
     },
     Restore {
-        tag: String,
+        /// A commit from `git versions`, or a legacy `sm-v-*` snapshot tag.
+        point: String,
     },
     /// Remove refs/skills-manager/* that a `git push --mirror`/--all style
     /// operation uploaded to the backup remote. Local sync refs are kept.

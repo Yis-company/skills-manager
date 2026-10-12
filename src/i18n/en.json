@@ -130,7 +130,7 @@
       "keepLocal": "Keep mine",
       "useRemote": "Use remote",
       "keepBoth": "Keep both",
-      "resolved": "Conflict resolved — safety snapshot {{tag}} saved."
+      "resolved": "Conflict resolved. The version before it stays in the history."
     },
     "connection": {
       "title": "Connection",
@@ -177,7 +177,7 @@
     },
     "history": {
       "title": "Backup History",
-      "empty": "No visible snapshots yet. Run a backup to create one."
+      "empty": "No history yet. Run a backup to start it."
     },
     "scope": {
       "title": "Backup Scope",
@@ -219,7 +219,7 @@
       "snapshots": "Snapshots"
     },
     "credentialsMigrated": "The access token found in your backup URL was moved to the system keychain. It no longer appears in any file.",
-    "restoreSafetyPoint": "Your previous state was saved as snapshot {{tag}} — you can restore it from the history at any time."
+    "restoreSafetyPoint": "Your library before the restore stays in the history, so you can undo it there."
   },
   "firstRun": {
     "title": "Start fresh, or restore from a backup?",
@@ -290,7 +290,6 @@
     "gitRepoUpToDate": "Git up to date",
     "gitRepoNeedRemote": "Set remote first",
     "gitRepoFixSetup": "Fix Sync Setup",
-    "gitSyncSuccessWithVersion": "Sync completed · Snapshot {{tag}}",
     "needsAttention": "Needs review",
     "needsAttentionHint": "This skill was changed on two hosts — review it on the Backup page",
     "gitInlineUpToDate": "Git · Up to date",
@@ -304,13 +303,13 @@
     "gitInlineConflict": "Git · Merge conflict — needs resolution",
     "gitSnapshots": "Snapshots",
     "gitVersionHistory": "Snapshots",
-    "gitVersionLoading": "Loading snapshots…",
+    "gitVersionLoading": "Loading history…",
     "gitVersionEmpty": "No snapshots yet. Run Sync to create one.",
     "gitVersionRestore": "Restore",
     "gitVersionRestoring": "Restoring…",
-    "gitVersionRestoreTitle": "Restore Snapshot",
-    "gitVersionRestoreConfirm": "Restore skill library to {{tag}}? This creates a new restore commit and keeps current history.",
-    "gitVersionRestoreSuccess": "Restored to {{tag}}",
+    "gitVersionRestoreTitle": "Restore from history",
+    "gitVersionRestoreConfirm": "Restore the skill library to how it was on {{when}}? This adds a restore commit and keeps the history.",
+    "gitVersionRestoreSuccess": "Restored to {{when}}",
     "gitVersionRestoreNeedSync": "Restore is local for now. Run Sync to Git to share it with remote.",
     "gitCurrentVersionSnapshot": "Current: {{tag}}",
     "gitCurrentVersionRestored": "Current: restored from {{tag}}",

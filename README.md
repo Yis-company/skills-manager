@@ -101,7 +101,7 @@ npx skills add Yis-company/skills-manager
 
 ## Backup & Multi-Device Sync
 
-The **Backup** page (sidebar) keeps your skill library versioned in a Git repository. One device gets versioned backup with restorable snapshots; several devices connected to the same repository stay in sync with each other automatically. The remote stays a plain Git repository — you can `git clone` it anywhere, no lock-in.
+The **Backup** page (sidebar) keeps your skill library versioned in a Git repository. One device gets versioned backup with a restorable history; several devices connected to the same repository stay in sync with each other automatically. The remote stays a plain Git repository — you can `git clone` it anywhere, no lock-in.
 
 ### Connect
 
@@ -113,9 +113,9 @@ The **Backup** page (sidebar) keeps your skill library versioned in a Git reposi
 
 - **Automatic**: local changes are committed and pushed in the background a couple of minutes after you stop editing; updates pushed by your other devices are merged in and pushed back automatically. **Back Up Now** is always available for an immediate run, and every backup in the history shows which device made it.
 - **Skill-aware merging**: changes are merged per skill, not per text line — renaming a skill on one machine combines cleanly with editing its content on another.
-- **Skill conflicts**: if the same skill was edited on two devices at once, review the conflict and choose **keep mine / use remote / keep both**. A safety snapshot is taken before a choice is applied.
+- **Skill conflicts**: if the same skill was edited on two devices at once, review the conflict and choose **keep mine / use remote / keep both**. The version before the choice stays in the history.
 - **Instruction and MCP conflicts**: a conflicting bundle or definition pauses the merge. Choose which version to keep in the Library, then run sync again.
-- **Snapshots & restore**: manual backups create snapshot versions; open the Backup page history to restore any of them. A restore first saves the current state as its own snapshot.
+- **History & restore**: the Backup page history lists every change with the device that made it; restore any of them. A restore first saves the current state, so it can be undone from the history.
 
 ### What's included
 

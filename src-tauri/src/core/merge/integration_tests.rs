@@ -500,10 +500,8 @@ fn resolve_keep_local_closes_pending_across_devices() {
     a.pull();
 
     a.activate();
-    let safety =
-        resolve_conflict_unlocked(&a.store, &a.skills, "skill-1", ResolveAction::KeepLocal)
-            .unwrap();
-    assert!(safety.starts_with("sm-v-"));
+    resolve_conflict_unlocked(&a.store, &a.skills, "skill-1", ResolveAction::KeepLocal).unwrap();
+    assert_eq!(git(&a.skills, &["tag", "--list", "sm-v-*"]), "");
     assert_eq!(a.skill_md("alpha"), "edited on A");
     assert!(a
         .head_message()

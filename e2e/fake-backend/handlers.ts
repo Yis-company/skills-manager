@@ -781,7 +781,7 @@ export const handlers = {
   git_backup_fetch: nothing,
   git_backup_migrate_credentials: nothing,
   git_backup_pending_conflicts: () => [],
-  git_backup_list_versions: () => [],
+  sync_history: () => [],
   git_backup_size_report: (): GitBackupSizeReport => ({
     total_bytes: 1024,
     oversized: [],

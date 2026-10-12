@@ -98,16 +98,20 @@ pub(crate) fn run_git(
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
         GitCommand::Commit { message } => {
-            git_backup::commit_all(&central_repo::skills_dir(), &message)?;
-            let tag = git_backup::create_snapshot_tag(&central_repo::skills_dir())?;
-            print_json(&serde_json::json!({"ok": true, "tag": tag}), json);
+            let dir = central_repo::skills_dir();
+            git_backup::commit_all(&dir, &message)?;
+            let commit = git_backup::sync_history(&dir, Some(1))?
+                .into_iter()
+                .next()
+                .map(|entry| entry.commit);
+            print_json(&serde_json::json!({"ok": true, "commit": commit}), json);
         }
         GitCommand::Versions { limit } => print_json(
-            &git_backup::list_snapshot_versions(&central_repo::skills_dir(), limit)?,
+            &git_backup::sync_history(&central_repo::skills_dir(), limit)?,
             json,
         ),
-        GitCommand::Restore { tag } => {
-            git_backup::restore_snapshot_version(&central_repo::skills_dir(), &tag)?;
+        GitCommand::Restore { point } => {
+            git_backup::restore_snapshot_version(&central_repo::skills_dir(), &point)?;
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
         GitCommand::PruneSyncRefs => {
