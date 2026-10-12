@@ -1,5 +1,5 @@
 ---
-"skills-manager": major
+"skills-manager": minor
 ---
 
 Sync format 3 (release 2; every device needs this release before any of them
