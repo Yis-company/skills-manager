@@ -23,6 +23,7 @@ use tokio::sync::{oneshot, watch};
 use super::error::AppError;
 use super::host::{HostEvents, NoopEvents};
 use super::remote_host;
+use super::remote_install;
 use super::serve::{Hello, HelloLine, PROTOCOL};
 use super::skill_store::{RemoteHostRecord, SkillStore};
 
@@ -38,6 +39,11 @@ const SERVE: &[&str] = &["serve", "--stdio"];
 /// Builds the command that runs the CLI with some arguments on a host:
 /// [`remote_host::cli_command`] (over ssh) in the app, a stand-in in tests.
 pub type CliCommand = dyn Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync;
+
+/// Installs this app's CLI on a host and returns its updated row:
+/// [`remote_install::install_cli`] in the app, a stand-in in tests.
+pub type InstallCli =
+    dyn Fn(&SkillStore, RemoteHostRecord) -> Result<RemoteHostRecord, AppError> + Send + Sync;
 
 /// The events a host may raise in this app. Anything else a remote sends is
 /// dropped, so it cannot pose as an app-level event such as a close request.
@@ -471,19 +477,31 @@ pub struct RemoteSessions {
     store: Arc<SkillStore>,
     events: Arc<dyn HostEvents>,
     cli: Arc<CliCommand>,
+    install: Arc<InstallCli>,
     slot: Arc<Mutex<Slot>>,
 }
 
 impl RemoteSessions {
     pub fn new(store: Arc<SkillStore>, events: Arc<dyn HostEvents>) -> Self {
-        Self::with_cli(store, events, Arc::new(remote_host::cli_command))
+        Self::with_cli(
+            store,
+            events,
+            Arc::new(remote_host::cli_command),
+            Arc::new(|store: &SkillStore, host| remote_install::install_cli(store, host, |_| {})),
+        )
     }
 
-    fn with_cli(store: Arc<SkillStore>, events: Arc<dyn HostEvents>, cli: Arc<CliCommand>) -> Self {
+    fn with_cli(
+        store: Arc<SkillStore>,
+        events: Arc<dyn HostEvents>,
+        cli: Arc<CliCommand>,
+        install: Arc<InstallCli>,
+    ) -> Self {
         Self {
             store,
             events,
             cli,
+            install,
             slot: Arc::default(),
         }
     }
@@ -535,10 +553,11 @@ impl RemoteSessions {
         let store = self.store.clone();
         let events = self.events.clone();
         let cli = self.cli.clone();
+        let install = self.install.clone();
         let shared = self.slot.clone();
         let host_id = host_id.to_string();
         tokio::task::spawn_blocking(move || {
-            let outcome = connect(&store, &*cli, &host_id, events.clone()).map(Arc::new);
+            let outcome = connect(&store, &*cli, &*install, &host_id, events.clone()).map(Arc::new);
             let mut slot = lock(&shared);
             if slot.connecting.as_ref().map(|c| c.attempt) != Some(attempt) {
                 // Abandoned: dropping `outcome` closes its session.
@@ -582,9 +601,12 @@ impl RemoteSessions {
     }
 }
 
+/// Connect to the host. When another version answers, install this app's CLI
+/// there without asking, unless that would downgrade it, and connect to that.
 fn connect(
     store: &SkillStore,
     cli: &CliCommand,
+    install: &InstallCli,
     host_id: &str,
     events: Arc<dyn HostEvents>,
 ) -> Result<RemoteSession, AppError> {
@@ -592,6 +614,19 @@ fn connect(
         .get_remote_host(host_id)
         .map_err(AppError::db)?
         .ok_or_else(|| AppError::not_found("Remote host not found"))?;
+    let app = env!("CARGO_PKG_VERSION");
+    // Another version's session is dropped, and so closed, before installing.
+    let version = match RemoteSession::start(cli, &host, events.clone())? {
+        Answer::Serving(session, hello) if hello.version == app => {
+            check_hello(&hello, &host.name)?;
+            return Ok(*session);
+        }
+        Answer::Serving(_, hello) => hello.version,
+        Answer::Older(version) => version,
+    };
+    remote_install::check_install(&host.name, app, Some(&version), None)?;
+    let host = install(store, host)?;
+    events.emit(remote_install::HOSTS_CHANGED_EVENT, Value::Null);
     RemoteSession::spawn(cli, &host, events)
 }
 
@@ -650,9 +685,22 @@ mod tests {
         }
     }
 
-    /// Sessions over hosts `h1` and `h2`, reached through `cli`.
+    /// Sessions over hosts `h1` and `h2`, reached through `cli`, that never
+    /// install a CLI.
     fn sessions(
         cli: impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static,
+    ) -> (RemoteSessions, Arc<RecordingEvents>, TempDir) {
+        sessions_installing(cli, |_, _| {
+            Err(AppError::internal("this test installs nothing"))
+        })
+    }
+
+    fn sessions_installing(
+        cli: impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static,
+        install: impl Fn(&SkillStore, RemoteHostRecord) -> Result<RemoteHostRecord, AppError>
+            + Send
+            + Sync
+            + 'static,
     ) -> (RemoteSessions, Arc<RecordingEvents>, TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
@@ -668,7 +716,12 @@ mod tests {
                 .unwrap();
         }
         let events = Arc::new(RecordingEvents::default());
-        let sessions = RemoteSessions::with_cli(Arc::new(store), events.clone(), Arc::new(cli));
+        let sessions = RemoteSessions::with_cli(
+            Arc::new(store),
+            events.clone(),
+            Arc::new(cli),
+            Arc::new(install),
+        );
         (sessions, events, tmp)
     }
 
@@ -830,6 +883,64 @@ mod tests {
         // A failure is not remembered: the next call tries again.
         sessions.session_for("h1").await.err().unwrap();
         assert_eq!(runs.load(Ordering::SeqCst), 2);
+    }
+
+    /// The host runs 0.1.0 until this app's CLI is installed there.
+    #[tokio::test]
+    async fn connect_installs_this_version_over_an_older_cli_without_asking() {
+        let installs = Arc::new(AtomicUsize::new(0));
+        let counted = installs.clone();
+        let (sessions, events, _tmp) = sessions_installing(
+            |host: &RemoteHostRecord, _: &[&str]| {
+                let version = if host.cli_path.is_some() {
+                    VERSION
+                } else {
+                    "0.1.0"
+                };
+                fake_server(
+                    r#"printf '%s\n' "$1"; cat >/dev/null"#,
+                    &hello_line(version),
+                )
+            },
+            move |_, host| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Ok(RemoteHostRecord {
+                    cli_path: Some("/home/me/installed".into()),
+                    ..host
+                })
+            },
+        );
+
+        let session = sessions.session_for("h1").await.unwrap();
+        assert_eq!(session.info().version, VERSION);
+        assert_eq!(installs.load(Ordering::SeqCst), 1);
+        assert!(events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(event, _)| event == remote_install::HOSTS_CHANGED_EVENT));
+    }
+
+    #[tokio::test]
+    async fn connect_asks_to_update_the_app_instead_of_downgrading_a_newer_host() {
+        let installs = Arc::new(AtomicUsize::new(0));
+        let counted = installs.clone();
+        let (sessions, _events, _tmp) = sessions_installing(
+            fake_cli(
+                r#"printf '%s\n' "$1"; cat >/dev/null"#,
+                &hello_line("999.0.0"),
+            ),
+            move |_, host| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Ok(host)
+            },
+        );
+
+        let err = sessions.session_for("h1").await.err().unwrap();
+        assert_eq!(err.kind, ErrorKind::RemoteVersionMismatch);
+        assert!(err.message.contains("Update this app"), "{}", err.message);
+        assert_eq!(installs.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

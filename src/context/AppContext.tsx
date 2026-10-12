@@ -23,7 +23,7 @@ import {
   remoteHostsQueryOptions,
   toolsQueryOptions,
 } from "../lib/appQueries";
-import { getErrorKind, getErrorMessage } from "../lib/error";
+import { getErrorMessage } from "../lib/error";
 import { getActiveHostId, invokeHost, setActiveHostId } from "../lib/hostCall";
 import { listenOnActiveHost } from "../lib/hostEvents";
 import type {
@@ -361,16 +361,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           await refreshAppDataForHost(null);
         }
 
-        const versionMismatch = getErrorKind(e) === "remote_version_mismatch";
+        // An older CLI was already replaced while connecting; a version
+        // mismatch left here needs an update the dialog cannot make.
         toast.error(i18n.t("hostSwitcher.connectFailed", { name }), {
           description: message,
           duration: 10000,
-          action: versionMismatch
-            ? {
-                label: i18n.t("remoteHosts.reviewUpdate"),
-                onClick: () => setRemoteCliUpdateHostId(hostId),
-              }
-            : { label: i18n.t("common.retry"), onClick: () => void switchHost(hostId) },
+          action: { label: i18n.t("common.retry"), onClick: () => void switchHost(hostId) },
         });
 
         return false;
@@ -537,6 +533,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
     };
   }, []);
+
+  // A host's CLI was installed without the UI asking: on connect, or by the
+  // roll-out at start. Its path and "Update pending" changed.
+  useEffect(() => {
+    const unlistenPromise = listen("remote-hosts-changed", () => void refreshRemoteHosts());
+
+    return () => {
+      unlistenPromise
+        .then((unlisten) => unlisten())
+        .catch((error) => {
+          console.error("Failed to unlisten remote-hosts-changed:", error);
+        });
+    };
+  }, [refreshRemoteHosts]);
 
   const notifyUpdatableSkills = useCallback(
     (skills: ManagedSkill[]) => {
