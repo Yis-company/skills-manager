@@ -1113,7 +1113,7 @@ pub fn run() {
             commands::git_backup::git_backup_pull,
             commands::git_backup::git_backup_clone,
             commands::git_backup::git_backup_reclone,
-            commands::git_backup::sync_history,
+            commands::git_backup::git_backup_history,
             commands::git_backup::git_backup_restore_version,
             commands::git_backup::backup_device_name,
             commands::git_backup::backup_set_device_name,

@@ -461,7 +461,7 @@ pub async fn git_backup_reclone(
 /// The Sync history, newest first (SID-99): commits with the host that made
 /// each one.
 #[tauri::command]
-pub async fn sync_history(
+pub async fn git_backup_history(
     limit: Option<u32>,
 ) -> Result<Vec<git_backup::SyncHistoryEntry>, AppError> {
     tokio::task::spawn_blocking(move || sync_service::history(limit.map(|v| v as usize))).await?

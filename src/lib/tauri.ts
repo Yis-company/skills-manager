@@ -782,7 +782,7 @@ export const gitBackupReclone = (url: string) => invoke<void>("git_backup_reclon
 
 /** The Sync history, newest first. */
 export const syncHistory = (limit?: number) =>
-  invoke<SyncHistoryEntry[]>("sync_history", { limit: limit ?? null });
+  invoke<SyncHistoryEntry[]>("git_backup_history", { limit: limit ?? null });
 
 /** Restore a commit from the Sync history. The state before it is committed
  * first, so the restore can be undone from the history. */
