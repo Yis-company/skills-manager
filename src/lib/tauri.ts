@@ -1127,7 +1127,7 @@ export interface AgentLogEntry {
 }
 
 export interface JoinItem {
-  kind: "instruction" | "mcp" | "preset" | "skill";
+  kind: "agent" | "instruction" | "mcp" | "preset" | "skill";
   name: string;
 }
 

@@ -1,7 +1,7 @@
 //! Pure three-way decision (design §3): object-level table, component-level
-//! merge for skills, per-field merge for presets and memberships (SID-104),
-//! whole-file newest-wins for residual paths, and the viewpoint-independent
-//! path-collision pass.
+//! merge for skills, per-field merge for presets, memberships (SID-104) and
+//! custom agents (SID-105), whole-file newest-wins for residual paths, and
+//! the viewpoint-independent path-collision pass.
 //!
 //! Everything here is a pure function of the three snapshots plus the
 //! declared-pending pin set and the per-side last-touch info — no repository
@@ -72,6 +72,7 @@ pub struct MergePlan {
     /// conflict refs advance to the new theirs commit).
     pub still_pending: Vec<String>,
     pub scenarios: BTreeMap<String, PlannedFile>,
+    pub agents: BTreeMap<String, PlannedFile>,
     pub memberships: BTreeMap<(String, String), PlannedFile>,
     pub residual: BTreeMap<String, FileEntry>,
     /// Changes the newer side replaced, by field, for the merge commit.
@@ -225,6 +226,20 @@ pub fn decide(input: &DecisionInput) -> Result<MergePlan> {
             .push(format!("{name} {}", field_label(&field)));
     }
     separate_same_name_presets(&mut plan, input);
+    let mut replaced_agents = Vec::new();
+    plan.agents = merge_objects(
+        &input.base.agents,
+        &input.ours.agents,
+        &input.theirs.agents,
+        |key| format!("{METADATA_DIR}/agents/{key}.json"),
+        |_, _, _| false,
+        input,
+        &mut replaced_agents,
+    );
+    for (key, field) in replaced_agents {
+        plan.replaced
+            .push(format!("agent {key} {}", field_label(&field)));
+    }
     let mut replaced_members = Vec::new();
     plan.memberships = merge_objects(
         &input.base.memberships,
@@ -705,7 +720,7 @@ fn resolve_path_collisions(plan: &mut MergePlan, input: &DecisionInput) -> Resul
 }
 
 /// Residual files inside the managed metadata subdirectories that the app
-/// never writes: anything non-`.json` under skills/scenarios/scenario-skills,
+/// never writes: anything non-`.json` under skills/scenarios/agents/scenario-skills,
 /// plus atomic-write temp leftovers anywhere under `.skills-manager/`.
 pub(crate) fn is_metadata_namespace_junk(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(".skills-manager/") else {
@@ -716,6 +731,7 @@ pub(crate) fn is_metadata_namespace_junk(path: &str) -> bool {
     }
     (rest.starts_with("skills/")
         || rest.starts_with("scenarios/")
+        || rest.starts_with("agents/")
         || rest.starts_with("scenario-skills/"))
         && !rest.ends_with(".json")
 }

@@ -361,7 +361,7 @@ export function AgentsSection() {
                 {t("settings.projectAgentSupported")}
               </span>
             )}
-            {agent.has_path_override && !agent.is_custom && (
+            {agent.has_path_override && (
               <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
                 {t("settings.pathOverridden")}
               </span>
@@ -447,7 +447,7 @@ export function AgentsSection() {
             >
               <Pencil className="h-3 w-3" />
             </button>
-            {agent.has_path_override && !agent.is_custom && (
+            {agent.has_path_override && (
               <button
                 type="button"
                 onClick={() => handleResetPath(agent.key)}

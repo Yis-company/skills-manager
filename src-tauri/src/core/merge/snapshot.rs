@@ -49,6 +49,8 @@ pub struct Snapshot {
     pub skills: BTreeMap<String, SkillObj>,
     /// scenario_id → scenarios/{id}.json blob
     pub scenarios: BTreeMap<String, FileEntry>,
+    /// custom agent key → agents/{key}.json blob (SID-105)
+    pub agents: BTreeMap<String, FileEntry>,
     /// (scenario_id, skill_id) → scenario-skills/{sid}/{skid}.json blob
     pub memberships: BTreeMap<(String, String), FileEntry>,
     /// Repo-relative path → blob, for every file outside claimed content
@@ -110,14 +112,19 @@ pub fn read_snapshot(repo: &Repository, tree: &Tree) -> Result<Snapshot> {
                         );
                     }
                 }
-                ("scenarios", Some(ObjectType::Tree)) => {
+                (dir @ ("scenarios" | "agents"), Some(ObjectType::Tree)) => {
                     let t = repo.find_tree(entry.id())?;
                     for e in t.iter() {
                         let file = e.name().unwrap_or_default().to_string();
                         match file.strip_suffix(".json") {
                             Some(stem) if e.kind() == Some(ObjectType::Blob) => {
                                 parse_json(repo, &mut snap, e.id());
-                                snap.scenarios.insert(
+                                let files = if dir == "agents" {
+                                    &mut snap.agents
+                                } else {
+                                    &mut snap.scenarios
+                                };
+                                files.insert(
                                     stem.to_string(),
                                     FileEntry {
                                         oid: e.id(),
@@ -127,7 +134,7 @@ pub fn read_snapshot(repo: &Repository, tree: &Tree) -> Result<Snapshot> {
                             }
                             _ => record_residual(
                                 &mut snap,
-                                format!("{METADATA_DIR}/scenarios/{file}"),
+                                format!("{METADATA_DIR}/{dir}/{file}"),
                                 &e,
                             ),
                         }

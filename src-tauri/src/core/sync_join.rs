@@ -21,7 +21,9 @@ use super::git_backup_store::{
 use super::host::HostCtx;
 use super::merge::snapshot::METADATA_DIR;
 use super::skill_store::SkillStore;
-use super::sync_metadata::{self, ScenarioMetaFile, ScenarioSkillMetaFile, SkillMetaFile};
+use super::sync_metadata::{
+    self, AgentMetaFile, ScenarioMetaFile, ScenarioSkillMetaFile, SkillMetaFile,
+};
 use super::{central_repo, content_hash, git_backup, git_credentials, resource_store, sync_apply};
 
 /// Folder name prefix of a pre-join copy, under the base folder.
@@ -261,6 +263,7 @@ struct Library {
     skills: Vec<SkillMetaFile>,
     presets: Vec<ScenarioMetaFile>,
     members: Vec<ScenarioSkillMetaFile>,
+    agents: Vec<AgentMetaFile>,
     /// (id, name) of instruction bundles and MCP definitions.
     instructions: Vec<(String, String)>,
     mcps: Vec<(String, String)>,
@@ -279,6 +282,7 @@ impl Library {
                 .flatten()
                 .flat_map(|preset| json_files(&preset.path()))
                 .collect(),
+            agents: json_files(&meta.join(sync_metadata::AGENTS_DIR)),
             instructions: fs::read_dir(resources.join(INSTRUCTIONS_DIR))
                 .into_iter()
                 .flatten()
@@ -297,6 +301,7 @@ impl Library {
     fn is_empty(&self) -> bool {
         self.skills.is_empty()
             && self.members.is_empty()
+            && self.agents.is_empty()
             && self.instructions.is_empty()
             && self.mcps.is_empty()
     }
@@ -334,6 +339,7 @@ struct Plan {
     preview: JoinPreview,
     skills: Vec<SkillMetaFile>,
     presets: Vec<ScenarioMetaFile>,
+    agents: Vec<AgentMetaFile>,
     instructions: Vec<String>,
     mcps: Vec<String>,
     /// This host's skill id → the shared id, for matched skills.
@@ -356,6 +362,7 @@ fn plan(store: &SkillStore, local_dir: &Path, remote_dir: &Path) -> Plan {
         },
         skills: Vec::new(),
         presets: Vec::new(),
+        agents: Vec::new(),
         instructions: Vec::new(),
         mcps: Vec::new(),
         shared_ids: HashMap::new(),
@@ -432,6 +439,24 @@ fn plan(store: &SkillStore, local_dir: &Path, remote_dir: &Path) -> Plan {
             None => {
                 plan.preview.adds.push(item("preset", &preset.name));
                 plan.presets.push(preset.clone());
+            }
+        }
+    }
+    // Custom agents match by key (SID-105); Sync's definition wins.
+    for agent in &local.agents {
+        let name = &agent.agent.display_name;
+        match remote
+            .agents
+            .iter()
+            .find(|r| r.agent.key == agent.agent.key)
+        {
+            Some(shared) if shared.agent != agent.agent => {
+                plan.preview.replaced.push(item("agent", name));
+            }
+            Some(_) => {}
+            None => {
+                plan.preview.adds.push(item("agent", name));
+                plan.agents.push(agent.clone());
             }
         }
     }
@@ -560,6 +585,14 @@ fn add_extras(plan: &Plan, local_dir: &Path, clone_dir: &Path) -> anyhow::Result
                 &member,
             )?;
         }
+    }
+    for agent in &plan.agents {
+        write_json(
+            &meta(clone_dir)
+                .join(sync_metadata::AGENTS_DIR)
+                .join(format!("{}.json", agent.agent.key)),
+            agent,
+        )?;
     }
     let resources = |dir: &Path, sub: &str| dir.join(resource_store::NAMESPACE).join(sub);
     for id in &plan.instructions {
@@ -809,6 +842,45 @@ mod tests {
             git(&skills, &["rev-parse", "HEAD"])
         );
         assert_eq!(pre_join_copies().len(), 1);
+    }
+
+    #[test]
+    fn joining_matches_custom_agents_by_key() {
+        // SID-105: Sync's definition wins, and this host's other agents join.
+        use crate::core::tool_adapters::{custom_tools, CustomToolDef};
+        let set_agents = |host: &Host, agents: &[(&str, &str)]| {
+            let agents: Vec<_> = agents
+                .iter()
+                .map(|(key, name)| CustomToolDef {
+                    key: key.to_string(),
+                    display_name: name.to_string(),
+                    skills_dir: format!(".{key}/skills"),
+                    project_relative_skills_dir: None,
+                    category: Default::default(),
+                })
+                .collect();
+            let json = serde_json::to_string(&agents).unwrap();
+            host.store().set_setting("custom_tools", &json).unwrap();
+        };
+        let hosts = Hosts::new();
+        let a = hosts.host("a");
+        a.add_skill("alpha", "alpha");
+        set_agents(&a, &[("x", "X")]);
+        join(&a.ctx, &hosts.url()).unwrap();
+
+        let b = hosts.host("b");
+        b.add_skill("beta", "beta");
+        set_agents(&b, &[("x", "X on B"), ("y", "Y")]);
+        let preview = super::preview(b.store(), &hosts.url()).unwrap();
+        assert_eq!(names(&preview.adds), ["skill beta", "agent Y"]);
+        assert_eq!(names(&preview.replaced), ["agent X on B"]);
+        join(&b.ctx, &hosts.url()).unwrap();
+        let mut agents: Vec<_> = custom_tools(b.store())
+            .into_iter()
+            .map(|a| (a.key, a.display_name))
+            .collect();
+        agents.sort();
+        assert_eq!(agents, [("x".into(), "X".into()), ("y".into(), "Y".into())]);
     }
 
     #[test]

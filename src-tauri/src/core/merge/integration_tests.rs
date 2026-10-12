@@ -1562,3 +1562,53 @@ fn presets_merge_per_field_and_same_names_wait_for_review() {
     sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
     assert!(!git_backup::has_uncommitted_changes(&b.skills).unwrap());
 }
+
+#[test]
+fn custom_agents_are_shared_and_a_hosts_own_agents_join_them() {
+    // SID-105: an agent defined on one host appears on the others. A host's
+    // agents from before Sync shared them join on its first pull, and agents
+    // added on two hosts at once both survive the merge.
+    use crate::core::tool_adapters::{custom_tools, CustomToolDef};
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    let add_agent = |dev: &Device, key: &str| {
+        dev.activate();
+        let mut agents = custom_tools(&dev.store);
+        agents.push(CustomToolDef {
+            key: key.to_string(),
+            display_name: key.to_string(),
+            skills_dir: format!(".{key}/skills"),
+            project_relative_skills_dir: None,
+            category: Default::default(),
+        });
+        let json = serde_json::to_string(&agents).unwrap();
+        dev.store.set_setting("custom_tools", &json).unwrap();
+    };
+    let keys = |dev: &Device| {
+        let mut keys: Vec<_> = custom_tools(&dev.store)
+            .into_iter()
+            .map(|a| a.key)
+            .collect();
+        keys.sort();
+        keys
+    };
+
+    add_agent(&b, "b_agent");
+    add_agent(&a, "a_agent");
+    sync_metadata::write_all_from_db_unlocked(&a.store).unwrap();
+    a.commit("add an agent");
+    a.push();
+    b.pull();
+    assert_eq!(keys(&b), ["a_agent", "b_agent"]);
+
+    sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
+    add_agent(&b, "b_two");
+    sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
+    b.commit("agents on B");
+    add_agent(&a, "a_two");
+    sync_metadata::write_all_from_db_unlocked(&a.store).unwrap();
+    a.commit("another agent on A");
+    a.push();
+    assert!(!b.pull().fast_forward);
+    assert_eq!(keys(&b), ["a_agent", "a_two", "b_agent", "b_two"]);
+}

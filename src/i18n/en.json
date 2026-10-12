@@ -180,7 +180,8 @@
       "skill": "skill",
       "preset": "preset",
       "instruction": "instruction",
-      "mcp": "MCP"
+      "mcp": "MCP",
+      "agent": "agent"
     },
     "preview": {
       "remoteEmpty": "Sync is empty: this host starts it.",

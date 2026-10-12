@@ -11,6 +11,7 @@ use super::central_repo;
 use super::repo_lock::RepoLock;
 use super::skill_metadata;
 use super::skill_store::{ScenarioRecord, SkillRecord, SkillStore};
+use super::tool_adapters::{self, CustomToolDef};
 
 const SCHEMA_VERSION: u32 = 1;
 const APP_MIN_VERSION: &str = "2.0.0";
@@ -117,6 +118,7 @@ pub(crate) fn write_all_from_db_unlocked(store: &SkillStore) -> Result<()> {
     write_skill_records_from_db(store)?;
     write_scenario_records_from_db(store)?;
     write_active_preset_from_db(store)?;
+    write_agent_files(store)?;
     remove_stale_metadata_files(store)?;
     let reviews = read_preset_review_file();
     let live = preset_reviews(store)?;
@@ -237,6 +239,7 @@ pub(crate) fn reindex_from_metadata_unlocked(store: &SkillStore) -> Result<()> {
         store.set_tags_for_skill(&meta.skill_id, &meta.tags)?;
     }
 
+    reindex_agents(store)?;
     if has_complete_scenario_snapshot {
         store.replace_scenarios_from_metadata(&scenarios)?;
         store.replace_scenario_memberships_from_metadata(&memberships)?;
@@ -266,6 +269,77 @@ pub const ACTIVE_PRESET_FILE: &str = "active-preset.json";
 fn read_active_preset_file() -> Option<ActivePresetFile> {
     let raw = fs::read_to_string(metadata_dir().join(ACTIVE_PRESET_FILE)).ok()?;
     serde_json::from_str(&raw).ok()
+}
+
+/// A custom agent, shared by every host in Sync (SID-105).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMetaFile {
+    pub schema_version: u32,
+    #[serde(flatten)]
+    pub agent: CustomToolDef,
+}
+
+pub const AGENTS_DIR: &str = "agents";
+
+/// Set once this host's own custom agents are in Sync.
+const SETTING_AGENTS_IN_SYNC: &str = "custom_agents_in_sync";
+
+/// Whether a custom agent key can name its file in Sync.
+pub fn valid_agent_key(key: &str) -> bool {
+    !key.is_empty()
+        && !key.starts_with('.')
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn write_agent_files(store: &SkillStore) -> Result<()> {
+    let dir = metadata_dir().join(AGENTS_DIR);
+    let agents: Vec<CustomToolDef> = tool_adapters::custom_tools(store)
+        .into_iter()
+        .filter(|agent| valid_agent_key(&agent.key))
+        .collect();
+    for agent in &agents {
+        let file = AgentMetaFile {
+            schema_version: SCHEMA_VERSION,
+            agent: agent.clone(),
+        };
+        atomic_write_json(&dir.join(format!("{}.json", agent.key)), &file)?;
+    }
+    let keys = agents.into_iter().map(|agent| agent.key).collect();
+    remove_stale_json_files(&dir, &keys)?;
+    if store.get_setting(SETTING_AGENTS_IN_SYNC)?.is_none() {
+        store.set_setting(SETTING_AGENTS_IN_SYNC, "1")?;
+    }
+    Ok(())
+}
+
+/// Sync's custom agents become this host's. The first time, this host's own
+/// agents join them, matched by key, so none is lost (SID-105).
+fn reindex_agents(store: &SkillStore) -> Result<()> {
+    let dir = metadata_dir().join(AGENTS_DIR);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut agents: Vec<CustomToolDef> = read_json_files::<AgentMetaFile>(dir)?
+        .into_iter()
+        .map(|file| file.agent)
+        .collect();
+    let mut local = tool_adapters::custom_tools(store);
+    if store.get_setting(SETTING_AGENTS_IN_SYNC)?.is_none() {
+        for agent in &local {
+            if !agents.iter().any(|a| a.key == agent.key) {
+                agents.push(agent.clone());
+            }
+        }
+        store.set_setting(SETTING_AGENTS_IN_SYNC, "1")?;
+    }
+    agents.sort_by(|a, b| a.key.cmp(&b.key));
+    local.sort_by(|a, b| a.key.cmp(&b.key));
+    if agents != local {
+        store.set_setting("custom_tools", &serde_json::to_string(&agents)?)?;
+    }
+    Ok(())
 }
 
 /// Presets the merge renamed apart from a same-name preset (SID-104), until

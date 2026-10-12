@@ -816,6 +816,10 @@ fn plan_to_edits(
     let scenarios = write_planned::<_, sync_metadata::ScenarioMetaFile>(repo, &plan.scenarios)?;
     let memberships =
         write_planned::<_, sync_metadata::ScenarioSkillMetaFile>(repo, &plan.memberships)?;
+    let agents = write_planned::<_, sync_metadata::AgentMetaFile>(repo, &plan.agents)?;
+    diff_file_maps(&mut edits, &ours.agents, &agents, |key| {
+        format!("{METADATA_DIR}/agents/{key}.json")
+    });
     diff_file_maps(&mut edits, &ours.scenarios, &scenarios, |id| {
         format!("{METADATA_DIR}/scenarios/{id}.json")
     });
