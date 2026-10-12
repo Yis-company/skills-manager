@@ -393,7 +393,7 @@
     "gitRepoNeedRemote": "Set remote first",
     "gitRepoFixSetup": "Fix Sync Setup",
     "needsAttention": "Needs review",
-    "needsAttentionHint": "This skill was changed on two hosts — review it on the Backup page",
+    "needsAttentionHint": "This skill was changed on two hosts — review it on the Sync page",
     "gitInlineUpToDate": "Git · Up to date",
     "gitInlineNotConfigured": "Git · Backup not set up",
     "gitInlineNeedFix": "Git · Sync setup needs fixing",
