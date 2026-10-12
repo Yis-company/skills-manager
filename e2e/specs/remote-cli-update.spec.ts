@@ -88,7 +88,7 @@ test("version mismatch offers update review, and cancelling performs no install"
 
   await page.getByRole("button", { name: "Connect" }).click();
   await page.getByRole("button", { name: "Review update" }).first().click();
-  await expect(page.getByRole("dialog", { name: "Update remote connection CLI" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Update host CLI" })).toBeVisible();
   await expect(
     page.getByRole("dialog").getByText("/opt/skills-manager/bin/skills-manager"),
   ).toBeVisible();

@@ -144,7 +144,10 @@ function BatchSyncAgentDialogContent({ skills, tools, onClose, onApply }: Omit<P
                     {row.displayName}
                   </span>
                   <span className="shrink-0 text-[11px] tabular-nums text-muted">
-                    {t("mySkills.syncSummary", { synced: row.synced, total: skills.length })}
+                    {t("mySkills.batchSyncDialog.onAgent", {
+                      synced: row.synced,
+                      total: skills.length,
+                    })}
                   </span>
                 </button>
               );
