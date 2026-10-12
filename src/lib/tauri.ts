@@ -706,11 +706,22 @@ export const gitBackupCommit = (message: string) => invoke<void>("git_backup_com
 
 export const gitBackupPush = () => invoke<void>("git_backup_push");
 
+export type MergeChangeKind = "added" | "changed" | "removed";
+
 export interface MergeUpdatedSkill {
   skill_id: string;
   path: string;
   /** Device (commit author) that last touched this skill on the remote. */
   from_device: string;
+  kind: MergeChangeKind;
+}
+
+/** A preset whose file or skill list the sync changed. */
+export interface MergeUpdatedPreset {
+  preset_id: string;
+  name: string;
+  from_device: string;
+  kind: MergeChangeKind;
 }
 
 /** Outcome of a sync merge (merge-engine design §8). With the default
@@ -719,7 +730,9 @@ export interface MergeSummary {
   engine: "object" | "system";
   up_to_date: boolean;
   fast_forward: boolean;
+  /** Skills this sync added, changed or removed in the local library. */
   updated: MergeUpdatedSkill[];
+  presets: MergeUpdatedPreset[];
   kept_local: string[];
   new_conflicts: string[];
   pending_total: number;

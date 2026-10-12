@@ -33,6 +33,9 @@ const AUTO_COMMIT_MESSAGE: &str = "auto backup";
 
 /// Trailing debounce after the last central-repo change (§3.4 分钟级防抖).
 const DEBOUNCE: Duration = Duration::from_secs(120);
+/// With nothing changed locally, a round still runs this often to pull other
+/// hosts' changes (SID-103).
+const PULL_INTERVAL: Duration = Duration::from_secs(300);
 /// Scheduler wake cadence; also the retry latency after a busy repo lock.
 const POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// Delay before the first round, which uploads anything committed at the
@@ -43,6 +46,7 @@ const MAX_BACKOFF_SHIFT: u32 = 5;
 
 static DIRTY: AtomicBool = AtomicBool::new(false);
 static LAST_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
+static LAST_ROUND_MS: AtomicI64 = AtomicI64::new(0);
 static CONSECUTIVE_FAILURES: AtomicU32 = AtomicU32::new(0);
 
 /// Called by the file watcher whenever something outside `.git` changes in the
@@ -54,10 +58,17 @@ pub fn notify_central_change() {
 
 /// Pure debounce/backoff decision, kept free of the statics for testability.
 /// A round is due when a change is pending and the quiet period — stretched
-/// exponentially by consecutive failures — has elapsed since the last change.
-fn is_due(dirty: bool, last_change_ms: i64, now_ms: i64, failures: u32) -> bool {
+/// exponentially by consecutive failures — has elapsed since the last change,
+/// or, with nothing pending, when the last round is a pull interval old.
+fn is_due(
+    dirty: bool,
+    last_change_ms: i64,
+    last_round_ms: i64,
+    now_ms: i64,
+    failures: u32,
+) -> bool {
     if !dirty {
-        return false;
+        return now_ms - last_round_ms >= PULL_INTERVAL.as_millis() as i64;
     }
     let quiet = DEBOUNCE.as_millis() as i64;
     let backoff = quiet << failures.min(MAX_BACKOFF_SHIFT);
@@ -77,7 +88,7 @@ pub fn is_enabled(store: &SkillStore) -> bool {
 pub(crate) enum Outcome {
     /// Nothing attempted: disabled, no repo/remote, busy lock, needs repair.
     Skipped(&'static str),
-    /// Tree clean and remote current — nothing to do.
+    /// Nothing to commit or push (the round may still have pulled).
     UpToDate,
     /// Committed and/or pushed successfully.
     BackedUp,
@@ -106,17 +117,19 @@ pub fn start<R: Runtime>(app: AppHandle<R>, store: Arc<SkillStore>) {
             if is_due(
                 DIRTY.load(Ordering::Acquire),
                 LAST_CHANGE_MS.load(Ordering::Acquire),
+                LAST_ROUND_MS.load(Ordering::Acquire),
                 now_ms,
                 CONSECUTIVE_FAILURES.load(Ordering::Acquire),
             ) {
                 DIRTY.store(false, Ordering::Release);
+                LAST_ROUND_MS.store(now_ms, Ordering::Release);
                 let store_for_round = store.clone();
-                let outcome = tauri::async_runtime::spawn_blocking(move || {
+                let (outcome, summary) = tauri::async_runtime::spawn_blocking(move || {
                     run_round_blocking(&store_for_round)
                 })
                 .await
-                .unwrap_or_else(|e| Outcome::Failed(format!("join error: {e}")));
-                handle_outcome(&app, &store, outcome);
+                .unwrap_or_else(|e| (Outcome::Failed(format!("join error: {e}")), None));
+                handle_outcome(&app, &store, outcome, summary);
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
@@ -129,10 +142,24 @@ struct AutoBackupPayload {
     /// True when the remote moved ahead and a manual sync is needed.
     pending: bool,
     error: Option<String>,
+    /// What the round's merge changed locally, if it merged (SID-99).
+    summary: Option<merge::MergeSummary>,
 }
 
-fn handle_outcome<R: Runtime>(app: &AppHandle<R>, store: &SkillStore, outcome: Outcome) {
-    let emit = |payload: AutoBackupPayload| {
+fn handle_outcome<R: Runtime>(
+    app: &AppHandle<R>,
+    store: &SkillStore,
+    outcome: Outcome,
+    summary: Option<merge::MergeSummary>,
+) {
+    let merged = summary.is_some();
+    let emit = |ok: bool, pending: bool, error: Option<String>| {
+        let payload = AutoBackupPayload {
+            ok,
+            pending,
+            error,
+            summary: summary.clone(),
+        };
         if let Err(e) = app.emit(EVENT_COMPLETED, payload) {
             log::debug!("auto backup: emit failed: {e}");
         }
@@ -159,33 +186,22 @@ fn handle_outcome<R: Runtime>(app: &AppHandle<R>, store: &SkillStore, outcome: O
         }
         Outcome::UpToDate => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Release);
-            // Only worth telling the UI if a stale failure card should clear.
-            if clear_error(store) {
-                emit(AutoBackupPayload {
-                    ok: true,
-                    pending: false,
-                    error: None,
-                });
+            // Only worth telling the UI if the round pulled something or a
+            // stale failure card should clear.
+            if clear_error(store) || merged {
+                emit(true, false, None);
             }
         }
         Outcome::BackedUp => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Release);
             clear_error(store);
             log::info!("auto backup: committed/pushed");
-            emit(AutoBackupPayload {
-                ok: true,
-                pending: false,
-                error: None,
-            });
+            emit(true, false, None);
         }
         Outcome::RemoteAhead => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Release);
             log::info!("auto backup: remote is ahead, waiting for the next round or manual sync");
-            emit(AutoBackupPayload {
-                ok: false,
-                pending: true,
-                error: None,
-            });
+            emit(false, true, None);
         }
         Outcome::UpdateRequired(msg) => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Release);
@@ -193,11 +209,7 @@ fn handle_outcome<R: Runtime>(app: &AppHandle<R>, store: &SkillStore, outcome: O
             if let Err(e) = store.set_setting(SETTING_LAST_ERROR, &msg) {
                 log::warn!("auto backup: failed to persist error: {e:#}");
             }
-            emit(AutoBackupPayload {
-                ok: false,
-                pending: false,
-                error: Some(msg),
-            });
+            emit(false, false, Some(msg));
         }
         Outcome::Failed(msg) => {
             CONSECUTIVE_FAILURES.fetch_add(1, Ordering::AcqRel);
@@ -207,16 +219,20 @@ fn handle_outcome<R: Runtime>(app: &AppHandle<R>, store: &SkillStore, outcome: O
             }
             // Re-arm so the round retries after the (backed-off) quiet period.
             notify_central_change();
-            emit(AutoBackupPayload {
-                ok: false,
-                pending: false,
-                error: Some(msg),
-            });
+            emit(false, false, Some(msg));
         }
     }
 }
 
-pub(crate) fn run_round_blocking(store: &SkillStore) -> Outcome {
+/// One round, plus what its merge changed locally (kept even when the push
+/// after it fails: the merge already landed).
+pub(crate) fn run_round_blocking(store: &SkillStore) -> (Outcome, Option<merge::MergeSummary>) {
+    let mut summary = None;
+    let outcome = round(store, &mut summary);
+    (outcome, summary)
+}
+
+fn round(store: &SkillStore, summary: &mut Option<merge::MergeSummary>) -> Outcome {
     if !is_enabled(store) {
         return Outcome::Skipped("disabled");
     }
@@ -287,7 +303,8 @@ pub(crate) fn run_round_blocking(store: &SkillStore) -> Outcome {
         // local version and the merge moves its conflict to the newest remote
         // version.
         match merge::object_merge_pull_unlocked(store, &skills_dir) {
-            Ok(_summary) => {
+            Ok(merged) => {
+                *summary = Some(merged).filter(|m| !m.up_to_date);
                 if let Err(e) =
                     crate::core::git_backup_store::reconcile_skills_index_unlocked(store)
                 {
@@ -378,24 +395,32 @@ mod tests {
     const MIN2: i64 = 120_000;
 
     #[test]
-    fn not_due_without_pending_change() {
-        assert!(!is_due(false, 0, MIN2 * 10, 0));
+    fn idle_rounds_pull_every_five_minutes() {
+        let last_round = 1_000_000;
+        assert!(!is_due(
+            false,
+            0,
+            last_round,
+            last_round + 5 * 60_000 - 1,
+            0
+        ));
+        assert!(is_due(false, 0, last_round, last_round + 5 * 60_000, 0));
     }
 
     #[test]
     fn due_after_quiet_period() {
-        assert!(!is_due(true, 1_000_000, 1_000_000 + MIN2 - 1, 0));
-        assert!(is_due(true, 1_000_000, 1_000_000 + MIN2, 0));
+        assert!(!is_due(true, 1_000_000, 0, 1_000_000 + MIN2 - 1, 0));
+        assert!(is_due(true, 1_000_000, 0, 1_000_000 + MIN2, 0));
     }
 
     #[test]
     fn failures_stretch_the_quiet_period_with_a_cap() {
         let base = 1_000_000;
-        assert!(!is_due(true, base, base + MIN2, 1));
-        assert!(is_due(true, base, base + 2 * MIN2, 1));
+        assert!(!is_due(true, base, 0, base + MIN2, 1));
+        assert!(is_due(true, base, 0, base + 2 * MIN2, 1));
         // Backoff is capped at 2^5 — an hour-ish, never unbounded.
-        assert!(is_due(true, base, base + 32 * MIN2, 40));
-        assert!(!is_due(true, base, base + 31 * MIN2, 40));
+        assert!(is_due(true, base, 0, base + 32 * MIN2, 40));
+        assert!(!is_due(true, base, 0, base + 31 * MIN2, 40));
     }
 
     // ── round behaviour against a local bare remote ──
@@ -475,7 +500,7 @@ mod tests {
         std::fs::create_dir_all(env.skills_dir.join("skill-a")).unwrap();
         std::fs::write(env.skills_dir.join("skill-a/SKILL.md"), "content").unwrap();
 
-        let outcome = run_round_blocking(&env.store);
+        let outcome = run_round_blocking(&env.store).0;
         assert_eq!(outcome, Outcome::BackedUp);
 
         // The change reached the remote…
@@ -490,7 +515,7 @@ mod tests {
         assert_eq!(git_out(&env.skills_dir, &["tag", "--list", "sm-v-*"]), "");
 
         // A second round with nothing new is a no-op.
-        assert_eq!(run_round_blocking(&env.store), Outcome::UpToDate);
+        assert_eq!(run_round_blocking(&env.store).0, Outcome::UpToDate);
     }
 
     #[test]
@@ -506,7 +531,7 @@ mod tests {
             eprintln!("skipping: this git cannot migrate to reftable");
             return;
         }
-        match run_round_blocking(&env.store) {
+        match run_round_blocking(&env.store).0 {
             Outcome::Failed(msg) => assert!(msg.contains("reftable"), "{msg}"),
             other => panic!("expected a visible failure, got {other:?}"),
         }
@@ -524,6 +549,62 @@ mod tests {
         assert!(out.status.success());
         git_backup::configure_device_identity(&other, "Device B").unwrap();
         other
+    }
+
+    /// A managed skill: content folder plus its Sync metadata file.
+    fn write_skill(dir: &Path, id: &str, path: &str, content: &str) {
+        std::fs::create_dir_all(dir.join(path)).unwrap();
+        std::fs::write(dir.join(path).join("SKILL.md"), content).unwrap();
+        let meta_dir = dir.join(".skills-manager/skills");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        let meta = crate::core::sync_metadata::SkillMetaFile {
+            schema_version: 1,
+            skill_id: id.to_string(),
+            path: path.to_string(),
+            path_key: path.to_string(),
+            enabled: true,
+            tags: vec![],
+            source: crate::core::sync_metadata::SourceMeta {
+                source_type: "import".to_string(),
+                ref_: None,
+                subpath: None,
+                branch: None,
+            },
+        };
+        std::fs::write(
+            meta_dir.join(format!("{id}.json")),
+            crate::core::sync_metadata::canonical_json_bytes(&meta).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".skills-manager/schema.json"),
+            b"{\n  \"schema_version\": 1,\n  \"app_min_version\": \"2.0.0\",\n  \"created_by\": \"skills-manager\"\n}\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn idle_round_pulls_and_reports_what_changed() {
+        // SID-103, SID-99: with nothing changed locally, a round still pulls,
+        // and it reports what the pull changed.
+        let env = test_env();
+        let other = clone_other_device(&env);
+        write_skill(&other, "skill-1", "alpha", "from B");
+        git_backup::commit_all_unlocked(&other, "add skill on B").unwrap();
+        git(&other, &["push", "origin", "main"]);
+
+        let (_, summary) = run_round_blocking(&env.store);
+        let summary = summary.expect("the pull reports what it changed");
+        let changes: Vec<_> = summary
+            .updated
+            .iter()
+            .map(|s| (s.skill_id.as_str(), s.kind, s.from_device.as_str()))
+            .collect();
+        assert_eq!(
+            changes,
+            vec![("skill-1", merge::apply::ChangeKind::Added, "Device B")]
+        );
+        assert!(env.skills_dir.join("alpha/SKILL.md").exists());
     }
 
     #[test]
@@ -546,7 +627,7 @@ mod tests {
         );
         git(&other, &["push", "origin", "main"]);
 
-        match run_round_blocking(&env.store) {
+        match run_round_blocking(&env.store).0 {
             Outcome::UpdateRequired(msg) => {
                 assert!(msg.contains(merge::protocol::UPDATE_REQUIRED), "{msg}")
             }
@@ -568,7 +649,7 @@ mod tests {
 
         // No manual fetch here — the round discovers the remote change itself.
         std::fs::write(env.skills_dir.join("local.md"), "a").unwrap();
-        let outcome = run_round_blocking(&env.store);
+        let outcome = run_round_blocking(&env.store).0;
         assert_eq!(outcome, Outcome::BackedUp);
 
         // Both sides' changes are present locally and on the remote.
@@ -591,38 +672,11 @@ mod tests {
 
         let skill_md = |dir: &Path| std::fs::read_to_string(dir.join("alpha/SKILL.md")).unwrap();
         let write_skill_md = |dir: &Path, content: &str| {
-            std::fs::create_dir_all(dir.join("alpha")).unwrap();
             std::fs::write(dir.join("alpha/SKILL.md"), content).unwrap();
         };
 
         // A managed skill exists on both sides (seeded through the remote).
-        write_skill_md(&env.skills_dir, "base");
-        let meta_dir = env.skills_dir.join(".skills-manager/skills");
-        std::fs::create_dir_all(&meta_dir).unwrap();
-        let meta = crate::core::sync_metadata::SkillMetaFile {
-            schema_version: 1,
-            skill_id: "skill-1".to_string(),
-            path: "alpha".to_string(),
-            path_key: "alpha".to_string(),
-            enabled: true,
-            tags: vec![],
-            source: crate::core::sync_metadata::SourceMeta {
-                source_type: "import".to_string(),
-                ref_: None,
-                subpath: None,
-                branch: None,
-            },
-        };
-        std::fs::write(
-            meta_dir.join("skill-1.json"),
-            crate::core::sync_metadata::canonical_json_bytes(&meta).unwrap(),
-        )
-        .unwrap();
-        std::fs::write(
-            env.skills_dir.join(".skills-manager/schema.json"),
-            b"{\n  \"schema_version\": 1,\n  \"app_min_version\": \"2.0.0\",\n  \"created_by\": \"skills-manager\"\n}\n",
-        )
-        .unwrap();
+        write_skill(&env.skills_dir, "skill-1", "alpha", "base");
         crate::core::sync_metadata::reindex_from_metadata_unlocked(&env.store).unwrap();
         git_backup::commit_all_unlocked(&env.skills_dir, "seed skill").unwrap();
         git_backup::push_unlocked(&env.skills_dir).unwrap();
@@ -634,7 +688,7 @@ mod tests {
         git_backup::commit_all_unlocked(&other, "edit on B").unwrap();
         git(&other, &["push", "origin", "main"]);
         write_skill_md(&env.skills_dir, "changed here");
-        assert_eq!(run_round_blocking(&env.store), Outcome::BackedUp);
+        assert_eq!(run_round_blocking(&env.store).0, Outcome::BackedUp);
         assert_eq!(env.store.list_pending_conflicts().unwrap().len(), 1);
 
         // The other device changes the pending skill again and adds a file.
@@ -645,7 +699,7 @@ mod tests {
         git(&other, &["push", "origin", "main"]);
 
         std::fs::write(env.skills_dir.join("local.md"), "a").unwrap();
-        assert_eq!(run_round_blocking(&env.store), Outcome::BackedUp);
+        assert_eq!(run_round_blocking(&env.store).0, Outcome::BackedUp);
         assert_eq!(skill_md(&env.skills_dir), "changed here");
         assert!(env.skills_dir.join("from-b.md").exists());
         let pending = env.store.list_pending_conflicts().unwrap();
@@ -671,7 +725,10 @@ mod tests {
         let env = test_env();
         env.store.set_setting(SETTING_ENABLED, "off").unwrap();
         std::fs::write(env.skills_dir.join("x.md"), "x").unwrap();
-        assert_eq!(run_round_blocking(&env.store), Outcome::Skipped("disabled"));
+        assert_eq!(
+            run_round_blocking(&env.store).0,
+            Outcome::Skipped("disabled")
+        );
         assert!(git_backup::has_uncommitted_changes(&env.skills_dir).unwrap());
     }
 

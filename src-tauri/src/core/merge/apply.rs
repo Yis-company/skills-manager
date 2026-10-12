@@ -4,7 +4,7 @@
 
 use anyhow::{bail, Context, Result};
 use git2::{Oid, Repository, Sort};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::decision::{self, DecisionInput, MergePlan, NewConflict, Side, Touch};
@@ -19,13 +19,16 @@ use crate::core::{git_backup, repo_lock::RepoLock};
 
 /// Human-readable outcome of a sync merge (§4.5/§8). Returned to the
 /// frontend by the pull command; commit messages only carry the count line.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct MergeSummary {
     /// "object" or "system" (legacy fallback keeps the old line-merge path).
     pub engine: String,
     pub up_to_date: bool,
     pub fast_forward: bool,
+    /// Skills this sync added, changed or removed in the local library.
     pub updated: Vec<UpdatedSkill>,
+    /// Presets this sync added, changed or removed in the local library.
+    pub presets: Vec<UpdatedPreset>,
     /// Skill ids whose local version was kept over a conflicting remote one.
     pub kept_local: Vec<String>,
     /// Skill ids newly declared "needs attention" by this merge.
@@ -37,12 +40,31 @@ pub struct MergeSummary {
     pub legacy_fallback: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeKind {
+    Added,
+    Changed,
+    Removed,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct UpdatedSkill {
     pub skill_id: String,
     pub path: String,
     /// Device (commit author) that last touched this skill on the remote.
     pub from_device: String,
+    pub kind: ChangeKind,
+}
+
+/// A preset whose file or skill list the sync changed.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct UpdatedPreset {
+    pub preset_id: String,
+    pub name: String,
+    /// Device (commit author) that last touched this preset on the remote.
+    pub from_device: String,
+    pub kind: ChangeKind,
 }
 
 struct TouchInfo {
@@ -227,6 +249,9 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     validate_merged_tree(&repo, &merged_tree, &tolerated)
         .context("object merge aborted (zero changes)")?;
     crate::core::resource_sync::validate_tree(&repo, &merged_tree)?;
+    let merged_snap =
+        snapshot::read_snapshot(&repo, &merged_tree).context("failed to read merged snapshot")?;
+    let (updated, presets) = library_changes(&repo, &ours_snap, &merged_snap, &theirs_touch);
 
     // §5 忽略文件注: paths the checkout would create must not be shadowed by
     // untracked/ignored files on disk — explicit error, never a silent FORCE.
@@ -310,13 +335,20 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
 
     let pending_total = rebuild_pending_projection(&repo, store)?;
     crate::core::resource_sync::clear_resolved(&repo, store)?;
-    let summary = build_summary(
-        &plan,
-        &theirs_snap,
-        &theirs_touch,
+    let summary = MergeSummary {
+        engine: "object".to_string(),
+        updated,
+        presets,
+        kept_local: plan.kept_local.clone(),
+        new_conflicts: plan
+            .new_conflicts
+            .iter()
+            .map(|c| c.skill_id.clone())
+            .collect(),
         pending_total,
         old_client_warning,
-    );
+        ..Default::default()
+    };
     log::info!(
         "object merge: done ({} updated, {} kept local, {} new conflicts, {} pending)",
         summary.updated.len(),
@@ -416,34 +448,13 @@ fn apply_fast_forward(
     let pending_total = rebuild_pending_projection(repo, store)?;
 
     let theirs_touch = touch_info_map(repo, theirs, ours)?;
-    let mut updated = Vec::new();
-    for (id, t) in &theirs_snap.skills {
-        let changed = match ours_snap.skills.get(id) {
-            Some(o) => !skill_identical(o, t),
-            None => true,
-        };
-        if changed {
-            updated.push(UpdatedSkill {
-                skill_id: id.clone(),
-                path: t.meta.path.clone(),
-                from_device: device_for_skill(&theirs_touch, id, Some(&t.meta.path)),
-            });
-        }
-    }
-    for id in ours_snap.skills.keys() {
-        if !theirs_snap.skills.contains_key(id) {
-            updated.push(UpdatedSkill {
-                skill_id: id.clone(),
-                path: ours_snap.skills[id].meta.path.clone(),
-                from_device: device_for_skill(&theirs_touch, id, None),
-            });
-        }
-    }
+    let (updated, presets) = library_changes(repo, ours_snap, theirs_snap, &theirs_touch);
 
     Ok(MergeSummary {
         engine: "object".to_string(),
         fast_forward: true,
         updated,
+        presets,
         pending_total,
         old_client_warning,
         ..Default::default()
@@ -618,26 +629,96 @@ fn touch_info_map(repo: &Repository, tip: Oid, hide: Oid) -> Result<BTreeMap<Str
     Ok(out)
 }
 
-fn device_for_skill(
+/// Author of the newest remote commit that touched `file`, or else anything
+/// under `dir`.
+fn device_for(touch: &BTreeMap<String, TouchInfo>, file: &str, dir: &str) -> String {
+    let prefix = format!("{dir}/");
+    touch
+        .get(file)
+        .or_else(|| {
+            touch
+                .iter()
+                .find(|(p, _)| p.as_str() == dir || p.starts_with(&prefix))
+                .map(|(_, info)| info)
+        })
+        .map(|info| info.author.clone())
+        .unwrap_or_default()
+}
+
+/// What a sync changed in the local library: every skill and preset that
+/// differs between the tree before and after it (SID-99).
+fn library_changes(
+    repo: &Repository,
+    before: &Snapshot,
+    after: &Snapshot,
     touch: &BTreeMap<String, TouchInfo>,
-    skill_id: &str,
-    theirs_path: Option<&str>,
-) -> String {
-    let meta_path = format!("{METADATA_DIR}/skills/{skill_id}.json");
-    if let Some(info) = touch.get(&meta_path) {
-        return info.author.clone();
-    }
-    if let Some(prefix) = theirs_path {
-        let dir_prefix = format!("{prefix}/");
-        if let Some(info) = touch
+) -> (Vec<UpdatedSkill>, Vec<UpdatedPreset>) {
+    let skill_ids: BTreeSet<&String> = before.skills.keys().chain(after.skills.keys()).collect();
+    let skills = skill_ids
+        .into_iter()
+        .filter_map(|id| {
+            let (kind, path) = match (before.skills.get(id), after.skills.get(id)) {
+                (None, Some(a)) => (ChangeKind::Added, &a.meta.path),
+                (Some(b), Some(a)) if !skill_identical(b, a) => (ChangeKind::Changed, &a.meta.path),
+                (Some(b), None) => (ChangeKind::Removed, &b.meta.path),
+                _ => return None,
+            };
+            Some(UpdatedSkill {
+                skill_id: id.clone(),
+                path: path.clone(),
+                from_device: device_for(touch, &skill_meta_path(id), path),
+                kind,
+            })
+        })
+        .collect();
+
+    let members = |snap: &Snapshot, preset: &str| -> Vec<(String, FileEntry)> {
+        snap.memberships
             .iter()
-            .find(|(p, _)| p.as_str() == prefix || p.starts_with(&dir_prefix))
-            .map(|(_, i)| i)
-        {
-            return info.author.clone();
-        }
-    }
-    String::new()
+            .filter(|((sid, _), _)| sid == preset)
+            .map(|((_, skill), entry)| (skill.clone(), *entry))
+            .collect()
+    };
+    let preset_ids: BTreeSet<&String> = before
+        .scenarios
+        .keys()
+        .chain(after.scenarios.keys())
+        .collect();
+    let presets = preset_ids
+        .into_iter()
+        .filter_map(|id| {
+            let (kind, entry) = match (before.scenarios.get(id), after.scenarios.get(id)) {
+                (None, Some(a)) => (ChangeKind::Added, a),
+                (Some(b), Some(a)) if b != a || members(before, id) != members(after, id) => {
+                    (ChangeKind::Changed, a)
+                }
+                (Some(b), None) => (ChangeKind::Removed, b),
+                _ => return None,
+            };
+            let name = repo
+                .find_blob(entry.oid)
+                .ok()
+                .and_then(|blob| {
+                    serde_json::from_slice::<crate::core::sync_metadata::ScenarioMetaFile>(
+                        blob.content(),
+                    )
+                    .ok()
+                })
+                .map(|meta| meta.name)
+                .unwrap_or_default();
+            Some(UpdatedPreset {
+                preset_id: id.clone(),
+                name,
+                from_device: device_for(
+                    touch,
+                    &format!("{METADATA_DIR}/scenarios/{id}.json"),
+                    &format!("{METADATA_DIR}/scenario-skills/{id}"),
+                ),
+                kind,
+            })
+        })
+        .collect();
+    (skills, presets)
 }
 
 // ── plan → tree edits ──
@@ -894,46 +975,6 @@ pub(crate) fn theirs_skill_path(repo: &Repository, commit: Oid, skill_id: &str) 
     let meta: crate::core::sync_metadata::SkillMetaFile =
         serde_json::from_slice(blob.content()).ok()?;
     Some(meta.path)
-}
-
-fn build_summary(
-    plan: &MergePlan,
-    theirs_snap: &Snapshot,
-    theirs_touch: &BTreeMap<String, TouchInfo>,
-    pending_total: usize,
-    old_client_warning: Option<String>,
-) -> MergeSummary {
-    let updated = plan
-        .updated_from_theirs
-        .iter()
-        .map(|id| {
-            let path = plan
-                .skills
-                .get(id)
-                .map(|p| p.meta.path.clone())
-                .or_else(|| theirs_snap.skills.get(id).map(|s| s.meta.path.clone()))
-                .unwrap_or_default();
-            let theirs_path = theirs_snap.skills.get(id).map(|s| s.meta.path.clone());
-            UpdatedSkill {
-                skill_id: id.clone(),
-                path,
-                from_device: device_for_skill(theirs_touch, id, theirs_path.as_deref()),
-            }
-        })
-        .collect();
-    MergeSummary {
-        engine: "object".to_string(),
-        updated,
-        kept_local: plan.kept_local.clone(),
-        new_conflicts: plan
-            .new_conflicts
-            .iter()
-            .map(|c| c.skill_id.clone())
-            .collect(),
-        pending_total,
-        old_client_warning,
-        ..Default::default()
-    }
 }
 
 // ── startup recovery (§5 启动恢复协议) ──

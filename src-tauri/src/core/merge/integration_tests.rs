@@ -10,11 +10,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::core::merge::apply::{self, object_merge_pull_unlocked, recover_on_startup};
+use crate::core::merge::apply::{
+    self, object_merge_pull_unlocked, recover_on_startup, ChangeKind, UpdatedPreset,
+};
 use crate::core::merge::pending::{self, conflict_ref, REF_APPLYING, REF_PRE_MERGE};
 use crate::core::merge::protocol;
 use crate::core::merge::resolve::{resolve_conflict_unlocked, ResolveAction};
-use crate::core::skill_store::SkillStore;
+use crate::core::skill_store::{ScenarioRecord, SkillStore};
 use crate::core::sync_metadata::{self, SkillMetaFile, SourceMeta};
 use crate::core::{central_repo, git_backup};
 
@@ -183,6 +185,27 @@ impl Device {
         if meta.exists() {
             std::fs::remove_file(meta).unwrap();
         }
+    }
+
+    /// A preset holding `skills`, created in the database and projected to
+    /// its metadata files the way the app does.
+    fn add_preset(&self, id: &str, name: &str, skills: &[&str]) {
+        self.reindex();
+        self.store
+            .insert_scenario(&ScenarioRecord {
+                id: id.to_string(),
+                name: name.to_string(),
+                description: None,
+                icon: None,
+                sort_order: 0,
+                created_at: 0,
+                updated_at: 0,
+            })
+            .unwrap();
+        for skill in skills {
+            self.store.add_skill_to_scenario(id, skill).unwrap();
+        }
+        sync_metadata::write_all_from_db_unlocked(&self.store).unwrap();
     }
 
     fn reindex(&self) {
@@ -676,6 +699,67 @@ fn ff_guard_blocks_when_remote_touches_pending_skill() {
         repo.find_blob(entry.id()).unwrap().content(),
         b"edited on B again"
     );
+}
+
+#[test]
+fn summary_lists_what_the_sync_added_changed_and_removed() {
+    // SID-99: the summary says what a sync changed here, by kind, for skills
+    // and presets, on both the fast-forward and the full-merge path.
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    a.activate();
+    a.write_skill("skill-2", "beta", "beta");
+    a.commit("add beta");
+    a.push();
+    b.pull();
+
+    a.activate();
+    a.write_skill("skill-1", "alpha", "changed on A");
+    a.remove_skill("skill-2", "beta");
+    a.write_skill("skill-3", "gamma", "new on A");
+    a.add_preset("preset-1", "Web", &["skill-3"]);
+    a.commit("edits on A");
+    a.push();
+
+    let summary = b.pull();
+    assert!(summary.fast_forward);
+    let skills: Vec<_> = summary
+        .updated
+        .iter()
+        .map(|s| (s.skill_id.as_str(), s.kind, s.from_device.as_str()))
+        .collect();
+    assert_eq!(
+        skills,
+        vec![
+            ("skill-1", ChangeKind::Changed, "Device A"),
+            ("skill-2", ChangeKind::Removed, "Device A"),
+            ("skill-3", ChangeKind::Added, "Device A"),
+        ]
+    );
+    let preset = |kind| UpdatedPreset {
+        preset_id: "preset-1".to_string(),
+        name: "Web".to_string(),
+        from_device: "Device A".to_string(),
+        kind,
+    };
+    assert_eq!(summary.presets, vec![preset(ChangeKind::Added)]);
+
+    // A preset that gains a skill counts as changed. B has its own commit,
+    // so this is a full merge.
+    a.activate();
+    a.store
+        .add_skill_to_scenario("preset-1", "skill-1")
+        .unwrap();
+    sync_metadata::write_all_from_db_unlocked(&a.store).unwrap();
+    a.commit("add alpha to Web");
+    a.push();
+    b.activate();
+    b.write_skill("skill-4", "delta", "new on B");
+    b.commit("add delta on B");
+    let summary = b.pull();
+    assert!(!summary.fast_forward);
+    assert!(summary.updated.is_empty(), "{:?}", summary.updated);
+    assert_eq!(summary.presets, vec![preset(ChangeKind::Changed)]);
 }
 
 #[test]
