@@ -2,7 +2,6 @@ export const SETTINGS_CATEGORIES = [
   "general",
   "agents",
   "library",
-  "backup",
   "network",
   "remote",
   "about",

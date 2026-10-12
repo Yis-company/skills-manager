@@ -236,7 +236,8 @@ fn ensure_askpass_script() -> Result<PathBuf> {
 /// stored credential for the host.
 pub fn credential_env_for_url(url: &str) -> Vec<(String, String)> {
     let Some(host) = https_host(url) else {
-        return Vec::new();
+        // An SSH remote authenticates with this host's own deploy key.
+        return super::sync_access::ssh_env_for_url(url);
     };
     if split_credentials_from_url(url).is_some() {
         return Vec::new();

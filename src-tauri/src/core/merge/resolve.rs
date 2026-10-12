@@ -1,6 +1,6 @@
 //! Conflict resolution actions (design §4): keep local / use remote / keep
-//! both. Each runs inside the repo lock, takes a user-visible safety
-//! snapshot first, records the resolution with a `Skills-Manager-Resolved:`
+//! both. Each runs inside the repo lock, commits the current state first (it
+//! stays in the Sync history), records the resolution with a `Skills-Manager-Resolved:`
 //! trailer (the cross-device close signal), then drops the pinned ref and
 //! projection row.
 
@@ -35,24 +35,22 @@ impl ResolveAction {
     }
 }
 
-/// Resolve one pending conflict. Returns the safety snapshot tag taken
-/// before any change. Caller holds the repo lock and reconciles the DB
-/// afterwards.
+/// Resolve one pending conflict. Caller holds the repo lock and reconciles
+/// the DB afterwards.
 pub fn resolve_conflict_unlocked(
     store: &SkillStore,
     skills_dir: &Path,
     skill_id: &str,
     action: ResolveAction,
-) -> Result<String> {
+) -> Result<()> {
     git_backup::ensure_no_interrupted_git_operation(skills_dir)?;
 
-    // Protect the current state: flush the DB projection, commit anything
-    // dirty, then take the user-visible safety snapshot (§4 先打快照 tag).
+    // Protect the current state: flush the DB projection and commit anything
+    // dirty, so the state before the choice stays in the Sync history.
     sync_metadata::write_all_from_db_unlocked(store)?;
     if git_backup::has_uncommitted_changes(skills_dir)? {
         git_backup::commit_all_unlocked(skills_dir, "backup")?;
     }
-    let safety_tag = git_backup::create_snapshot_tag_unlocked(skills_dir)?;
 
     let repo = Repository::open(skills_dir).context("failed to open skills repository")?;
     let theirs_commit = pending::ref_target(&repo, &conflict_ref(skill_id)).or_else(|| {
@@ -93,8 +91,8 @@ pub fn resolve_conflict_unlocked(
 
     pending::delete_ref(&repo, &conflict_ref(skill_id));
     rebuild_pending_projection(&repo, store)?;
-    log::info!("conflict resolution: {skill_id} → {action_label} (safety point {safety_tag})");
-    Ok(safety_tag)
+    log::info!("conflict resolution: {skill_id} → {action_label}");
+    Ok(())
 }
 
 /// Replace the local version with the pinned theirs version: remove the

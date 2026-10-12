@@ -479,6 +479,11 @@ export const syncSkillToTool = (skillId: string, tool: string) =>
 export const unsyncSkillFromTool = (skillId: string, tool: string) =>
   invoke<void>("unsync_skill_from_tool", { skillId, tool });
 
+/** For a copy flagged "Edited here" (target status `edited` or
+ * `edited_left`): "Use Sync version" (`keepMine` false) or "Keep my edit". */
+export const resolveEditedCopy = (skillId: string, tool: string, keepMine: boolean) =>
+  invoke<void>("resolve_edited_copy", { skillId, tool, keepMine });
+
 export const getSkillToolToggles = (skillId: string, presetId: string) =>
   invoke<SkillToolToggle[]>("get_skill_tool_toggles", { skillId, presetId });
 
@@ -622,13 +627,14 @@ export interface GitBackupStatus {
   upstream_health: GitUpstreamHealth;
 }
 
-export interface GitBackupVersion {
-  tag: string;
+/** One commit in the Sync history; any of them can be restored. */
+export interface SyncHistoryEntry {
+  /** Full commit id; restore takes it. */
   commit: string;
   message: string;
   committed_at: string;
-  /** Device name of the machine that made this backup (empty for old commits). */
-  author: string;
+  /** The host that made the commit (empty for old commits). */
+  host: string;
 }
 
 export interface GitBackupSizeReport {
@@ -706,11 +712,22 @@ export const gitBackupCommit = (message: string) => invoke<void>("git_backup_com
 
 export const gitBackupPush = () => invoke<void>("git_backup_push");
 
+export type MergeChangeKind = "added" | "changed" | "removed";
+
 export interface MergeUpdatedSkill {
   skill_id: string;
   path: string;
   /** Device (commit author) that last touched this skill on the remote. */
   from_device: string;
+  kind: MergeChangeKind;
+}
+
+/** A preset whose file or skill list the sync changed. */
+export interface MergeUpdatedPreset {
+  preset_id: string;
+  name: string;
+  from_device: string;
+  kind: MergeChangeKind;
 }
 
 /** Outcome of a sync merge (merge-engine design §8). With the default
@@ -719,7 +736,9 @@ export interface MergeSummary {
   engine: "object" | "system";
   up_to_date: boolean;
   fast_forward: boolean;
+  /** Skills this sync added, changed or removed in the local library. */
   updated: MergeUpdatedSkill[];
+  presets: MergeUpdatedPreset[];
   kept_local: string[];
   new_conflicts: string[];
   pending_total: number;
@@ -729,13 +748,12 @@ export interface MergeSummary {
 
 export const gitBackupPull = () => invoke<MergeSummary>("git_backup_pull");
 
-/** Outcome of the one-transaction sync (commit → merge → snapshot → push,
- * with automatic retry when another device pushes concurrently). */
+/** Outcome of the one-transaction sync (commit → merge → push, with
+ * automatic retry when another device pushes concurrently). */
 export interface SyncOutcome {
   committed: boolean;
   merge: MergeSummary | null;
   pushed: boolean;
-  snapshot_tag: null | string;
 }
 
 export const gitBackupSync = (message: string) =>
@@ -754,24 +772,22 @@ export const gitBackupPendingConflicts = () =>
 
 export type ResolveConflictAction = "keep_both" | "keep_local" | "use_remote";
 
-/** Resolve a pending conflict; returns the safety snapshot tag. */
+/** Resolve a pending conflict. The state before it stays in the Sync history. */
 export const gitBackupResolveConflict = (skillId: string, action: ResolveConflictAction) =>
-  invoke<string>("git_backup_resolve_conflict", { skillId, action });
+  invoke<void>("git_backup_resolve_conflict", { skillId, action });
 
 export const gitBackupClone = (url: string) => invoke<void>("git_backup_clone", { url });
 
 export const gitBackupReclone = (url: string) => invoke<void>("git_backup_reclone", { url });
 
-export const gitBackupCreateSnapshot = () => invoke<string>("git_backup_create_snapshot");
+/** The Sync history, newest first. */
+export const syncHistory = (limit?: number) =>
+  invoke<SyncHistoryEntry[]>("git_backup_history", { limit: limit ?? null });
 
-export const gitBackupListVersions = (limit?: number) =>
-  invoke<GitBackupVersion[]>("git_backup_list_versions", {
-    limit: limit ?? null,
-  });
-
-/** Returns the safety-point tag that captured the pre-restore state. */
-export const gitBackupRestoreVersion = (tag: string) =>
-  invoke<string>("git_backup_restore_version", { tag });
+/** Restore a commit from the Sync history. The state before it is committed
+ * first, so the restore can be undone from the history. */
+export const gitBackupRestoreVersion = (commit: string) =>
+  invoke<void>("git_backup_restore_version", { commit });
 
 // ── Presets ──
 
@@ -1016,6 +1032,135 @@ export const remoteHostUpdate = (
   invoke<RemoteHost>("remote_host_update", { hostId, name, sshTarget, cliPath: cliPath || null });
 
 export const remoteHostRemove = (hostId: string) => invoke<void>("remote_host_remove", { hostId });
+
+// ── Hosts in Sync (each call opens a session of its own) ──
+
+/** A deploy key GitHub didn't take from the app: add it by hand, then prepare again. */
+export interface HostSyncPasteKey {
+  title: string;
+  key: string;
+  settings_url: string;
+  reason: string;
+}
+
+export interface HostSyncPrepared {
+  paste: HostSyncPasteKey | null;
+  url: null | string;
+}
+
+export interface HostSyncLeft {
+  /** GitHub refused to delete the key: delete this one under Settings > Deploy keys. */
+  delete_key_by_hand: null | string;
+  host_reached: boolean;
+}
+
+export interface HostSyncState {
+  host_id: string;
+  name: string;
+  key_title: string;
+  timer: boolean;
+  /** The host's `sync status`, when it answered. */
+  status: null | SyncStatus;
+  error: null | string;
+}
+
+// ── The Sync screen (SID-112) ──
+
+/** A host's Sync state, as `sync status` reports it. */
+export type SyncStateKey =
+  | "needs_review"
+  | "not_set_up"
+  | "offline"
+  | "paused"
+  | "up_to_date"
+  | "update_required";
+
+export interface SyncConflict {
+  skill_id: string;
+  name: string;
+  this_host: string;
+  other_host: string;
+}
+
+export interface EditedCopy {
+  skill_id: string;
+  name: string;
+  agent: string;
+  /** The skill left this agent, rather than changed in Sync. */
+  left: boolean;
+}
+
+export interface SyncStatus {
+  state: SyncStateKey;
+  reason: null | string;
+  host: string;
+  remote: null | string;
+  last_sync: null | number;
+  conflicts: SyncConflict[];
+  edited_here: EditedCopy[];
+  version: string;
+  format: number;
+}
+
+/** One entry of a host's agent log (an `agent_*` audit entry). */
+export interface AgentLogEntry {
+  id: number;
+  ts: number;
+  action: string;
+  skill_id: null | string;
+  skill_name: null | string;
+  tool: null | string;
+  success: boolean;
+  detail: null | string;
+}
+
+export interface JoinItem {
+  kind: "instruction" | "mcp" | "preset" | "skill";
+  name: string;
+}
+
+export interface JoinPreview {
+  remote_empty: boolean;
+  local_empty: boolean;
+  adds: JoinItem[];
+  replaced: JoinItem[];
+  active_preset: null | string;
+}
+
+/** Arguments of a Sync screen command: ids, names and flags. */
+export type SyncCallArgs = Record<string, boolean | null | string>;
+
+/** Run a Sync screen command on this computer (`hostId` null) or on a host. */
+export const syncCall = <T>(hostId: null | string, command: string, args: SyncCallArgs = {}) =>
+  hostId === null
+    ? invokeLocal<T>("sync_screen_call", { command, args })
+    : invokeLocal<T>("host_sync_call", { hostId, command, args });
+
+export const hostSyncPreview = (hostId: string) =>
+  invokeLocal<JoinPreview>("host_sync_preview", { hostId });
+
+export const hostSyncJoin = (hostId: string) =>
+  invokeLocal<{ preview: JoinPreview; timer: { installed: boolean; warning: null | string } }>(
+    "host_sync_join",
+    { hostId },
+  );
+
+export const hostSyncPrepare = (hostId: string, pasted = false) =>
+  invokeLocal<HostSyncPrepared>("host_sync_prepare", { hostId, pasted });
+
+export const hostSyncLeave = (hostId: string) =>
+  invokeLocal<HostSyncLeft>("host_sync_leave", { hostId });
+
+export const hostSyncStatusAll = () => invokeLocal<HostSyncState[]>("host_sync_status_all");
+
+/** Why a host's Sync is stuck, or null when it is fine. */
+export function hostSyncProblem(status: HostSyncState["status"]): null | string {
+  if (!status || !["needs_review", "update_required", "offline"].includes(status.state)) {
+    return null;
+  }
+
+  return status.reason ?? status.state;
+}
 
 /** Rejects with the reason the host cannot be used (unreachable, no CLI, not POSIX). */
 export const remoteHostProbe = (hostId: string) =>

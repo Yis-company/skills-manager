@@ -328,6 +328,69 @@ pub(crate) enum PresetCommand {
 }
 
 #[derive(Args, Debug)]
+pub(crate) struct SyncArgs {
+    #[command(subcommand)]
+    pub(crate) command: SyncCommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum SyncCommand {
+    /// Join the Sync remote at <URL>: items match by name, Sync's version
+    /// wins, and this host's extras are added. Shows the review list and
+    /// asks first; with --json it prints the review list only, unless --yes.
+    Join {
+        url: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Restore the library and database from before joining, then leave.
+    UndoJoin {
+        /// A pre-join copy name (default: the newest).
+        #[arg(long)]
+        copy: Option<String>,
+    },
+    /// Stop syncing. The library and the skills on agents stay as they are.
+    Leave,
+    /// Sync now: commit, merge, apply to the agents and push. Exits 1 when
+    /// it can't, with the reason; recorded conflicts still count as synced.
+    Now,
+    /// This host's Sync state, the reason when stuck, conflicts and edited
+    /// agent copies, last sync, version and Sync format.
+    Status,
+    /// The Sync history: commits, newest first, with the host that made each.
+    History {
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Restore the library to a commit from `sync history`.
+    Restore {
+        /// A commit from `sync history`, or a legacy `sm-v-*` snapshot tag.
+        point: String,
+    },
+    /// Turn automatic sync off on this host.
+    Pause,
+    /// Turn automatic sync back on.
+    Resume,
+    /// Skills changed on two hosts, waiting for a choice.
+    Conflicts,
+    /// Resolve a conflict: keep one host's version, or both.
+    Resolve {
+        /// Skill id or name, from `sync conflicts`.
+        skill: String,
+        /// The host whose version to keep.
+        #[arg(long, conflicts_with = "both", required_unless_present = "both")]
+        keep: Option<String>,
+        /// Keep both versions, the other under a new name.
+        #[arg(long)]
+        both: bool,
+    },
+    /// Remove refs/skills-manager/* that a `git push --mirror`/--all style
+    /// operation uploaded to the Sync remote. Local sync refs are kept.
+    #[command(hide = true)]
+    PruneRefs,
+}
+
+#[derive(Args, Debug)]
 pub(crate) struct GitArgs {
     #[command(subcommand)]
     pub(crate) command: GitCommand,
@@ -349,12 +412,14 @@ pub(crate) enum GitCommand {
         #[arg(short, long)]
         message: String,
     },
+    /// The Sync history: commits, newest first, with the host that made each.
     Versions {
         #[arg(long)]
         limit: Option<usize>,
     },
     Restore {
-        tag: String,
+        /// A commit from `git versions`, or a legacy `sm-v-*` snapshot tag.
+        point: String,
     },
     /// Remove refs/skills-manager/* that a `git push --mirror`/--all style
     /// operation uploaded to the backup remote. Local sync refs are kept.

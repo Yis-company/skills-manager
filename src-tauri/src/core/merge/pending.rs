@@ -62,25 +62,26 @@ pub fn replay_trailers(
     Ok(state)
 }
 
-#[derive(Debug)]
-pub enum PendingOutcome {
+#[derive(Debug, Default)]
+pub struct PendingPins {
     /// Declared-pending skills and the side whose version is pinned.
-    Pinned(BTreeMap<String, Side>),
-    /// Both sides independently declared the same skill pending with
-    /// different versions — the merge must stop and go manual (§4).
-    Blocked(Vec<String>),
+    pub pinned: BTreeMap<String, Side>,
+    /// Skills both sides flagged independently with different versions. Ours
+    /// stays pinned and the merge flags them again, so the conflict moves to
+    /// the newest remote version instead of stopping the sync (SID-108).
+    pub reflagged: Vec<String>,
 }
 
 /// Combine the trailer state of both sides into the declared-pending pin set
 /// (§11-4). Implements:
 /// - declared on one side only → pin that side;
 /// - shared (pre-base) declaration, untouched → pin ours (the local kept
-///   version), the theirs pointer just advances;
+///   version);
 /// - `Closed` + inherited `Active` → the resolution wins, not pending; the
 ///   resolving side's tree change merges as a normal edit;
 /// - `Closed` + re-declared `Active` → the newer declaration stays pending;
-/// - independently declared on both sides: identical versions pin ours,
-///   different versions block.
+/// - independently declared on both sides: pin ours; different versions are
+///   also flagged again (SID-108).
 pub fn effective_pending(
     repo: &Repository,
     base: Oid,
@@ -88,14 +89,13 @@ pub fn effective_pending(
     theirs_tip: Oid,
     ours_snap: &Snapshot,
     theirs_snap: &Snapshot,
-) -> Result<PendingOutcome> {
+) -> Result<PendingPins> {
     let full_ours = replay_trailers(repo, ours_tip, None)?;
     let full_theirs = replay_trailers(repo, theirs_tip, None)?;
     let range_ours = replay_trailers(repo, ours_tip, Some(base))?;
     let range_theirs = replay_trailers(repo, theirs_tip, Some(base))?;
 
-    let mut pinned: BTreeMap<String, Side> = BTreeMap::new();
-    let mut blocked: Vec<String> = Vec::new();
+    let mut pins = PendingPins::default();
 
     let ids: std::collections::BTreeSet<&String> =
         full_ours.keys().chain(full_theirs.keys()).collect();
@@ -112,40 +112,34 @@ pub fn effective_pending(
                         (None, None) => true,
                         _ => false,
                     };
-                    if same {
-                        pinned.insert(id.clone(), Side::Ours);
-                    } else {
-                        blocked.push(id.clone());
+                    pins.pinned.insert(id.clone(), Side::Ours);
+                    if !same {
+                        pins.reflagged.push(id.clone());
                     }
                 } else if declared_b {
-                    pinned.insert(id.clone(), Side::Theirs);
+                    pins.pinned.insert(id.clone(), Side::Theirs);
                 } else {
                     // declared in ours range, or shared pre-base declaration
-                    pinned.insert(id.clone(), Side::Ours);
+                    pins.pinned.insert(id.clone(), Side::Ours);
                 }
             }
             (Some(TrailerState::Active), None) => {
-                pinned.insert(id.clone(), Side::Ours);
+                pins.pinned.insert(id.clone(), Side::Ours);
             }
             (None, Some(TrailerState::Active)) => {
-                pinned.insert(id.clone(), Side::Theirs);
+                pins.pinned.insert(id.clone(), Side::Theirs);
             }
             (Some(TrailerState::Active), Some(TrailerState::Closed)) if declared_a => {
-                pinned.insert(id.clone(), Side::Ours);
+                pins.pinned.insert(id.clone(), Side::Ours);
             }
             (Some(TrailerState::Closed), Some(TrailerState::Active)) if declared_b => {
-                pinned.insert(id.clone(), Side::Theirs);
+                pins.pinned.insert(id.clone(), Side::Theirs);
             }
             _ => {} // closed or never declared on both sides
         }
     }
 
-    if blocked.is_empty() {
-        Ok(PendingOutcome::Pinned(pinned))
-    } else {
-        blocked.sort();
-        Ok(PendingOutcome::Blocked(blocked))
-    }
+    Ok(pins)
 }
 
 // ── hidden refs ──
@@ -245,7 +239,7 @@ pub fn heal_conflict_refs(repo: &Repository, head: Oid) -> Result<Vec<(String, O
             .iter()
             .find(|(_, skill_id, _)| skill_id == id)
             .map(|(_, _, t)| *t)
-            .or_else(|| find_declaring_theirs(repo, head, id));
+            .or_else(|| declaring_commit(repo, head, id)?.parent_id(1).ok());
         let Some(desired) = desired else { continue };
         let up_to_date = match ref_target(repo, &conflict_ref(id)) {
             None => false,
@@ -273,9 +267,10 @@ pub fn heal_conflict_refs(repo: &Repository, head: Oid) -> Result<Vec<(String, O
     Ok(healed)
 }
 
-/// Newest commit in HEAD's history whose Conflicts trailer declares `id`;
-/// its second parent is the theirs side at declaration time.
-fn find_declaring_theirs(repo: &Repository, head: Oid, id: &str) -> Option<Oid> {
+/// Newest commit in HEAD's history whose Conflicts trailer declares `id`.
+/// Its author kept their version; its second parent is the theirs side at
+/// declaration time.
+pub fn declaring_commit<'r>(repo: &'r Repository, head: Oid, id: &str) -> Option<git2::Commit<'r>> {
     let mut walk = repo.revwalk().ok()?;
     walk.push(head).ok()?;
     walk.set_sorting(Sort::TOPOLOGICAL).ok()?;
@@ -286,7 +281,7 @@ fn find_declaring_theirs(repo: &Repository, head: Oid, id: &str) -> Option<Oid> 
             .iter()
             .any(|declared| declared == id)
         {
-            return commit.parent_id(1).ok();
+            return Some(commit);
         }
     }
     None

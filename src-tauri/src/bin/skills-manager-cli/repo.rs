@@ -1,7 +1,10 @@
 //! `repo` (the base folder and its status) and `git` (backup of the central library).
 
+use std::sync::Arc;
+
 use app_lib::core::{
-    central_repo, git_backup, merge, repo_lock::RepoLock, skill_store::SkillStore, sync_metadata,
+    central_repo, git_backup, host::HostCtx, merge, repo_lock::RepoLock, skill_store::SkillStore,
+    sync_apply, sync_metadata,
 };
 
 use crate::args::{GitArgs, GitCommand, RepoArgs, RepoCommand};
@@ -37,12 +40,21 @@ pub(crate) fn repo_status(store: &SkillStore) -> RepoStatus {
 
 // ── git ───────────────────────────────────────────────────────────────────
 
-pub(crate) fn run_git(
-    args: GitArgs,
-    store: &SkillStore,
-    has_skills_root: bool,
-    json: bool,
-) -> anyhow::Result<()> {
+pub(crate) fn run_git(args: GitArgs, store: &Arc<SkillStore>, json: bool) -> anyhow::Result<()> {
+    let new_name = match &args.command {
+        GitCommand::Status => Some("sync status"),
+        GitCommand::Pull | GitCommand::Push | GitCommand::Commit { .. } => Some("sync now"),
+        GitCommand::Versions { .. } => Some("sync history"),
+        GitCommand::Restore { .. } => Some("sync restore"),
+        GitCommand::PruneSyncRefs => Some("sync prune-refs"),
+        GitCommand::Init | GitCommand::Clone { .. } | GitCommand::SetRemote { .. } => {
+            Some("sync join <url>")
+        }
+    };
+    // Humans only: with --json, stderr carries nothing but a failure envelope.
+    if let Some(new_name) = new_name.filter(|_| !json) {
+        eprintln!("note: `git` is now `sync`; use `skills-manager-cli {new_name}`");
+    }
     match args.command {
         GitCommand::Status => {
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json)
@@ -57,24 +69,19 @@ pub(crate) fn run_git(
             )?;
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
-        GitCommand::Clone { url } => {
-            let target = central_repo::skills_dir();
-            if has_skills_root {
-                git_backup::clone_into_strict(&target, &url)?;
-            } else {
-                git_backup::clone_into(&target, &url)?;
-            }
-            print_json(&git_backup::get_status(&target)?, json);
-        }
-        GitCommand::SetRemote { url } => {
-            git_backup::set_remote(&central_repo::skills_dir(), &url)?;
+        // Both go through join (SID-100): match by name, keep a pre-join copy.
+        GitCommand::Clone { url } | GitCommand::SetRemote { url } => {
+            crate::sync::join(&HostCtx::headless(store.clone()), &url)?;
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
         GitCommand::Pull => {
-            // Same engine gate as the GUI sync (object merge by default,
-            // merge_engine=system opts out). A raw line merge from this CLI
+            // Same object merge as the GUI sync. A raw line merge from this CLI
             // would read as an old-client violation on other devices (§6).
             let dir = central_repo::skills_dir();
+            // Finish or roll back a sync this host was interrupted in, as the
+            // app does at startup. Takes its own lock (SID-108).
+            merge::recover_on_startup(store, &dir);
+            let before = sync_apply::capture(store);
             {
                 let _lock = RepoLock::acquire_foreground("git pull")?;
                 let device = store
@@ -85,10 +92,13 @@ pub(crate) fn run_git(
                     .filter(|v| !v.is_empty())
                     .unwrap_or_else(git_backup::default_device_name);
                 let _ = git_backup::configure_device_identity(&dir, &device);
-                merge::gated_pull_unlocked(store, &dir)?;
+                merge::object_merge_pull_unlocked(store, &dir)?;
             }
-            // Reconcile the DB from the merged metadata (takes its own lock).
+            // Reconcile the DB from the merged metadata (takes its own lock),
+            // then apply the active preset to the agents, as the app does.
             sync_metadata::reindex_from_metadata(store)?;
+            sync_apply::reapply_active_preset(store, &before);
+            sync_apply::reapply_resources(&HostCtx::headless(store.clone()));
             print_json(&git_backup::get_status(&dir)?, json);
         }
         GitCommand::Push => {
@@ -96,16 +106,20 @@ pub(crate) fn run_git(
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
         GitCommand::Commit { message } => {
-            git_backup::commit_all(&central_repo::skills_dir(), &message)?;
-            let tag = git_backup::create_snapshot_tag(&central_repo::skills_dir())?;
-            print_json(&serde_json::json!({"ok": true, "tag": tag}), json);
+            let dir = central_repo::skills_dir();
+            git_backup::commit_all(&dir, &message)?;
+            let commit = git_backup::sync_history(&dir, Some(1))?
+                .into_iter()
+                .next()
+                .map(|entry| entry.commit);
+            print_json(&serde_json::json!({"ok": true, "commit": commit}), json);
         }
         GitCommand::Versions { limit } => print_json(
-            &git_backup::list_snapshot_versions(&central_repo::skills_dir(), limit)?,
+            &git_backup::sync_history(&central_repo::skills_dir(), limit)?,
             json,
         ),
-        GitCommand::Restore { tag } => {
-            git_backup::restore_snapshot_version(&central_repo::skills_dir(), &tag)?;
+        GitCommand::Restore { point } => {
+            git_backup::restore_snapshot_version(&central_repo::skills_dir(), &point)?;
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
         GitCommand::PruneSyncRefs => {

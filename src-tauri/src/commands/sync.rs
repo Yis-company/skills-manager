@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use tauri::{AppHandle, State};
 
 use crate::core::{
-    error::AppError, host::HostCtx, scenario_service, skill_store::SkillStore, sync_engine,
-    sync_metadata, tool_adapters, tool_service,
+    error::AppError, host::HostCtx, scenario_service, skill_store::SkillStore, sync_apply,
+    sync_engine, sync_metadata, tool_adapters, tool_service,
 };
 use serde::Serialize;
 
@@ -121,6 +121,36 @@ pub fn sync_skill_to_tool_core(
     })();
     log_sync_outcome(&store, "enable", &skill_id, &tool, outcome.as_ref());
     outcome
+}
+
+/// "Use Sync version" (`keep_mine` false) or "Keep my edit" for a copy
+/// flagged "Edited here" (SID-99).
+#[tauri::command]
+pub async fn resolve_edited_copy(
+    app: AppHandle,
+    skill_id: String,
+    tool: String,
+    keep_mine: bool,
+    ctx: State<'_, HostCtx>,
+) -> Result<(), AppError> {
+    let ctx = ctx.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        resolve_edited_copy_core(&ctx, skill_id, tool, keep_mine)
+    })
+    .await?;
+    if result.is_ok() {
+        schedule_tray_refresh(&app);
+    }
+    result
+}
+
+pub fn resolve_edited_copy_core(
+    ctx: &HostCtx,
+    skill_id: String,
+    tool: String,
+    keep_mine: bool,
+) -> Result<(), AppError> {
+    sync_apply::resolve_edited_copy(&ctx.store, &skill_id, &tool, keep_mine)
 }
 
 #[tauri::command]

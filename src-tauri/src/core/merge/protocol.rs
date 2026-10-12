@@ -8,7 +8,7 @@
 //! `protocol.json` but whose message lacks the trailer was written by an old
 //! client.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -23,6 +23,10 @@ pub const TRAILER_RESOLVED: &str = "Skills-Manager-Resolved";
 
 /// Repo-relative path of the protocol marker file.
 pub const PROTOCOL_FILE_REL: &str = ".skills-manager/protocol.json";
+
+/// Error code of a sync that met a remote written in a newer format than this
+/// build understands. The sync stops untouched until the app is updated.
+pub const UPDATE_REQUIRED: &str = "SYNC_UPDATE_REQUIRED";
 
 /// Cap on ids in a single `Skills-Manager-Conflicts:` trailer (§4). Overflow
 /// is recorded as `+N` and blocks the automatic path.
@@ -91,6 +95,39 @@ pub fn has_protocol_trailer(message: &str) -> bool {
         line.trim_start()
             .starts_with(&format!("{TRAILER_PROTOCOL}:"))
     })
+}
+
+/// The protocol generation named by a commit's trailer, if it has one.
+pub fn trailer_protocol_version(message: &str) -> Option<u32> {
+    let prefix = format!("{TRAILER_PROTOCOL}:");
+    message
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix(&prefix)?.trim().parse().ok())
+}
+
+/// Refuse a remote commit written in a newer format than this build
+/// understands, judged by its `protocol.json` and its trailer. Merging it with
+/// this build's rules could corrupt data the newer version wrote.
+pub fn ensure_supported_format(repo: &git2::Repository, commit: &git2::Commit) -> Result<()> {
+    let from_file = commit
+        .tree()?
+        .get_path(Path::new(PROTOCOL_FILE_REL))
+        .ok()
+        .and_then(|entry| repo.find_blob(entry.id()).ok())
+        .and_then(|blob| serde_json::from_slice::<ProtocolFile>(blob.content()).ok())
+        .map(|file| file.merge_protocol);
+    let from_trailer = trailer_protocol_version(commit.message().unwrap_or_default());
+    if let Some(found) = from_file
+        .into_iter()
+        .chain(from_trailer)
+        .max()
+        .filter(|v| *v > MERGE_PROTOCOL_VERSION)
+    {
+        bail!(
+            "{UPDATE_REQUIRED}: the Sync remote uses format {found}; this version understands up to {MERGE_PROTOCOL_VERSION}. Update Agents Manager to keep syncing"
+        );
+    }
+    Ok(())
 }
 
 /// Parse the comma-separated skill ids of a `key: id1, id2` trailer line.
@@ -173,6 +210,23 @@ mod tests {
         );
         assert!(has_protocol_trailer(&msg));
         assert!(!has_protocol_trailer("backup"));
+    }
+
+    #[test]
+    fn trailer_protocol_version_reads_the_number() {
+        assert_eq!(
+            trailer_protocol_version(&app_commit_message("backup")),
+            Some(MERGE_PROTOCOL_VERSION)
+        );
+        assert_eq!(
+            trailer_protocol_version("sync\n\nSkills-Manager-Protocol: 7"),
+            Some(7)
+        );
+        assert_eq!(trailer_protocol_version("backup"), None);
+        assert_eq!(
+            trailer_protocol_version("x\n\nSkills-Manager-Protocol: soon"),
+            None
+        );
     }
 
     #[test]

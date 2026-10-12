@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { mapGitErrorMessage } from "../lib/gitErrors";
 import * as api from "../lib/tauri";
-import type { GitBackupSizeReport, GitBackupStatus, GitBackupVersion } from "../lib/tauri";
+import type { GitBackupSizeReport, GitBackupStatus, SyncHistoryEntry } from "../lib/tauri";
 
 /**
  * The backup page's view of this computer's backup: repo status, snapshots,
@@ -20,7 +20,7 @@ export function useBackupStatus() {
   const [gitStatus, setGitStatus] = useState<GitBackupStatus | null>(null);
   const [remoteInput, setRemoteInput] = useState("");
   const [remoteConfig, setRemoteConfig] = useState("");
-  const [versions, setVersions] = useState<GitBackupVersion[]>([]);
+  const [versions, setVersions] = useState<SyncHistoryEntry[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [backupError, setBackupError] = useState<null | string>(null);
   const [sizeReport, setSizeReport] = useState<GitBackupSizeReport | null>(null);
@@ -52,7 +52,7 @@ export function useBackupStatus() {
   const loadVersions = useCallback(
     () =>
       api
-        .gitBackupListVersions(50)
+        .syncHistory(50)
         .catch(() => [])
         .then((items) => {
           setVersions(items);

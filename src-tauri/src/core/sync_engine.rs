@@ -387,6 +387,21 @@ pub fn sync_skill(
     }
 }
 
+/// Whether a file in a copy-mode deployment is newer than its deploy time:
+/// the copy was edited in the agent folder ("Edited here", SID-99). File
+/// times only, no hashing. Generated caches such as `__pycache__` don't
+/// count, and neither do folder times, which those caches bump.
+pub fn copy_edited_since(target: &Path, deployed_at_ms: i64) -> bool {
+    walkdir::WalkDir::new(target)
+        .into_iter()
+        .filter_entry(|e| !super::content_hash::is_ignored(&e.file_name().to_string_lossy()))
+        .flatten()
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| e.metadata().ok()?.modified().ok())
+        .filter_map(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .any(|since_epoch| since_epoch.as_millis() as i64 > deployed_at_ms)
+}
+
 /// Decide whether the existing target is already in the desired state.
 ///
 /// - **Symlink mode**: the target must be a symlink pointing at `source`.
@@ -746,6 +761,26 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn copy_edits_count_but_generated_caches_do_not() {
+        let tmp = tempdir().unwrap();
+        let copy = tmp.path().join("skill");
+        fs::create_dir_all(&copy).unwrap();
+        fs::write(copy.join("SKILL.md"), "v1").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let deployed_at = chrono::Utc::now().timestamp_millis();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        // Running the skill's Python scripts is not an edit.
+        fs::create_dir_all(copy.join("__pycache__")).unwrap();
+        fs::write(copy.join("__pycache__/run.cpython-312.pyc"), "c").unwrap();
+        fs::write(copy.join("run.pyc"), "c").unwrap();
+        assert!(!copy_edited_since(&copy, deployed_at));
+
+        fs::write(copy.join("SKILL.md"), "edited here").unwrap();
+        assert!(copy_edited_since(&copy, deployed_at));
+    }
 
     // ── sync_mode_for_tool ──
 

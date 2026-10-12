@@ -10,11 +10,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::core::merge::apply::{self, object_merge_pull_unlocked, recover_on_startup};
+use crate::core::merge::apply::{
+    self, object_merge_pull_unlocked, recover_on_startup, ChangeKind, UpdatedPreset,
+};
 use crate::core::merge::pending::{self, conflict_ref, REF_APPLYING, REF_PRE_MERGE};
 use crate::core::merge::protocol;
 use crate::core::merge::resolve::{resolve_conflict_unlocked, ResolveAction};
-use crate::core::skill_store::SkillStore;
+use crate::core::skill_store::{ScenarioRecord, SkillStore};
 use crate::core::sync_metadata::{self, SkillMetaFile, SourceMeta};
 use crate::core::{central_repo, git_backup};
 
@@ -101,7 +103,12 @@ impl Env {
 
     /// Second device: clones the remote after `device_a` pushed.
     fn device_b(&self) -> Device {
-        let base = self._tmp.path().join("b");
+        self.clone_device("b", "Device B")
+    }
+
+    /// Another device cloned from the remote.
+    fn clone_device(&self, dir: &str, name: &'static str) -> Device {
+        let base = self._tmp.path().join(dir);
         std::fs::create_dir_all(&base).unwrap();
         let skills = base.join("skills");
         assert!(Command::new("git")
@@ -117,7 +124,7 @@ impl Env {
             base,
             skills,
             store,
-            name: "Device B",
+            name,
         };
         dev.activate();
         git_backup::configure_device_identity(&dev.skills, dev.name).unwrap();
@@ -180,6 +187,27 @@ impl Device {
         }
     }
 
+    /// A preset holding `skills`, created in the database and projected to
+    /// its metadata files the way the app does.
+    fn add_preset(&self, id: &str, name: &str, skills: &[&str]) {
+        self.reindex();
+        self.store
+            .insert_scenario(&ScenarioRecord {
+                id: id.to_string(),
+                name: name.to_string(),
+                description: None,
+                icon: None,
+                sort_order: 0,
+                created_at: 0,
+                updated_at: 0,
+            })
+            .unwrap();
+        for skill in skills {
+            self.store.add_skill_to_scenario(id, skill).unwrap();
+        }
+        sync_metadata::write_all_from_db_unlocked(&self.store).unwrap();
+    }
+
     fn reindex(&self) {
         self.activate();
         sync_metadata::reindex_from_metadata_unlocked(&self.store).unwrap();
@@ -220,6 +248,16 @@ impl Device {
 
     fn head_message(&self) -> String {
         git(&self.skills, &["log", "-1", "--format=%B"])
+    }
+
+    /// SKILL.md of the version a pending conflict offers as the alternative.
+    fn conflict_skill_md(&self, id: &str, path: &str) -> String {
+        let repo = git2::Repository::open(&self.skills).unwrap();
+        let commit = pending::ref_target(&repo, &conflict_ref(id)).unwrap();
+        let tree = repo.find_commit(commit).unwrap().tree().unwrap();
+        let entry = tree.get_path(&Path::new(path).join("SKILL.md")).unwrap();
+        let blob = repo.find_blob(entry.id()).unwrap();
+        String::from_utf8_lossy(blob.content()).into_owned()
     }
 
     fn meta_of(&self, id: &str) -> Option<SkillMetaFile> {
@@ -446,6 +484,11 @@ fn true_conflict_keeps_ours_declares_trailer_and_pins_theirs() {
     let entry = theirs_tree.get_path(Path::new("alpha/SKILL.md")).unwrap();
     let blob = repo_b.find_blob(entry.id()).unwrap();
     assert_eq!(blob.content(), b"edited on B");
+    let found = crate::core::sync_service::conflicts(&b.store);
+    assert_eq!(
+        (found[0].this_host.as_str(), found[0].other_host.as_str()),
+        ("Device A", "Device B")
+    );
 }
 
 #[test]
@@ -462,10 +505,8 @@ fn resolve_keep_local_closes_pending_across_devices() {
     a.pull();
 
     a.activate();
-    let safety =
-        resolve_conflict_unlocked(&a.store, &a.skills, "skill-1", ResolveAction::KeepLocal)
-            .unwrap();
-    assert!(safety.starts_with("sm-v-"));
+    resolve_conflict_unlocked(&a.store, &a.skills, "skill-1", ResolveAction::KeepLocal).unwrap();
+    assert_eq!(git(&a.skills, &["tag", "--list", "sm-v-*"]), "");
     assert_eq!(a.skill_md("alpha"), "edited on A");
     assert!(a
         .head_message()
@@ -661,6 +702,191 @@ fn ff_guard_blocks_when_remote_touches_pending_skill() {
         repo.find_blob(entry.id()).unwrap().content(),
         b"edited on B again"
     );
+}
+
+#[test]
+fn summary_lists_what_the_sync_added_changed_and_removed() {
+    // SID-99: the summary says what a sync changed here, by kind, for skills
+    // and presets, on both the fast-forward and the full-merge path.
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    a.activate();
+    a.write_skill("skill-2", "beta", "beta");
+    a.commit("add beta");
+    a.push();
+    b.pull();
+
+    a.activate();
+    a.write_skill("skill-1", "alpha", "changed on A");
+    a.remove_skill("skill-2", "beta");
+    a.write_skill("skill-3", "gamma", "new on A");
+    a.add_preset("preset-1", "Web", &["skill-3"]);
+    a.commit("edits on A");
+    a.push();
+
+    let summary = b.pull();
+    assert!(summary.fast_forward);
+    let skills: Vec<_> = summary
+        .updated
+        .iter()
+        .map(|s| (s.skill_id.as_str(), s.kind, s.from_device.as_str()))
+        .collect();
+    assert_eq!(
+        skills,
+        vec![
+            ("skill-1", ChangeKind::Changed, "Device A"),
+            ("skill-2", ChangeKind::Removed, "Device A"),
+            ("skill-3", ChangeKind::Added, "Device A"),
+        ]
+    );
+    let preset = |kind| UpdatedPreset {
+        preset_id: "preset-1".to_string(),
+        name: "Web".to_string(),
+        from_device: "Device A".to_string(),
+        kind,
+    };
+    assert_eq!(summary.presets, vec![preset(ChangeKind::Added)]);
+
+    // A preset that gains a skill counts as changed. B has its own commit,
+    // so this is a full merge.
+    a.activate();
+    a.store
+        .add_skill_to_scenario("preset-1", "skill-1")
+        .unwrap();
+    sync_metadata::write_all_from_db_unlocked(&a.store).unwrap();
+    a.commit("add alpha to Web");
+    a.push();
+    b.activate();
+    b.write_skill("skill-4", "delta", "new on B");
+    b.commit("add delta on B");
+    let summary = b.pull();
+    assert!(!summary.fast_forward);
+    assert!(summary.updated.is_empty(), "{:?}", summary.updated);
+    assert_eq!(summary.presets, vec![preset(ChangeKind::Changed)]);
+}
+
+#[test]
+fn skill_flagged_on_two_devices_moves_the_conflict_to_the_newest_version() {
+    // SID-108: two devices that each flagged the same skill with their own
+    // version no longer stop the sync. The device that meets the other flag
+    // keeps its version and flags the skill again against the newest remote
+    // version; both devices then converge on that one conflict.
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    let c = env.clone_device("c", "Device C");
+    c.write_skill("skill-1", "alpha", "edited on C");
+    c.commit("edit on C");
+    c.push();
+
+    a.activate();
+    a.write_skill("skill-1", "alpha", "edited on A");
+    a.commit("edit on A");
+    assert_eq!(a.pull().new_conflicts, vec!["skill-1"]);
+    b.activate();
+    b.write_skill("skill-1", "alpha", "edited on B");
+    b.commit("edit on B");
+    assert_eq!(b.pull().new_conflicts, vec!["skill-1"]);
+    a.push();
+
+    let summary = b.pull();
+    assert_eq!(b.skill_md("alpha"), "edited on B");
+    assert_eq!(summary.new_conflicts, vec!["skill-1"]);
+    assert_eq!(summary.kept_local, vec!["skill-1"]);
+    assert_eq!(summary.pending_total, 1);
+    assert!(b
+        .head_message()
+        .contains("Skills-Manager-Conflicts: skill-1"));
+    assert_eq!(b.conflict_skill_md("skill-1", "alpha"), "edited on A");
+    b.push();
+
+    let summary_a = a.pull();
+    assert_eq!(summary_a.pending_total, 1);
+    assert_eq!(a.skill_md("alpha"), "edited on B");
+    assert_eq!(a.conflict_skill_md("skill-1", "alpha"), "edited on A");
+    assert_eq!(a.tree_oid(), b.tree_oid());
+}
+
+#[test]
+fn conflict_choices_are_named_by_host() {
+    // SID-108: `sync resolve --keep <host>` picks a side by host name.
+    use crate::core::sync_service::{conflicts, resolve_choice};
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    b.activate();
+    b.write_skill("skill-1", "alpha", "edited on B");
+    b.commit("edit on B");
+    b.push();
+    a.activate();
+    a.write_skill("skill-1", "alpha", "edited on A");
+    a.commit("edit on A");
+    a.pull();
+    a.store
+        .set_setting("backup_device_name", "Device A")
+        .unwrap();
+
+    let found = conflicts(&a.store);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        (found[0].this_host.as_str(), found[0].other_host.as_str()),
+        ("Device A", "Device B")
+    );
+    let choose = |keep: Option<&str>, both| resolve_choice(&a.store, "skill-1", keep, both);
+    assert_eq!(
+        choose(Some("device b"), false).unwrap().1,
+        ResolveAction::UseRemote
+    );
+    assert_eq!(
+        choose(Some("Device A"), false).unwrap().1,
+        ResolveAction::KeepLocal
+    );
+    assert_eq!(choose(None, true).unwrap().1, ResolveAction::KeepBoth);
+    let err = choose(Some("Mac"), false).unwrap_err().to_string();
+    assert!(err.contains("--keep Device A or --keep Device B"), "{err}");
+}
+
+#[test]
+fn a_host_that_pulls_a_conflict_still_offers_its_own_version() {
+    // A flags the skill and keeps its version. B pulls that with its own
+    // unpushed work, so the pull is a full merge, not a fast-forward.
+    use crate::core::sync_service::{conflicts, resolve_choice};
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    b.activate();
+    b.write_skill("skill-1", "alpha", "edited on B");
+    b.commit("edit on B");
+    b.push();
+    a.activate();
+    a.write_skill("skill-1", "alpha", "edited on A");
+    a.commit("edit on A");
+    a.pull();
+    a.push();
+
+    b.activate();
+    b.write_skill("skill-2", "beta", "unrelated on B");
+    b.commit("unrelated on B");
+    let summary = b.pull();
+    assert!(!summary.fast_forward);
+    assert_eq!(b.skill_md("alpha"), "edited on A");
+    assert_eq!(b.conflict_skill_md("skill-1", "alpha"), "edited on B");
+    let found = conflicts(&b.store);
+    assert_eq!(
+        (found[0].this_host.as_str(), found[0].other_host.as_str()),
+        ("Device A", "Device B")
+    );
+    b.push();
+
+    // A pulls B's merge with its own unpushed work: B's version is still the
+    // one offered.
+    a.activate();
+    a.write_skill("skill-3", "gamma", "unrelated on A");
+    a.commit("unrelated on A");
+    a.pull();
+    assert_eq!(a.conflict_skill_md("skill-1", "alpha"), "edited on B");
+
+    b.activate();
+    let (id, action) = resolve_choice(&b.store, "skill-1", Some("Device B"), false).unwrap();
+    resolve_conflict_unlocked(&b.store, &b.skills, &id, action).unwrap();
+    assert_eq!(b.skill_md("alpha"), "edited on B");
 }
 
 // ── R3 反例: pending placeholder derived from theirs trailers only ──
@@ -1073,6 +1299,55 @@ fn recovery_before_ref_move_treats_merge_as_not_happened() {
 }
 
 // ── old-client detection (§6) ──
+
+/// B writes like a newer version: a commit carrying protocol `trailer`,
+/// optionally with `protocol.json` raised to the same generation.
+fn push_newer_format_write(b: &Device, trailer: u32, raise_file: bool) {
+    b.activate();
+    if raise_file {
+        std::fs::write(
+            b.skills.join(protocol::PROTOCOL_FILE_REL),
+            format!(r#"{{"schema_version":1,"merge_protocol":{trailer}}}"#),
+        )
+        .unwrap();
+    }
+    b.write_skill("skill-2", "beta", "written by a newer version");
+    git(&b.skills, &["add", "-A"]);
+    git(
+        &b.skills,
+        &[
+            "commit",
+            "-m",
+            &format!("newer write\n\nSkills-Manager-Protocol: {trailer}"),
+        ],
+    );
+    b.push();
+}
+
+#[test]
+fn newer_remote_format_stops_the_merge_untouched() {
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    push_newer_format_write(&b, protocol::MERGE_PROTOCOL_VERSION + 1, true);
+
+    a.activate();
+    let tree_before = a.tree_oid();
+    let msg = format!("{:#}", a.pull_err());
+    assert!(msg.contains(protocol::UPDATE_REQUIRED), "{msg}");
+    assert_eq!(a.tree_oid(), tree_before);
+    assert!(!a.skills.join("beta").exists());
+}
+
+#[test]
+fn newer_protocol_trailer_alone_also_stops_the_merge() {
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    push_newer_format_write(&b, protocol::MERGE_PROTOCOL_VERSION + 1, false);
+
+    let msg = format!("{:#}", a.pull_err());
+    assert!(msg.contains(protocol::UPDATE_REQUIRED), "{msg}");
+    assert!(!a.skills.join("beta").exists());
+}
 
 #[test]
 fn old_client_line_merge_blocks_object_merge() {

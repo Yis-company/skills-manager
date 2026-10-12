@@ -17,7 +17,7 @@ const IGNORED: &[&str] = &[
 /// regenerated whenever a skill's Python scripts run, so without excluding
 /// them a copy-mode deployment would read as permanently "changed" against
 /// the library the first time the skill is used.
-fn is_ignored(name: &str) -> bool {
+pub(crate) fn is_ignored(name: &str) -> bool {
     IGNORED.contains(&name) || name.ends_with(".pyc")
 }
 

@@ -622,6 +622,23 @@ impl SkillStore {
         Ok(())
     }
 
+    /// Set a target's status, and its recorded source hash when given.
+    pub fn set_target_status(
+        &self,
+        skill_id: &str,
+        tool: &str,
+        status: &str,
+        source_hash: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE skill_targets SET status = ?3, source_hash = COALESCE(?4, source_hash)
+             WHERE skill_id = ?1 AND tool = ?2",
+            params![skill_id, tool, status, source_hash],
+        )?;
+        Ok(())
+    }
+
     // ── Discovered Skills ──
 
     pub fn clear_discovered(&self) -> Result<()> {
@@ -1560,6 +1577,54 @@ impl SkillStore {
         Ok(affected)
     }
 
+    // ── Whole-database copies (pre-join copy, SID-100) ──
+
+    /// Write a consistent copy of the database to `path`.
+    pub fn backup_to(&self, path: &std::path::Path) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("VACUUM INTO ?1", params![path.to_string_lossy()])?;
+        Ok(())
+    }
+
+    /// Replace every table's rows with those of a copy made by `backup_to`.
+    /// Only a copy from the same schema version is accepted.
+    pub fn restore_from(&self, path: &std::path::Path) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        conn.execute(
+            "ATTACH DATABASE ?1 AS copy",
+            params![path.to_string_lossy()],
+        )?;
+        let restored = (|| -> Result<()> {
+            let copy: u32 = conn.query_row("PRAGMA copy.user_version", [], |r| r.get(0))?;
+            let ours: u32 = conn.query_row("PRAGMA main.user_version", [], |r| r.get(0))?;
+            if copy != ours {
+                anyhow::bail!(
+                    "the copy was made by another app version (database {copy}, this app {ours})"
+                );
+            }
+            let tables: Vec<String> = conn
+                .prepare(
+                    "SELECT name FROM copy.sqlite_master
+                     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                )?
+                .query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            conn.execute_batch("PRAGMA foreign_keys = OFF")?;
+            let tx = conn.transaction()?;
+            for table in &tables {
+                tx.execute(&format!("DELETE FROM main.\"{table}\""), [])?;
+                tx.execute(
+                    &format!("INSERT INTO main.\"{table}\" SELECT * FROM copy.\"{table}\""),
+                    [],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })();
+        let _ = conn.execute_batch("PRAGMA foreign_keys = ON; DETACH DATABASE copy");
+        restored
+    }
+
     // ── Audit log ──
 
     /// Append an audit entry. Best-effort: errors are swallowed so callers
@@ -1598,6 +1663,32 @@ impl SkillStore {
              )",
             params![AUDIT_MAX_ENTRIES],
         );
+    }
+
+    /// The most recent audit entries whose action starts with `prefix`,
+    /// newest first.
+    pub fn list_audit_with_prefix(&self, prefix: &str, limit: i64) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, ts, action, skill_id, skill_name, tool, success, detail
+             FROM audit_log WHERE substr(action, 1, length(?1)) = ?1
+             ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![prefix, limit], |row| {
+                Ok(AuditEntry {
+                    id: row.get(0)?,
+                    ts: row.get(1)?,
+                    action: row.get(2)?,
+                    skill_id: row.get(3)?,
+                    skill_name: row.get(4)?,
+                    tool: row.get(5)?,
+                    success: row.get::<_, i32>(6)? != 0,
+                    detail: row.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// Read the most recent audit entries (newest first). When `limit` is

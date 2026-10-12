@@ -1,8 +1,9 @@
 //! Object-level three-way merge of the skills library (merge-engine design,
 //! `docs/merge-engine-design.md`). Phase 3d-α introduced protocol markers on
-//! every app commit plus the engine itself; 3d-β makes the object merge the
-//! default for manual sync, with `merge_engine=system` as the opt-out escape
-//! hatch back to the legacy line-level git merge.
+//! every app commit plus the engine itself; 3d-β made the object merge the
+//! default, and Sync (SID-105) removed the `merge_engine=system` opt-out: a
+//! line-level merge reads as an old-client write on every other device. Only
+//! a remote written by pre-protocol clients still takes the legacy git merge.
 
 pub mod apply;
 pub mod decision;
@@ -15,74 +16,4 @@ pub mod snapshot;
 pub mod treebuild;
 pub mod validate;
 
-pub use apply::{
-    object_merge_pull_unlocked, recover_on_startup, remote_touches_pending, MergeSummary,
-};
-
-/// Settings key of the engine switch (§9). Since 3d-β the object merge is
-/// the default; an explicit "system" value is the escape hatch back to the
-/// legacy line-level git merge.
-pub const SETTING_MERGE_ENGINE: &str = "merge_engine";
-
-pub fn object_merge_enabled(store: &crate::core::skill_store::SkillStore) -> bool {
-    store
-        .get_setting(SETTING_MERGE_ENGINE)
-        .ok()
-        .flatten()
-        .map(|v| v.trim() != "system")
-        .unwrap_or(true)
-}
-
-/// Engine-gated pull, shared by the GUI sync command and the CLI `git pull`.
-/// Caller holds the repo lock and has applied the device identity. Note the
-/// legacy path must stay reachable: with the object engine a *line-level*
-/// merge commit from our own tooling would read as an old-client violation
-/// (§6) on every other device, so every in-app pull goes through this gate.
-pub fn gated_pull_unlocked(
-    store: &crate::core::skill_store::SkillStore,
-    skills_dir: &std::path::Path,
-) -> anyhow::Result<MergeSummary> {
-    crate::core::resource_store::check_library_transactions()?;
-    if skills_dir.join(".agents-manager").exists() {
-        // The legacy text merge cannot preserve bundle identity or secret rules.
-        return object_merge_pull_unlocked(store, skills_dir);
-    }
-    if object_merge_enabled(store) {
-        object_merge_pull_unlocked(store, skills_dir)
-    } else {
-        crate::core::git_backup::ensure_no_interrupted_git_operation(skills_dir)?;
-        let branch = crate::core::git_backup::current_branch(skills_dir);
-        crate::core::git_backup::fetch_branch(skills_dir, &branch)?;
-        let repo = git2::Repository::open(skills_dir)?;
-        let remote = repo
-            .find_reference(&format!("refs/remotes/origin/{branch}"))?
-            .peel_to_tree()?;
-        if remote.get_name(".agents-manager").is_some() {
-            return object_merge_pull_unlocked(store, skills_dir);
-        }
-        crate::core::git_backup::merge_branch_system(skills_dir, &branch)?;
-        Ok(MergeSummary {
-            engine: "system".to_string(),
-            ..Default::default()
-        })
-    }
-}
-
-#[cfg(test)]
-mod gate_tests {
-    use super::*;
-
-    #[test]
-    fn object_merge_is_default_and_system_is_the_escape_hatch() {
-        let tmp = tempfile::tempdir().unwrap();
-        let store = crate::core::skill_store::SkillStore::new(&tmp.path().join("t.db")).unwrap();
-        // 3d-β: on by default (no setting saved).
-        assert!(object_merge_enabled(&store));
-        // Users who opted in during 3d-α stay on.
-        store.set_setting(SETTING_MERGE_ENGINE, "object").unwrap();
-        assert!(object_merge_enabled(&store));
-        // Explicit escape hatch back to the line-level merge.
-        store.set_setting(SETTING_MERGE_ENGINE, "system").unwrap();
-        assert!(!object_merge_enabled(&store));
-    }
-}
+pub use apply::{object_merge_pull_unlocked, recover_on_startup, MergeSummary};

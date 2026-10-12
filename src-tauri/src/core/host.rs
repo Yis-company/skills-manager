@@ -36,6 +36,17 @@ impl HostEvents for TauriEvents {
     }
 }
 
+impl HostCtx {
+    /// A context with no window to report to: the CLI and background work.
+    pub fn headless(store: Arc<SkillStore>) -> Self {
+        Self {
+            store,
+            cancel: Arc::new(InstallCancelRegistry::new()),
+            events: Arc::new(NoopEvents),
+        }
+    }
+}
+
 /// Events nobody listens to.
 pub struct NoopEvents;
 

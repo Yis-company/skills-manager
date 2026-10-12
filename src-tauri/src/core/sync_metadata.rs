@@ -43,7 +43,7 @@ pub struct SkillMetaFile {
     pub source: SourceMeta,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioMetaFile {
     pub schema_version: u32,
     pub scenario_id: String,
@@ -53,7 +53,7 @@ pub struct ScenarioMetaFile {
     pub sort_order: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioSkillMetaFile {
     pub schema_version: u32,
     pub scenario_id: String,

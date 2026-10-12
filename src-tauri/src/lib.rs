@@ -972,11 +972,15 @@ pub fn run() {
             // roll back an interrupted sync apply before any background work
             // can touch the repo. Best-effort, never blocks startup.
             let store_for_merge_recovery = store_for_setup.clone();
+            let host_for_startup_apply = host.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 core::merge::recover_on_startup(
                     &store_for_merge_recovery,
                     &core::central_repo::skills_dir(),
                 );
+                // Deployed instructions and MCPs follow library changes made
+                // while the app was closed (SID-99).
+                core::sync_apply::reapply_resources(&host_for_startup_apply);
             });
 
             // Automatic backup (§3.4): debounced commit+push after central-repo
@@ -1071,6 +1075,7 @@ pub fn run() {
             // Sync
             commands::sync::sync_skill_to_tool,
             commands::sync::unsync_skill_from_tool,
+            commands::sync::resolve_edited_copy,
             commands::sync::get_skill_tool_toggles,
             commands::sync::set_skill_tool_toggle,
             // Scan
@@ -1117,8 +1122,7 @@ pub fn run() {
             commands::git_backup::git_backup_pull,
             commands::git_backup::git_backup_clone,
             commands::git_backup::git_backup_reclone,
-            commands::git_backup::git_backup_create_snapshot,
-            commands::git_backup::git_backup_list_versions,
+            commands::git_backup::git_backup_history,
             commands::git_backup::git_backup_restore_version,
             commands::git_backup::backup_device_name,
             commands::git_backup::backup_set_device_name,
@@ -1179,6 +1183,13 @@ pub fn run() {
             commands::remote_hosts::remote_host_add,
             commands::remote_hosts::remote_host_update,
             commands::remote_hosts::remote_host_remove,
+            commands::remote_hosts::host_sync_prepare,
+            commands::remote_hosts::host_sync_preview,
+            commands::remote_hosts::host_sync_join,
+            commands::remote_hosts::host_sync_leave,
+            commands::remote_hosts::host_sync_status_all,
+            commands::remote_hosts::host_sync_call,
+            commands::remote_hosts::sync_screen_call,
             commands::remote_hosts::remote_host_probe,
             commands::remote_hosts::remote_host_install_cli,
             commands::remote_hosts::remote_host_connect,

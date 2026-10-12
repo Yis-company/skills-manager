@@ -632,6 +632,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
+  // SID-108: one status call per host in Sync at startup, so a stuck host is
+  // noticed without opening it.
+  useEffect(() => {
+    api
+      .hostSyncStatusAll()
+      .then((hosts) => {
+        for (const host of hosts) {
+          const reason = host.error ?? api.hostSyncProblem(host.status);
+
+          if (reason) toast.warning(i18n.t("remoteHosts.syncStuck", { name: host.name, reason }));
+        }
+      })
+      .catch((err) => console.error("Startup host sync check failed:", err));
+  }, []);
+
   // Check skill updates on startup (non-blocking, silent). When the user has
   // opted in via the Settings toggle, also apply any available updates.
   useEffect(() => {
@@ -656,11 +671,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (getActiveHostId() !== null) return;
           const skills = await invokeHost<ManagedSkill[]>(null, "get_managed_skills");
 
+          // On unless turned off (SID-105); an unreadable setting counts as off.
           const autoUpdate = await invokeHost<null | string>(null, "get_settings", {
             key: "auto_update_apply",
-          }).catch(() => null);
+          }).catch(() => "off");
 
-          if (autoUpdate === "on" && getActiveHostId() === null) {
+          if ((autoUpdate ?? "on") === "on" && getActiveHostId() === null) {
             const ids = skills
               .filter(
                 (s) =>
