@@ -76,7 +76,7 @@ pub struct PendingPins {
 /// (§11-4). Implements:
 /// - declared on one side only → pin that side;
 /// - shared (pre-base) declaration, untouched → pin ours (the local kept
-///   version), the theirs pointer just advances;
+///   version);
 /// - `Closed` + inherited `Active` → the resolution wins, not pending; the
 ///   resolving side's tree change merges as a normal edit;
 /// - `Closed` + re-declared `Active` → the newer declaration stays pending;
@@ -239,7 +239,7 @@ pub fn heal_conflict_refs(repo: &Repository, head: Oid) -> Result<Vec<(String, O
             .iter()
             .find(|(_, skill_id, _)| skill_id == id)
             .map(|(_, _, t)| *t)
-            .or_else(|| find_declaring_theirs(repo, head, id));
+            .or_else(|| declaring_commit(repo, head, id)?.parent_id(1).ok());
         let Some(desired) = desired else { continue };
         let up_to_date = match ref_target(repo, &conflict_ref(id)) {
             None => false,
@@ -267,9 +267,10 @@ pub fn heal_conflict_refs(repo: &Repository, head: Oid) -> Result<Vec<(String, O
     Ok(healed)
 }
 
-/// Newest commit in HEAD's history whose Conflicts trailer declares `id`;
-/// its second parent is the theirs side at declaration time.
-fn find_declaring_theirs(repo: &Repository, head: Oid, id: &str) -> Option<Oid> {
+/// Newest commit in HEAD's history whose Conflicts trailer declares `id`.
+/// Its author kept their version; its second parent is the theirs side at
+/// declaration time.
+pub fn declaring_commit<'r>(repo: &'r Repository, head: Oid, id: &str) -> Option<git2::Commit<'r>> {
     let mut walk = repo.revwalk().ok()?;
     walk.push(head).ok()?;
     walk.set_sorting(Sort::TOPOLOGICAL).ok()?;
@@ -280,7 +281,7 @@ fn find_declaring_theirs(repo: &Repository, head: Oid, id: &str) -> Option<Oid> 
             .iter()
             .any(|declared| declared == id)
         {
-            return commit.parent_id(1).ok();
+            return Some(commit);
         }
     }
     None

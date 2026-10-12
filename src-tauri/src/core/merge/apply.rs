@@ -177,14 +177,9 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     // ff guard (§4): fast-forward unless theirs touches a locally-declared
     // pending skill.
     if base == ours {
-        let ff_blocked = pinned.iter().any(|(id, side)| {
-            *side == Side::Ours
-                && match (ours_snap.skills.get(id), theirs_snap.skills.get(id)) {
-                    (Some(o), Some(t)) => !skill_identical(o, t),
-                    (None, None) => false,
-                    _ => true,
-                }
-        });
+        let ff_blocked = pinned
+            .iter()
+            .any(|(id, side)| *side == Side::Ours && skill_differs(&ours_snap, &theirs_snap, id));
         if !ff_blocked {
             return apply_fast_forward(
                 store,
@@ -326,11 +321,18 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         &attempt_id,
     )?;
 
-    // §4 钉住: the local machine only advances the theirs pointer of
-    // still-active pendings; freshly staged conflicts were just promoted to
-    // the same theirs commit.
+    // §4 钉住: a still-active pending's conflict ref offers the version the
+    // tree did not keep. The pinned side holds the kept version, so the ref
+    // moves to the other side's tip only when that side has a different one.
+    // A host that adopted the kept version must not replace the offered one.
     for id in &plan.still_pending {
-        pending::write_ref(&repo, &conflict_ref(id), theirs, "advance theirs pointer")?;
+        let (other, kept_snap, other_snap) = match pinned.get(id) {
+            Some(Side::Theirs) => (ours, &theirs_snap, &ours_snap),
+            _ => (theirs, &ours_snap, &theirs_snap),
+        };
+        if skill_differs(kept_snap, other_snap, id) {
+            pending::write_ref(&repo, &conflict_ref(id), other, "advance conflict ref")?;
+        }
     }
 
     let pending_total = rebuild_pending_projection(&repo, store)?;
@@ -595,6 +597,16 @@ fn scan_conflict_markers(repo: &Repository, snap: &Snapshot) -> Result<Vec<Strin
         }
     }
     Ok(hits)
+}
+
+/// Whether two snapshots hold different versions of a skill, counting a
+/// deletion as a version.
+fn skill_differs(a: &Snapshot, b: &Snapshot, id: &str) -> bool {
+    match (a.skills.get(id), b.skills.get(id)) {
+        (Some(a), Some(b)) => !skill_identical(a, b),
+        (None, None) => false,
+        _ => true,
+    }
 }
 
 // ── last-touch attribution ──

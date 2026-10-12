@@ -79,7 +79,9 @@ pub struct SyncStatus {
 pub struct SyncConflict {
     pub skill_id: String,
     pub name: String,
+    /// The host whose version is in place: the one that recorded the conflict.
     pub this_host: String,
+    /// The host whose version the conflict offers instead.
     pub other_host: String,
 }
 
@@ -156,13 +158,20 @@ fn plural(n: usize, noun: &str) -> String {
 
 /// Pending skill conflicts, with the host on each side.
 pub fn conflicts(store: &SkillStore) -> Vec<SyncConflict> {
-    let this_host = effective_device_name(store);
     let repo = git2::Repository::open(central_repo::skills_dir()).ok();
+    let head = repo.as_ref().and_then(|repo| repo.head().ok()?.target());
     let author = |commit: &str| -> Option<String> {
         let commit = repo
             .as_ref()?
             .find_commit(git2::Oid::from_str(commit).ok()?)
             .ok()?;
+        let name = commit.author().name().map(str::to_owned);
+        name
+    };
+    // A host that pulled the conflict holds the version of the host that
+    // recorded it, so that host names the version in place.
+    let recorder = |skill_id: &str| -> Option<String> {
+        let commit = merge::pending::declaring_commit(repo.as_ref()?, head?, skill_id)?;
         let name = commit.author().name().map(str::to_owned);
         name
     };
@@ -179,7 +188,7 @@ pub fn conflicts(store: &SkillStore) -> Vec<SyncConflict> {
                 .or(row.theirs_path)
                 .unwrap_or_else(|| row.skill_id.clone()),
             other_host: author(&row.theirs_commit).unwrap_or_default(),
-            this_host: this_host.clone(),
+            this_host: recorder(&row.skill_id).unwrap_or_else(|| effective_device_name(store)),
             skill_id: row.skill_id,
         })
         .collect()
