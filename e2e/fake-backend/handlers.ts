@@ -122,6 +122,11 @@ export const handlers = {
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
   remote_hosts_list: (_args, state) => state.remoteHosts,
+  host_sync_status_all: () => [],
+  host_sync_leave: () => ({ delete_key_by_hand: null, host_reached: true }),
+  remote_host_remove: ({ hostId }: { hostId: string }, state) => {
+    state.remoteHosts = state.remoteHosts.filter((host) => host.id !== hostId);
+  },
   remote_host_connect: ({ hostId }: { hostId: string }, state) => {
     if (state.remoteCliNeedsUpdate) {
       throw {

@@ -1301,7 +1301,20 @@
     "add": "Add host",
     "edit": "Edit",
     "remove": "Remove",
-    "removeConfirm": "Remove host \"{{name}}\"? Nothing on that host is changed.",
+    "removeConfirm": "Remove host \"{{name}}\"? Its library and the skills on its agents stay.",
+    "alsoLeaveSync": "Also remove from Sync",
+    "syncStuck": "{{name}} isn't syncing: {{reason}}",
+    "syncState": "Sync: {{state}}",
+    "syncStates": {
+      "up_to_date": "Up to date",
+      "paused": "Paused",
+      "offline": "Offline",
+      "needs_review": "Needs review",
+      "update_required": "Update required",
+      "not_set_up": "Not in Sync"
+    },
+    "alsoLeaveSyncHint": "Deletes its access key on GitHub now and stops its sync timer. Unchecked, the host keeps syncing on its own.",
+    "deleteKeyByHand": "GitHub didn't delete the host's key. Delete \"{{key}}\" under the Sync repository's Settings > Deploy keys.",
     "removed": "Host removed",
     "saved": "Host saved",
     "form": {

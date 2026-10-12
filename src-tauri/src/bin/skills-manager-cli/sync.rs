@@ -7,6 +7,7 @@ use std::io::Write;
 
 use app_lib::core::{
     central_repo, git_backup, host::HostCtx, skill_store::SkillStore, sync_join, sync_service,
+    sync_timer,
 };
 
 use crate::args::{SyncArgs, SyncCommand};
@@ -22,7 +23,15 @@ pub(crate) fn run_sync(args: SyncArgs, store: &Arc<SkillStore>, json: bool) -> a
                     return Ok(());
                 }
             }
-            print_json(&join(&ctx, &url)?, json);
+            let preview = join(&ctx, &url)?;
+            let timer = sync_timer::install();
+            if let Some(warning) = timer.warning.as_ref().filter(|_| !json) {
+                eprintln!("note: {warning}");
+            }
+            print_json(
+                &serde_json::json!({ "preview": preview, "timer": timer }),
+                json,
+            );
         }
         SyncCommand::UndoJoin { copy } => {
             let restored = sync_join::undo_join(&ctx, copy.as_deref()).map_err(map_app_err)?;
@@ -33,6 +42,7 @@ pub(crate) fn run_sync(args: SyncArgs, store: &Arc<SkillStore>, json: bool) -> a
         }
         SyncCommand::Leave => {
             sync_join::leave(store).map_err(map_app_err)?;
+            sync_timer::remove();
             print_json(&sync_service::sync_status(store), json);
         }
         SyncCommand::Now => print_json(

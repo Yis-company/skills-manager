@@ -1031,6 +1031,52 @@ export const remoteHostUpdate = (
 
 export const remoteHostRemove = (hostId: string) => invoke<void>("remote_host_remove", { hostId });
 
+// ── Hosts in Sync (each call opens a session of its own) ──
+
+/** A deploy key GitHub didn't take from the app: add it by hand, then prepare again. */
+export interface HostSyncPasteKey {
+  title: string;
+  key: string;
+  settings_url: string;
+  reason: string;
+}
+
+export interface HostSyncPrepared {
+  paste: HostSyncPasteKey | null;
+  url: null | string;
+}
+
+export interface HostSyncLeft {
+  /** GitHub refused to delete the key: delete this one under Settings > Deploy keys. */
+  delete_key_by_hand: null | string;
+  host_reached: boolean;
+}
+
+export interface HostSyncState {
+  host_id: string;
+  name: string;
+  /** The host's `sync status`, when it answered. */
+  status: { state: string; reason: null | string } | null;
+  error: null | string;
+}
+
+export const hostSyncPrepare = (hostId: string, pasted = false) =>
+  invokeLocal<HostSyncPrepared>("host_sync_prepare", { hostId, pasted });
+
+export const hostSyncLeave = (hostId: string) =>
+  invokeLocal<HostSyncLeft>("host_sync_leave", { hostId });
+
+export const hostSyncStatusAll = () => invokeLocal<HostSyncState[]>("host_sync_status_all");
+
+/** Why a host's Sync is stuck, or null when it is fine. */
+export function hostSyncProblem(status: HostSyncState["status"]): null | string {
+  if (!status || !["needs_review", "update_required", "offline"].includes(status.state)) {
+    return null;
+  }
+
+  return status.reason ?? status.state;
+}
+
 /** Rejects with the reason the host cannot be used (unreachable, no CLI, not POSIX). */
 export const remoteHostProbe = (hostId: string) =>
   invoke<RemoteProbe>("remote_host_probe", { hostId });

@@ -7,14 +7,14 @@
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::commands::{
     agent_workspace, directory, presets, projects, scan, settings, skills, sync, tools,
 };
 use crate::core::error::AppError;
 use crate::core::host::HostCtx;
-use crate::core::{sync_join, sync_service};
+use crate::core::{sync_access, sync_join, sync_service, sync_timer};
 
 /// Every command [`dispatch`] accepts.
 pub const COMMANDS: &[&str] = &[
@@ -67,6 +67,9 @@ pub const COMMANDS: &[&str] = &[
     "get_skill_tool_toggles",
     "set_skill_tool_toggle",
     // Sync (SID-110): the app runs a host's Sync over its session.
+    "sync_access_key",
+    "sync_access_setup",
+    "sync_access_check",
     "sync_join_preview",
     "sync_join",
     "sync_undo_join",
@@ -328,13 +331,21 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.req("tool")?,
             a.req("keepMine")?,
         )),
+        "sync_access_key" => reply(sync_access::public_key(&a.req::<String>("comment")?)),
+        "sync_access_setup" => reply(sync_access::write_known_hosts(
+            &a.req::<Vec<String>>("hostKeys")?,
+        )),
+        "sync_access_check" => reply(sync_access::check(&a.req::<String>("url")?)),
         "sync_join_preview" => reply(sync_join::preview(&ctx.store, &a.req::<String>("url")?)),
-        "sync_join" => reply(sync_join::join(ctx, &a.req::<String>("url")?)),
+        "sync_join" => reply(
+            sync_join::join(ctx, &a.req::<String>("url")?)
+                .map(|preview| json!({ "preview": preview, "timer": sync_timer::install() })),
+        ),
         "sync_undo_join" => reply(sync_join::undo_join(
             ctx,
             a.opt::<String>("copy")?.as_deref(),
         )),
-        "sync_leave" => reply(sync_join::leave(&ctx.store)),
+        "sync_leave" => reply(sync_join::leave(&ctx.store).map(|()| sync_timer::remove())),
         "sync_status" => reply(Ok(sync_service::sync_status(&ctx.store))),
         "sync_now" => reply(sync_service::sync_now(
             ctx,
