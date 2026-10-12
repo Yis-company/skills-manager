@@ -1,7 +1,8 @@
 //! `repo` (the base folder and its status) and `git` (backup of the central library).
 
 use app_lib::core::{
-    central_repo, git_backup, merge, repo_lock::RepoLock, skill_store::SkillStore, sync_metadata,
+    central_repo, git_backup, merge, repo_lock::RepoLock, skill_store::SkillStore, sync_apply,
+    sync_metadata,
 };
 
 use crate::args::{GitArgs, GitCommand, RepoArgs, RepoCommand};
@@ -77,6 +78,7 @@ pub(crate) fn run_git(
             // Finish or roll back a sync this host was interrupted in, as the
             // app does at startup. Takes its own lock (SID-108).
             merge::recover_on_startup(store, &dir);
+            let before = sync_apply::capture(store);
             {
                 let _lock = RepoLock::acquire_foreground("git pull")?;
                 let device = store
@@ -89,8 +91,10 @@ pub(crate) fn run_git(
                 let _ = git_backup::configure_device_identity(&dir, &device);
                 merge::object_merge_pull_unlocked(store, &dir)?;
             }
-            // Reconcile the DB from the merged metadata (takes its own lock).
+            // Reconcile the DB from the merged metadata (takes its own lock),
+            // then apply the active preset to the agents, as the app does.
             sync_metadata::reindex_from_metadata(store)?;
+            sync_apply::reapply_active_preset(store, &before);
             print_json(&git_backup::get_status(&dir)?, json);
         }
         GitCommand::Push => {

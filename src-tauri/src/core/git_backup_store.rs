@@ -5,7 +5,8 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::core::{
-    central_repo, git2_engine, git_backup, skill_metadata, skill_store::SkillStore, sync_metadata,
+    central_repo, git2_engine, git_backup, skill_metadata, skill_store::SkillStore, sync_apply,
+    sync_metadata,
 };
 
 /// Push the persisted engine choice (`git_backup_engine` = "git2" | "system")
@@ -51,7 +52,17 @@ pub(crate) fn apply_device_identity(store: &SkillStore, skills_dir: &Path) {
     }
 }
 
+/// Bring the database in line with a library that changed on disk (a pull,
+/// a sync, a conflict choice, a restore, a clone), then apply the active
+/// preset to the agents again (SID-99).
 pub(crate) fn reconcile_skills_index_unlocked(store: &SkillStore) -> anyhow::Result<()> {
+    let before = sync_apply::capture(store);
+    reindex_library_unlocked(store)?;
+    sync_apply::reapply_active_preset(store, &before);
+    Ok(())
+}
+
+fn reindex_library_unlocked(store: &SkillStore) -> anyhow::Result<()> {
     sync_metadata::cleanup_temporary_files()?;
     if sync_metadata::has_complete_skill_snapshot() {
         sync_metadata::reindex_from_metadata_unlocked(store)?;

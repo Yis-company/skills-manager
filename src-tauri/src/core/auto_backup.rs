@@ -607,6 +607,82 @@ mod tests {
         assert!(env.skills_dir.join("alpha/SKILL.md").exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn round_applies_pulled_preset_changes_to_agents() {
+        // SID-99: after a pull the active preset is applied again. A skill
+        // another device added to it is deployed; one it deleted is removed.
+        use crate::core::{skill_store::ScenarioRecord, sync_apply, sync_metadata};
+        let env = test_env();
+        let agent_dir = env._tmp.path().join("agent-skills");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let custom = serde_json::json!([{
+            "key": "test_agent",
+            "display_name": "Test Agent",
+            "skills_dir": agent_dir,
+        }]);
+        let builtin: Vec<String> = crate::core::tool_adapters::default_tool_adapters()
+            .into_iter()
+            .map(|a| a.key)
+            .collect();
+        env.store
+            .set_setting("custom_tools", &custom.to_string())
+            .unwrap();
+        env.store
+            .set_setting("disabled_tools", &serde_json::to_string(&builtin).unwrap())
+            .unwrap();
+
+        write_skill(&env.skills_dir, "skill-1", "alpha", "a");
+        sync_metadata::reindex_from_metadata_unlocked(&env.store).unwrap();
+        env.store
+            .insert_scenario(&ScenarioRecord {
+                id: "web".to_string(),
+                name: "Web".to_string(),
+                description: None,
+                icon: None,
+                sort_order: 0,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        env.store.add_skill_to_scenario("web", "skill-1").unwrap();
+        env.store.set_active_scenario("web").unwrap();
+        sync_apply::reapply_active_preset(&env.store, &sync_apply::capture(&env.store));
+        assert!(agent_dir.join("alpha").is_symlink());
+        sync_metadata::write_all_from_db_unlocked(&env.store).unwrap();
+        git_backup::commit_all_unlocked(&env.skills_dir, "seed").unwrap();
+        git_backup::push_unlocked(&env.skills_dir).unwrap();
+
+        // The other device deletes alpha and adds beta to the preset.
+        let other = clone_other_device(&env);
+        std::fs::remove_dir_all(other.join("alpha")).unwrap();
+        std::fs::remove_file(other.join(".skills-manager/skills/skill-1.json")).unwrap();
+        std::fs::remove_file(other.join(".skills-manager/scenario-skills/web/skill-1.json"))
+            .unwrap();
+        write_skill(&other, "skill-2", "beta", "b");
+        let member = sync_metadata::ScenarioSkillMetaFile {
+            schema_version: 1,
+            scenario_id: "web".to_string(),
+            skill_id: "skill-2".to_string(),
+            sort_order: 0,
+            tools: Default::default(),
+        };
+        std::fs::write(
+            other.join(".skills-manager/scenario-skills/web/skill-2.json"),
+            sync_metadata::canonical_json_bytes(&member).unwrap(),
+        )
+        .unwrap();
+        git_backup::commit_all_unlocked(&other, "swap alpha for beta").unwrap();
+        git(&other, &["push", "origin", "main"]);
+
+        run_round_blocking(&env.store);
+        assert!(!agent_dir.join("alpha").is_symlink());
+        assert_eq!(
+            std::fs::read_link(agent_dir.join("beta")).unwrap(),
+            env.skills_dir.join("beta")
+        );
+    }
+
     #[test]
     fn round_stops_with_update_required_when_the_remote_format_is_newer() {
         // SID-101: a remote written by a newer version is never merged with
