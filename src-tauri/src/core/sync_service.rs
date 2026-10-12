@@ -13,7 +13,7 @@ use super::git_backup_store::{
 };
 use super::host::HostCtx;
 use super::merge::{self, resolve::ResolveAction};
-use super::scenario_service::STATUS_EDITED;
+use super::scenario_service::{self, STATUS_EDITED};
 use super::skill_store::SkillStore;
 use super::{auto_backup, central_repo, git_backup, sync_apply, sync_metadata};
 
@@ -68,6 +68,7 @@ pub struct SyncStatus {
     /// Last successful sync, ms since the epoch.
     pub last_sync: Option<i64>,
     pub conflicts: Vec<SyncConflict>,
+    pub same_name_presets: Vec<SameNamePreset>,
     pub edited_here: Vec<EditedCopy>,
     pub version: String,
     /// The Sync format this build understands and writes.
@@ -85,6 +86,26 @@ pub struct SyncConflict {
     pub other_host: String,
 }
 
+/// A preset renamed apart from another host's preset of the same name
+/// (SID-104), waiting for a choice.
+#[derive(Debug, Clone, Serialize)]
+pub struct SameNamePreset {
+    pub preset_id: String,
+    pub name: String,
+    /// The preset that kept the name.
+    pub other_id: String,
+    pub other_name: String,
+}
+
+/// How to settle a same-name pair: keep both, combine the renamed preset into
+/// the other, or keep one preset by id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresetChoice {
+    KeepBoth,
+    Combine,
+    Keep(String),
+}
+
 /// An agent copy flagged "Edited here" (SID-99).
 #[derive(Debug, Serialize)]
 pub struct EditedCopy {
@@ -99,6 +120,7 @@ pub fn sync_status(store: &SkillStore) -> SyncStatus {
     let git = git_backup::get_status(&central_repo::skills_dir()).ok();
     let remote = git.as_ref().and_then(|s| s.remote_url.clone());
     let conflicts = conflicts(store);
+    let same_name_presets = same_name_presets(store);
     let edited_here = edited_copies(store);
     let last_error = store
         .get_setting(auto_backup::SETTING_LAST_ERROR)
@@ -121,10 +143,11 @@ pub fn sync_status(store: &SkillStore) -> SyncStatus {
             SyncState::NeedsReview
         };
         (state, Some(error))
-    } else if !conflicts.is_empty() || !edited_here.is_empty() {
+    } else if !conflicts.is_empty() || !same_name_presets.is_empty() || !edited_here.is_empty() {
         let reason = format!(
-            "{} changed on two hosts, {} edited here",
+            "{} changed on two hosts, {} with the same name, {} edited here",
             plural(conflicts.len(), "skill"),
+            plural(same_name_presets.len(), "preset"),
             plural(edited_here.len(), "agent copy"),
         );
         (SyncState::NeedsReview, Some(reason))
@@ -142,6 +165,7 @@ pub fn sync_status(store: &SkillStore) -> SyncStatus {
             .flatten()
             .and_then(|v| v.parse().ok()),
         conflicts,
+        same_name_presets,
         edited_here,
         version: env!("CARGO_PKG_VERSION").to_string(),
         format: merge::protocol::MERGE_PROTOCOL_VERSION,
@@ -190,6 +214,25 @@ pub fn conflicts(store: &SkillStore) -> Vec<SyncConflict> {
             other_host: author(&row.theirs_commit).unwrap_or_default(),
             this_host: recorder(&row.skill_id).unwrap_or_else(|| effective_device_name(store)),
             skill_id: row.skill_id,
+        })
+        .collect()
+}
+
+fn same_name_presets(store: &SkillStore) -> Vec<SameNamePreset> {
+    let names: std::collections::HashMap<String, String> = store
+        .get_all_scenarios()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|scenario| (scenario.id, scenario.name))
+        .collect();
+    sync_metadata::preset_reviews(store)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(preset_id, other_id)| SameNamePreset {
+            name: names.get(&preset_id).cloned().unwrap_or_default(),
+            other_name: names.get(&other_id).cloned().unwrap_or_default(),
+            preset_id,
+            other_id,
         })
         .collect()
 }
@@ -256,6 +299,54 @@ pub fn resolve(ctx: &HostCtx, skill_id: &str, action: ResolveAction) -> Result<(
         Ok(())
     })
     .map_err(|e| AppError::classify_git_error(format!("{e:#}")))
+}
+
+/// Settle a same-name preset pair (SID-104). The choice goes out with the
+/// next sync, and the agents follow when the active preset is involved.
+pub fn resolve_preset(
+    store: &SkillStore,
+    preset_id: &str,
+    choice: PresetChoice,
+) -> Result<(), AppError> {
+    let mut reviews = sync_metadata::preset_reviews(store).map_err(AppError::db)?;
+    let other = reviews
+        .remove(preset_id)
+        .ok_or_else(|| AppError::not_found(format!("No same-name review for {preset_id}")))?;
+    let (keep, drop) = match &choice {
+        PresetChoice::KeepBoth => (None, None),
+        PresetChoice::Combine => (Some(other), Some(preset_id.to_string())),
+        PresetChoice::Keep(id) if id == preset_id => (Some(id.clone()), Some(other)),
+        PresetChoice::Keep(id) if *id == other => (Some(other), Some(preset_id.to_string())),
+        PresetChoice::Keep(id) => {
+            return Err(AppError::invalid_input(format!(
+                "{id} isn't part of this review"
+            )))
+        }
+    };
+    let active = store.get_active_scenario_id().map_err(AppError::db)?;
+    sync_metadata::with_repo_lock("resolve same-name presets", || {
+        if let (Some(keep), Some(drop)) = (&keep, &drop) {
+            if choice == PresetChoice::Combine {
+                for skill_id in store.get_skill_ids_for_scenario(drop)? {
+                    store.add_skill_to_scenario(keep, &skill_id)?;
+                }
+            }
+            if active.as_ref() == Some(drop) {
+                store.set_active_scenario(keep)?;
+            }
+            store.delete_scenario(drop)?;
+        }
+        sync_metadata::write_preset_reviews_unlocked(&reviews)?;
+        sync_metadata::write_all_from_db_unlocked(store)
+    })
+    .map_err(AppError::db)?;
+    match keep {
+        Some(keep) if active.is_some() && (active == drop || active.as_ref() == Some(&keep)) => {
+            scenario_service::apply_scenario_to_default(store, &keep)
+                .and_then(scenario_service::refusals_to_error)
+        }
+        _ => Ok(()),
+    }
 }
 
 pub fn history(limit: Option<usize>) -> Result<Vec<git_backup::SyncHistoryEntry>, AppError> {

@@ -1084,6 +1084,15 @@ export interface SyncConflict {
   other_host: string;
 }
 
+/** A preset renamed apart from another host's preset with the same name. */
+export interface SameNamePreset {
+  preset_id: string;
+  name: string;
+  /** The preset that kept the name. */
+  other_id: string;
+  other_name: string;
+}
+
 export interface EditedCopy {
   skill_id: string;
   name: string;
@@ -1099,6 +1108,7 @@ export interface SyncStatus {
   remote: null | string;
   last_sync: null | number;
   conflicts: SyncConflict[];
+  same_name_presets: SameNamePreset[];
   edited_here: EditedCopy[];
   version: string;
   format: number;

@@ -1115,6 +1115,9 @@ impl SkillStore {
                 }
             }
         }
+        // Park names on ids first, so names moving between presets (a
+        // same-name pair renamed apart, SID-104) can't trip UNIQUE mid-loop.
+        tx.execute("UPDATE scenarios SET name = char(1) || id", [])?;
         let now = chrono::Utc::now().timestamp_millis();
         for scenario in scenarios {
             tx.execute(

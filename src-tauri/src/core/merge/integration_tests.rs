@@ -1512,3 +1512,53 @@ fn ignored_file_in_the_way_blocks_with_guidance() {
         "precious local data"
     );
 }
+
+#[test]
+fn presets_merge_per_field_and_same_names_wait_for_review() {
+    // SID-104: a rename on one host and an icon change on another both
+    // survive; two hosts adding a preset with the same name keep both, one
+    // renamed and marked for review. The merged files need no rewrite.
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    a.activate();
+    a.add_preset("web", "Web", &["skill-1"]);
+    a.commit("add Web");
+    a.push();
+    b.pull();
+
+    a.activate();
+    a.store
+        .update_scenario("web", "Frontend", None, None)
+        .unwrap();
+    sync_metadata::write_all_from_db_unlocked(&a.store).unwrap();
+    a.add_preset("docs-a", "Docs", &[]);
+    a.commit("rename Web, add Docs");
+    a.push();
+    b.activate();
+    b.reindex();
+    b.store
+        .update_scenario("web", "Web", None, Some("globe"))
+        .unwrap();
+    sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
+    b.add_preset("docs-b", "Docs", &[]);
+    b.commit("icon for Web, add Docs");
+    let summary = b.pull();
+    assert!(!summary.fast_forward);
+
+    let presets: Vec<_> = b
+        .store
+        .get_all_scenarios()
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.id, s.name, s.icon))
+        .collect();
+    assert!(presets.contains(&("web".into(), "Frontend".into(), Some("globe".into()))));
+    assert!(presets.contains(&("docs-a".into(), "Docs".into(), None)));
+    assert!(presets.contains(&("docs-b".into(), "Docs (2)".into(), None)));
+    assert_eq!(
+        sync_metadata::preset_reviews(&b.store).unwrap(),
+        [("docs-b".to_string(), "docs-a".to_string())].into()
+    );
+    sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
+    assert!(!git_backup::has_uncommitted_changes(&b.skills).unwrap());
+}

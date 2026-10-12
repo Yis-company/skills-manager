@@ -118,6 +118,11 @@ pub(crate) fn write_all_from_db_unlocked(store: &SkillStore) -> Result<()> {
     write_scenario_records_from_db(store)?;
     write_active_preset_from_db(store)?;
     remove_stale_metadata_files(store)?;
+    let reviews = read_preset_review_file();
+    let live = preset_reviews(store)?;
+    if live != reviews {
+        write_preset_reviews_unlocked(&live)?;
+    }
     Ok(())
 }
 
@@ -261,6 +266,54 @@ pub const ACTIVE_PRESET_FILE: &str = "active-preset.json";
 fn read_active_preset_file() -> Option<ActivePresetFile> {
     let raw = fs::read_to_string(metadata_dir().join(ACTIVE_PRESET_FILE)).ok()?;
     serde_json::from_str(&raw).ok()
+}
+
+/// Presets the merge renamed apart from a same-name preset (SID-104), until
+/// someone reviews them: renamed preset id → the preset that kept the name.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct PresetReviewFile {
+    pub schema_version: u32,
+    pub same_name: BTreeMap<String, String>,
+}
+
+pub const PRESET_REVIEW_FILE: &str = "preset-review.json";
+
+fn read_preset_review_file() -> BTreeMap<String, String> {
+    fs::read(metadata_dir().join(PRESET_REVIEW_FILE))
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<PresetReviewFile>(&raw).ok())
+        .map(|file| file.same_name)
+        .unwrap_or_default()
+}
+
+/// Same-name presets waiting for review whose presets both still exist.
+pub fn preset_reviews(store: &SkillStore) -> Result<BTreeMap<String, String>> {
+    let ids: HashSet<String> = store
+        .get_all_scenarios()?
+        .into_iter()
+        .map(|scenario| scenario.id)
+        .collect();
+    let mut reviews = read_preset_review_file();
+    reviews.retain(|renamed, kept| ids.contains(renamed) && ids.contains(kept));
+    Ok(reviews)
+}
+
+/// Write the review list; an empty one removes the file.
+pub(crate) fn write_preset_reviews_unlocked(reviews: &BTreeMap<String, String>) -> Result<()> {
+    let path = metadata_dir().join(PRESET_REVIEW_FILE);
+    if reviews.is_empty() {
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        return Ok(());
+    }
+    atomic_write_json(
+        &path,
+        &PresetReviewFile {
+            schema_version: SCHEMA_VERSION,
+            same_name: reviews.clone(),
+        },
+    )
 }
 
 fn write_active_preset_from_db(store: &SkillStore) -> Result<()> {

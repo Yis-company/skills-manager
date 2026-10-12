@@ -397,6 +397,7 @@ mod tests {
     use crate::core::skill_store::ScenarioRecord;
     use crate::core::test_support::{sample_skill, test_repo, write_skill_dir, TestRepo};
     use crate::core::tool_adapters::{self, CustomToolDef};
+    use crate::core::{sync_metadata, sync_service};
     use std::fs;
 
     /// A library whose only agent deploys into a temp folder, with preset
@@ -847,5 +848,56 @@ mod tests {
         reapply_active_preset(store, &before);
         assert!(!agent_dir.join("alpha").is_symlink());
         assert!(agent_dir.join("beta").is_symlink());
+    }
+
+    #[test]
+    fn same_name_presets_combine_or_keep_one() {
+        // SID-104: the review choices for a preset renamed apart from another
+        // host's preset of the same name.
+        let (repo, agent_dir) = setup();
+        let store = &repo.store;
+        add_skill(store, "alpha", true);
+        add_skill(store, "beta", false);
+        reapply_active_preset(store, &capture(store));
+        for (id, name) in [("web-2", "Web (2)"), ("ops", "Ops"), ("ops-2", "Ops (2)")] {
+            store
+                .insert_scenario(&ScenarioRecord {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    description: None,
+                    icon: None,
+                    sort_order: 1,
+                    created_at: 1,
+                    updated_at: 1,
+                })
+                .unwrap();
+        }
+        store.add_skill_to_scenario("web-2", "beta").unwrap();
+        let reviews = [("web-2", "web"), ("ops-2", "ops")]
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .into();
+        sync_metadata::write_preset_reviews_unlocked(&reviews).unwrap();
+
+        // Combine: the renamed preset's skills join the active preset, and
+        // the agents follow.
+        sync_service::resolve_preset(store, "web-2", sync_service::PresetChoice::Combine).unwrap();
+        assert_eq!(
+            store.get_skill_ids_for_scenario("web").unwrap(),
+            ["alpha", "beta"]
+        );
+        assert!(agent_dir.join("beta").is_symlink());
+
+        // Keep one: the other preset goes, and nothing is left to review.
+        let keep = sync_service::PresetChoice::Keep("ops-2".to_string());
+        sync_service::resolve_preset(store, "ops-2", keep).unwrap();
+        let mut ids: Vec<_> = store
+            .get_all_scenarios()
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["ops-2", "web"]);
+        assert!(sync_metadata::preset_reviews(store).unwrap().is_empty());
     }
 }

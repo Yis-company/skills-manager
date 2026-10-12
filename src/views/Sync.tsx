@@ -52,6 +52,8 @@ export function Sync() {
   const current = selection ?? (thisHost.inSync ? "overview" : "local");
   const host = screen.hosts.find((h) => hostKey(h) === current);
   const conflicts = screen.local?.conflicts ?? [];
+  const presets = screen.local?.same_name_presets ?? [];
+  const reviewCount = conflicts.length + presets.length;
   const settingUp = add.run && !add.run.done ? add.run : null;
 
   const navItem = (key: Selection, label: ReactNode, extra?: ReactNode) => (
@@ -100,8 +102,8 @@ export function Sync() {
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
               {t("sync.needsReview")}
             </>,
-            conflicts.length > 0 && (
-              <span className="app-badge !px-1.5 !py-0 !text-[11px]">{conflicts.length}</span>
+            reviewCount > 0 && (
+              <span className="app-badge !px-1.5 !py-0 !text-[11px]">{reviewCount}</span>
             ),
           )}
           <div className="app-section-title px-2.5 pb-1 pt-4">{t("sync.hosts")}</div>
@@ -154,7 +156,9 @@ export function Sync() {
               onOpen={(h) => setSelection(hostKey(h))}
             />
           )}
-          {current === "review" && <Review conflicts={conflicts} onResolved={screen.refresh} />}
+          {current === "review" && (
+            <Review conflicts={conflicts} presets={presets} onResolved={screen.refresh} />
+          )}
           {(current === "add" || (settingUp && settingUp.hostId === current)) && (
             <AddHost add={add} />
           )}

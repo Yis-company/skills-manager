@@ -74,6 +74,7 @@ export const HOST_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "sync_history",
   "sync_conflicts",
   "sync_resolve",
+  "sync_resolve_preset",
   "sync_restore",
   "sync_pause",
   "sync_resume",

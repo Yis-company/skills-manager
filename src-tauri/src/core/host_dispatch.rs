@@ -82,6 +82,7 @@ pub const COMMANDS: &[&str] = &[
     "sync_history",
     "sync_conflicts",
     "sync_resolve",
+    "sync_resolve_preset",
     "sync_restore",
     "sync_pause",
     "sync_resume",
@@ -371,6 +372,14 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
                 a.opt("both")?.unwrap_or(false),
             )?;
             sync_service::resolve(ctx, &skill_id, action)
+        })()),
+        "sync_resolve_preset" => reply((|| {
+            let choice = match (a.opt::<String>("keep")?, a.opt("combine")?.unwrap_or(false)) {
+                (Some(id), _) => sync_service::PresetChoice::Keep(id),
+                (None, true) => sync_service::PresetChoice::Combine,
+                (None, false) => sync_service::PresetChoice::KeepBoth,
+            };
+            sync_service::resolve_preset(&ctx.store, &a.req::<String>("preset")?, choice)
         })()),
         "sync_restore" => reply(sync_service::restore(ctx, &a.req::<String>("point")?)),
         "sync_pause" => reply(sync_service::set_paused(&ctx.store, true)),
