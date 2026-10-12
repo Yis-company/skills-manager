@@ -484,6 +484,11 @@ fn true_conflict_keeps_ours_declares_trailer_and_pins_theirs() {
     let entry = theirs_tree.get_path(Path::new("alpha/SKILL.md")).unwrap();
     let blob = repo_b.find_blob(entry.id()).unwrap();
     assert_eq!(blob.content(), b"edited on B");
+    let found = crate::core::sync_service::conflicts(&b.store);
+    assert_eq!(
+        (found[0].this_host.as_str(), found[0].other_host.as_str()),
+        ("Device A", "Device B")
+    );
 }
 
 #[test]
@@ -837,6 +842,51 @@ fn conflict_choices_are_named_by_host() {
     assert_eq!(choose(None, true).unwrap().1, ResolveAction::KeepBoth);
     let err = choose(Some("Mac"), false).unwrap_err().to_string();
     assert!(err.contains("--keep Device A or --keep Device B"), "{err}");
+}
+
+#[test]
+fn a_host_that_pulls_a_conflict_still_offers_its_own_version() {
+    // A flags the skill and keeps its version. B pulls that with its own
+    // unpushed work, so the pull is a full merge, not a fast-forward.
+    use crate::core::sync_service::{conflicts, resolve_choice};
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    b.activate();
+    b.write_skill("skill-1", "alpha", "edited on B");
+    b.commit("edit on B");
+    b.push();
+    a.activate();
+    a.write_skill("skill-1", "alpha", "edited on A");
+    a.commit("edit on A");
+    a.pull();
+    a.push();
+
+    b.activate();
+    b.write_skill("skill-2", "beta", "unrelated on B");
+    b.commit("unrelated on B");
+    let summary = b.pull();
+    assert!(!summary.fast_forward);
+    assert_eq!(b.skill_md("alpha"), "edited on A");
+    assert_eq!(b.conflict_skill_md("skill-1", "alpha"), "edited on B");
+    let found = conflicts(&b.store);
+    assert_eq!(
+        (found[0].this_host.as_str(), found[0].other_host.as_str()),
+        ("Device A", "Device B")
+    );
+    b.push();
+
+    // A pulls B's merge with its own unpushed work: B's version is still the
+    // one offered.
+    a.activate();
+    a.write_skill("skill-3", "gamma", "unrelated on A");
+    a.commit("unrelated on A");
+    a.pull();
+    assert_eq!(a.conflict_skill_md("skill-1", "alpha"), "edited on B");
+
+    b.activate();
+    let (id, action) = resolve_choice(&b.store, "skill-1", Some("Device B"), false).unwrap();
+    resolve_conflict_unlocked(&b.store, &b.skills, &id, action).unwrap();
+    assert_eq!(b.skill_md("alpha"), "edited on B");
 }
 
 // ── R3 反例: pending placeholder derived from theirs trailers only ──
