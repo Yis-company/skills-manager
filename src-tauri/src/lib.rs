@@ -1062,6 +1062,7 @@ pub fn run() {
             // Sync
             commands::sync::sync_skill_to_tool,
             commands::sync::unsync_skill_from_tool,
+            commands::sync::resolve_edited_copy,
             commands::sync::get_skill_tool_toggles,
             commands::sync::set_skill_tool_toggle,
             // Scan

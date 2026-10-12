@@ -62,6 +62,7 @@ pub const COMMANDS: &[&str] = &[
     // Sync
     "sync_skill_to_tool",
     "unsync_skill_from_tool",
+    "resolve_edited_copy",
     "get_skill_tool_toggles",
     "set_skill_tool_toggle",
     // Scan
@@ -306,6 +307,12 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             ctx,
             a.req("skillId")?,
             a.req("tool")?,
+        )),
+        "resolve_edited_copy" => reply(sync::resolve_edited_copy_core(
+            ctx,
+            a.req("skillId")?,
+            a.req("tool")?,
+            a.req("keepMine")?,
         )),
         "get_skill_tool_toggles" => reply(sync::get_skill_tool_toggles_core(
             ctx,

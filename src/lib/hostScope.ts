@@ -55,6 +55,7 @@ export const HOST_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   // Sync
   "sync_skill_to_tool",
   "unsync_skill_from_tool",
+  "resolve_edited_copy",
   "get_skill_tool_toggles",
   "set_skill_tool_toggle",
   // Scan

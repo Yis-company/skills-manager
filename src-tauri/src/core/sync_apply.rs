@@ -7,22 +7,29 @@
 //! - anything missing is deployed.
 //!
 //! Skills added directly to an agent stay until the next preset switch
-//! (SID-98). Each change is written to the audit log, which doubles as the
-//! host's agent log.
+//! (SID-98). A copy edited in its agent folder is never overwritten or
+//! removed: it is flagged "Edited here" until the user picks "Use Sync
+//! version" or "Keep my edit". Each change is written to the audit log,
+//! which doubles as the host's agent log.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use super::audit_log::AuditDraft;
+use super::central_repo;
 use super::error::AppError;
-use super::scenario_service::{self, ScenarioSyncTarget};
+use super::scenario_service::{
+    self, DeployIntent, ScenarioSyncTarget, STATUS_EDITED, STATUS_EDITED_LEFT,
+};
 use super::skill_store::{SkillStore, SkillTargetRecord};
 use super::sync_engine;
 
 /// Audit actions of the agent log.
 pub const ACTION_DEPLOY: &str = "agent_deploy";
 pub const ACTION_REMOVE: &str = "agent_remove";
+pub const ACTION_FLAG: &str = "agent_flag";
+pub const ACTION_RESOLVE: &str = "agent_resolve_edit";
 
 /// What this host had on its agents before the library changed. The
 /// database forgets a deleted skill's deployments (cascade), so this is the
@@ -100,52 +107,126 @@ fn reapply(store: &SkillStore, before: &Baseline) -> Result<Vec<AuditDraft>, App
         if !left_preset && !left_library {
             continue;
         }
-        sync_engine::remove_recorded_target_or_warn(Path::new(&target.target_path), &target.mode);
-        store
-            .delete_target(&target.skill_id, &target.tool)
-            .map_err(AppError::db)?;
         let name = before
             .skills
             .get(&target.skill_id)
             .map_or(target.skill_id.as_str(), |(name, _)| name.as_str());
-        entries.push(
-            AuditDraft::new(ACTION_REMOVE)
+        let entry = |action| {
+            AuditDraft::new(action)
                 .skill(&target.skill_id, name)
                 .tool(&target.tool)
-                .ok(),
-        );
+        };
+        if scenario_service::keep_if_edited(store, target, STATUS_EDITED_LEFT) {
+            entries.push(entry(ACTION_FLAG).detail("Edited here").ok());
+            continue;
+        }
+        sync_engine::remove_recorded_target_or_warn(Path::new(&target.target_path), &target.mode);
+        store
+            .delete_target(&target.skill_id, &target.tool)
+            .map_err(AppError::db)?;
+        entries.push(entry(ACTION_REMOVE).ok());
     }
 
-    let synced_at =
-        |store: &SkillStore| -> Result<HashMap<(String, String), Option<i64>>, AppError> {
-            Ok(store
-                .get_all_targets()
-                .map_err(AppError::db)?
-                .into_iter()
-                .map(|t| ((t.skill_id, t.tool), t.synced_at))
-                .collect())
-        };
-    let synced_before = synced_at(store)?;
+    type TargetState = HashMap<(String, String), (Option<i64>, String)>;
+    let state = |store: &SkillStore| -> Result<TargetState, AppError> {
+        Ok(store
+            .get_all_targets()
+            .map_err(AppError::db)?
+            .into_iter()
+            .map(|t| ((t.skill_id, t.tool), (t.synced_at, t.status)))
+            .collect())
+    };
+    let before_sync = state(store)?;
     let refusals = scenario_service::sync_desired_targets(store, &desired)?;
-    let synced_after = synced_at(store)?;
+    let after_sync = state(store)?;
     for target in &desired {
         let key = (target.skill_id.clone(), target.tool.clone());
-        let entry = AuditDraft::new(ACTION_DEPLOY)
-            .skill(&target.skill_id, &target.skill_name)
-            .tool(&target.tool);
-        match synced_after.get(&key) {
-            Some(at) if synced_before.get(&key) == Some(at) => {}
-            Some(_) => entries.push(entry.ok()),
+        let entry = |action| {
+            AuditDraft::new(action)
+                .skill(&target.skill_id, &target.skill_name)
+                .tool(&target.tool)
+        };
+        let was = before_sync.get(&key);
+        match after_sync.get(&key) {
+            Some((_, status))
+                if status == STATUS_EDITED
+                    && was.map(|(_, s)| s.as_str()) != Some(STATUS_EDITED) =>
+            {
+                entries.push(entry(ACTION_FLAG).detail("Edited here").ok());
+            }
+            Some((at, _)) if was.map(|(at, _)| at) == Some(at) => {}
+            Some(_) => entries.push(entry(ACTION_DEPLOY).ok()),
             None => {
                 let reason = refusals
                     .iter()
                     .find(|r| r.target == target.target)
                     .map_or_else(|| "not deployed".to_string(), |r| r.reason.clone());
-                entries.push(entry.fail(reason));
+                entries.push(entry(ACTION_DEPLOY).fail(reason));
             }
         }
     }
     Ok(entries)
+}
+
+/// Apply the user's choice for a copy flagged "Edited here" (SID-99).
+/// "Keep my edit" leaves the copy alone until Sync changes the skill again,
+/// which flags it again. "Use Sync version" moves the edit to a backup folder
+/// under `edited-backups/`, then puts the library version back, or nothing if
+/// the skill left this agent.
+pub fn resolve_edited_copy(
+    store: &SkillStore,
+    skill_id: &str,
+    tool: &str,
+    keep_mine: bool,
+) -> Result<(), AppError> {
+    let target = store
+        .get_targets_for_skill(skill_id)
+        .map_err(AppError::db)?
+        .into_iter()
+        .find(|t| t.tool == tool && t.status.starts_with(STATUS_EDITED))
+        .ok_or_else(|| AppError::not_found("No edited copy of this skill on that agent"))?;
+    let skill = store.get_skill_by_id(skill_id).map_err(AppError::db)?;
+    if keep_mine {
+        let hash = skill.as_ref().and_then(|s| s.content_hash.as_deref());
+        store
+            .set_target_status(skill_id, tool, "ok", hash)
+            .map_err(AppError::db)?;
+    } else {
+        let path = PathBuf::from(&target.target_path);
+        let backup = central_repo::base_dir()
+            .join("edited-backups")
+            .join(chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string())
+            .join(tool)
+            .join(path.file_name().unwrap_or_default());
+        if let Some(parent) = backup.parent() {
+            std::fs::create_dir_all(parent).map_err(AppError::io)?;
+        }
+        std::fs::rename(&path, &backup).map_err(AppError::io)?;
+        store.delete_target(skill_id, tool).map_err(AppError::db)?;
+        if target.status == STATUS_EDITED && skill.is_some() {
+            scenario_service::sync_single_skill_to_tool(
+                store,
+                skill_id,
+                tool,
+                DeployIntent::Managed,
+            )?;
+        }
+    }
+    store.log_audit(
+        AuditDraft::new(ACTION_RESOLVE)
+            .skill(
+                skill_id,
+                skill.map_or_else(|| skill_id.to_string(), |s| s.name),
+            )
+            .tool(tool)
+            .detail(if keep_mine {
+                "keep my edit"
+            } else {
+                "use Sync version"
+            })
+            .ok(),
+    );
+    Ok(())
 }
 
 /// The active preset. One deleted on another host can't stay active here:
@@ -348,5 +429,116 @@ mod tests {
             fs::read_link(agent_dir.join("alpha-renamed")).unwrap(),
             renamed
         );
+    }
+
+    /// Copy mode, skill "alpha" deployed at version h1, then edited in the
+    /// agent folder while Sync brings version h2: flagged "Edited here".
+    fn flagged_copy() -> (TestRepo, PathBuf) {
+        let (repo, agent_dir) = setup();
+        let store = &repo.store;
+        store.set_setting("sync_mode", "copy").unwrap();
+        add_skill(store, "alpha", true);
+        set_version(store, "alpha", "h1", "library v1");
+        reapply_active_preset(store, &capture(store));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(agent_dir.join("alpha/SKILL.md"), "my edit").unwrap();
+
+        let before = capture(store);
+        set_version(store, "alpha", "h2", "library v2");
+        let entries = reapply_active_preset(store, &before);
+        assert_eq!(
+            actions(&entries),
+            vec![(ACTION_FLAG.to_string(), "alpha".to_string(), true)]
+        );
+        (repo, agent_dir)
+    }
+
+    fn set_version(store: &SkillStore, id: &str, hash: &str, content: &str) {
+        let mut record = store.get_skill_by_id(id).unwrap().unwrap();
+        fs::write(Path::new(&record.central_path).join("SKILL.md"), content).unwrap();
+        record.content_hash = Some(hash.to_string());
+        store.upsert_skill(&record).unwrap();
+    }
+
+    fn status(store: &SkillStore, id: &str) -> String {
+        store.get_targets_for_skill(id).unwrap()[0].status.clone()
+    }
+
+    #[test]
+    fn an_edited_copy_is_flagged_not_overwritten() {
+        let (repo, agent_dir) = flagged_copy();
+        assert_eq!(
+            fs::read_to_string(agent_dir.join("alpha/SKILL.md")).unwrap(),
+            "my edit"
+        );
+        assert_eq!(status(&repo.store, "alpha"), STATUS_EDITED);
+    }
+
+    #[test]
+    fn keep_my_edit_is_flagged_again_on_the_next_change() {
+        let (repo, agent_dir) = flagged_copy();
+        let store = &repo.store;
+        resolve_edited_copy(store, "alpha", "test_agent", true).unwrap();
+        assert_eq!(status(store, "alpha"), "ok");
+        assert!(reapply_active_preset(store, &capture(store)).is_empty());
+
+        let before = capture(store);
+        set_version(store, "alpha", "h3", "library v3");
+        reapply_active_preset(store, &before);
+        assert_eq!(status(store, "alpha"), STATUS_EDITED);
+        assert_eq!(
+            fs::read_to_string(agent_dir.join("alpha/SKILL.md")).unwrap(),
+            "my edit"
+        );
+    }
+
+    #[test]
+    fn use_sync_version_backs_up_the_edit_and_updates_the_copy() {
+        let (repo, agent_dir) = flagged_copy();
+        let store = &repo.store;
+        resolve_edited_copy(store, "alpha", "test_agent", false).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(agent_dir.join("alpha/SKILL.md")).unwrap(),
+            "library v2"
+        );
+        assert_eq!(status(store, "alpha"), "ok");
+        let backups: Vec<_> =
+            walkdir::WalkDir::new(central_repo::base_dir().join("edited-backups"))
+                .into_iter()
+                .flatten()
+                .filter(|e| e.file_name() == "SKILL.md")
+                .collect();
+        assert_eq!(backups.len(), 1);
+        assert!(backups[0].path().ends_with("test_agent/alpha/SKILL.md"));
+        assert_eq!(fs::read_to_string(backups[0].path()).unwrap(), "my edit");
+    }
+
+    #[test]
+    fn a_switch_keeps_an_edited_copy_until_the_user_chooses() {
+        let (repo, agent_dir) = flagged_copy();
+        let store = &repo.store;
+        store
+            .insert_scenario(&ScenarioRecord {
+                id: "empty".to_string(),
+                name: "Empty".to_string(),
+                description: None,
+                icon: None,
+                sort_order: 1,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        scenario_service::apply_scenario_to_default(store, "empty").unwrap();
+        assert_eq!(
+            fs::read_to_string(agent_dir.join("alpha/SKILL.md")).unwrap(),
+            "my edit"
+        );
+        assert_eq!(status(store, "alpha"), STATUS_EDITED_LEFT);
+
+        // "Use Sync version" now means: not on this agent.
+        resolve_edited_copy(store, "alpha", "test_agent", false).unwrap();
+        assert!(!agent_dir.join("alpha").exists());
+        assert!(store.get_targets_for_skill("alpha").unwrap().is_empty());
     }
 }

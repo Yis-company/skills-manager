@@ -622,6 +622,23 @@ impl SkillStore {
         Ok(())
     }
 
+    /// Set a target's status, and its recorded source hash when given.
+    pub fn set_target_status(
+        &self,
+        skill_id: &str,
+        tool: &str,
+        status: &str,
+        source_hash: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE skill_targets SET status = ?3, source_hash = COALESCE(?4, source_hash)
+             WHERE skill_id = ?1 AND tool = ?2",
+            params![skill_id, tool, status, source_hash],
+        )?;
+        Ok(())
+    }
+
     // ── Discovered Skills ──
 
     pub fn clear_discovered(&self) -> Result<()> {

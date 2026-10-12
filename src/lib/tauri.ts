@@ -479,6 +479,11 @@ export const syncSkillToTool = (skillId: string, tool: string) =>
 export const unsyncSkillFromTool = (skillId: string, tool: string) =>
   invoke<void>("unsync_skill_from_tool", { skillId, tool });
 
+/** For a copy flagged "Edited here" (target status `edited` or
+ * `edited_left`): "Use Sync version" (`keepMine` false) or "Keep my edit". */
+export const resolveEditedCopy = (skillId: string, tool: string, keepMine: boolean) =>
+  invoke<void>("resolve_edited_copy", { skillId, tool, keepMine });
+
 export const getSkillToolToggles = (skillId: string, presetId: string) =>
   invoke<SkillToolToggle[]>("get_skill_tool_toggles", { skillId, presetId });
 
