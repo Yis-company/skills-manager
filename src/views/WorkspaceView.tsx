@@ -42,6 +42,7 @@ import { ResourceWorkspace } from "../components/ResourceWorkspace";
 import { SkillMarkdown } from "../components/SkillMarkdown";
 import { useApp } from "../context/AppContext";
 import { useMultiSelect } from "../hooks/useMultiSelect";
+import { usePresetSwitch } from "../hooks/usePresetSwitch";
 import { managedSkillsQueryOptions, refreshQuery, toolsQueryOptions } from "../lib/appQueries";
 import { getErrorMessage } from "../lib/error";
 import { invokeHost } from "../lib/hostCall";
@@ -279,8 +280,21 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   const navigate = useNavigate();
   const { t } = useTranslation();
 
-  const { tools, managedSkills, presets, refreshManagedSkills, refreshTools, activeHostId } =
-    useApp();
+  const {
+    tools,
+    managedSkills,
+    presets,
+    activePreset,
+    refreshManagedSkills,
+    refreshTools,
+    refreshPresets,
+    activeHostId,
+  } = useApp();
+
+  // Global workspaces switch the shared active preset (SID-98).
+  const presetSwitch = usePresetSwitch(async () => {
+    await Promise.all([refreshManagedSkills(), refreshTools(), refreshPresets()]);
+  });
 
   const queryClient = useQueryClient();
 
@@ -1161,8 +1175,11 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                   onAddSkill={handlePresetAdd}
                   onRemoveSkill={handlePresetRemove}
                   onComplete={handlePresetComplete}
+                  onSwitch={presetSwitch.switchTo}
+                  activePresetId={activePreset?.id}
                 />
               )}
+              {presetSwitch.dialog}
             </div>
 
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -1397,8 +1414,11 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                 onAddSkill={handlePresetAdd}
                 onRemoveSkill={handlePresetRemove}
                 onComplete={handlePresetComplete}
+                onSwitch={presetSwitch.switchTo}
+                activePresetId={activePreset?.id}
               />
             )}
+            {presetSwitch.dialog}
           </div>
 
           {localSkillsLoading ? (

@@ -114,7 +114,8 @@ pub fn create_preset_core(
     icon: Option<String>,
 ) -> Result<PresetDto, AppError> {
     let store = ctx.store.clone();
-    create_and_activate_preset_internal(&store, &name, description.as_deref(), icon.as_deref())
+    // Creating a preset doesn't make it active (SID-98).
+    create_preset_internal(&store, &name, description.as_deref(), icon.as_deref())
         .map(|scenario| preset_dto(&store, scenario))
 }
 
@@ -152,25 +153,6 @@ pub fn create_preset_internal(
         sync_metadata::write_all_from_db_unlocked(store)
     })
     .map_err(AppError::db)?;
-    Ok(record)
-}
-
-/// Preserve the desktop app's legacy create-and-select behavior while the CLI
-/// uses [`create_preset_internal`] as a pure organization operation.
-fn create_and_activate_preset_internal(
-    store: &SkillStore,
-    name: &str,
-    description: Option<&str>,
-    icon: Option<&str>,
-) -> Result<ScenarioRecord, AppError> {
-    let previous_active_id = store.get_active_scenario_id().map_err(AppError::db)?;
-    let record = create_preset_internal(store, name, description, icon)?;
-    if let Some(previous_id) = previous_active_id.as_deref() {
-        unsync_scenario_skills(store, previous_id)?;
-    }
-    store
-        .set_active_scenario(&record.id)
-        .map_err(AppError::db)?;
     Ok(record)
 }
 
@@ -263,39 +245,22 @@ pub fn delete_preset_internal(store: &SkillStore, id: &str) -> Result<(), AppErr
     .map_err(AppError::db)
 }
 
-/// Preserve the desktop app's legacy active-preset transition. The CLI calls
-/// [`delete_preset_internal`] directly so deleting an organization object does
-/// not implicitly undeploy skills.
+/// The active preset can't be deleted (SID-98): another host may be
+/// switching to it, and a delete loses to a switch anyway (SID-104).
 fn delete_preset_with_active_fallback_internal(
     store: &SkillStore,
     id: &str,
 ) -> Result<(), AppError> {
     scenario_service::ensure_scenario_exists(store, id)?;
-    let was_active = store
+    if store
         .get_active_scenario_id()
         .map_err(AppError::db)?
         .as_deref()
-        == Some(id);
-
-    if was_active {
-        unsync_scenario_skills(store, id)?;
+        == Some(id)
+    {
+        return Err(AppError::invalid_input("Switch to another preset first"));
     }
-
-    delete_preset_internal(store, id)?;
-
-    if was_active {
-        let remaining = store.get_all_scenarios().map_err(AppError::db)?;
-        if let Some(first) = remaining.first() {
-            store.set_active_scenario(&first.id).map_err(AppError::db)?;
-            // The preset is already deleted and the fallback already active, so
-            // a refusal here cannot undo any of that — report it, don't fail.
-            for refusal in sync_scenario_skills(store, &first.id)? {
-                log::warn!("fallback preset sync skipped a target: {refusal}");
-            }
-        }
-    }
-
-    Ok(())
+    delete_preset_internal(store, id)
 }
 
 /// Apply a preset to the default targets (all enabled agent globals).
@@ -341,6 +306,24 @@ async fn apply_preset_to_default_impl(
     // happen before the switch make this a harmless no-op refresh.
     refresh_tray_menu_best_effort(&app);
     result
+}
+
+/// What switching to a preset takes off the agents, as (skill, agent) pairs:
+/// the first switch after the upgrade shows it (SID-98).
+#[tauri::command]
+pub async fn preview_preset_switch(
+    id: String,
+    ctx: State<'_, HostCtx>,
+) -> Result<Vec<(String, String)>, AppError> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || preview_preset_switch_core(&ctx, id)).await?
+}
+
+pub fn preview_preset_switch_core(
+    ctx: &HostCtx,
+    id: String,
+) -> Result<Vec<(String, String)>, AppError> {
+    scenario_service::preview_switch_removals(&ctx.store, &id)
 }
 
 /// Shared by `apply_preset_to_default` and the legacy `switch_preset`.
@@ -519,20 +502,6 @@ pub fn reorder_preset_skills_core(
 
 // ── Internal helpers ──
 
-pub(crate) fn sync_scenario_skills(
-    store: &SkillStore,
-    scenario_id: &str,
-) -> Result<Vec<scenario_service::TargetConflict>, AppError> {
-    scenario_service::sync_scenario_skills(store, scenario_id)
-}
-
-pub(crate) fn unsync_scenario_skills(
-    store: &SkillStore,
-    scenario_id: &str,
-) -> Result<(), AppError> {
-    scenario_service::unsync_scenario_skills(store, scenario_id)
-}
-
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PresetApplyMode {
@@ -709,6 +678,22 @@ mod tests {
     }
 
     #[test]
+    fn the_active_preset_cant_be_deleted_and_default_has_one_id() {
+        let repo = metadata_test_repo();
+        scenario_service::ensure_default_startup_scenario(&repo.store).unwrap();
+        assert_eq!(
+            repo.store.get_active_scenario_id().unwrap().as_deref(),
+            Some(scenario_service::DEFAULT_PRESET_ID)
+        );
+        let err = delete_preset_with_active_fallback_internal(
+            &repo.store,
+            scenario_service::DEFAULT_PRESET_ID,
+        )
+        .unwrap_err();
+        assert!(err.message.contains("Switch to another preset first"));
+    }
+
+    #[test]
     fn organization_crud_does_not_switch_or_deploy_presets() {
         let repo = metadata_test_repo();
         repo.store
@@ -776,7 +761,7 @@ mod tests {
         store.add_skill_to_scenario("new", "new-only").unwrap();
 
         store.set_active_scenario("old").unwrap();
-        sync_scenario_skills(&store, "old").unwrap();
+        scenario_service::sync_scenario_skills(&store, "old").unwrap();
 
         let shared_target = target_base.join("shared");
         let old_only_target = target_base.join("old-only");
@@ -786,7 +771,7 @@ mod tests {
         let shared_inode_before = fs::symlink_metadata(&shared_target).unwrap().ino();
 
         let desired_targets = collect_scenario_sync_targets(&store, "new").unwrap();
-        unsync_obsolete_scenario_targets(&store, "old", &desired_targets).unwrap();
+        unsync_obsolete_scenario_targets(&store, &desired_targets).unwrap();
         store.set_active_scenario("new").unwrap();
         sync_desired_targets(&store, &desired_targets).unwrap();
 
@@ -837,7 +822,7 @@ mod tests {
         store.add_skill_to_scenario("active", "first").unwrap();
         store.add_skill_to_scenario("active", "second").unwrap();
 
-        sync_scenario_skills(&store, "active").unwrap();
+        scenario_service::sync_scenario_skills(&store, "active").unwrap();
 
         assert_eq!(
             fs::read_to_string(target_base.join("skill123/unique.txt")).unwrap(),

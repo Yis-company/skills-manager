@@ -44,6 +44,7 @@ pub const ACTION_REVIEW: &str = "agent_review";
 /// only record of what to clean up.
 #[derive(Default)]
 pub struct Baseline {
+    active: Option<String>,
     /// (skill id, agent) pairs the active preset deployed.
     preset_targets: HashSet<(String, String)>,
     targets: Vec<SkillTargetRecord>,
@@ -55,20 +56,20 @@ pub struct Baseline {
 /// partial baseline, which only skips removals.
 pub fn capture(store: &SkillStore) -> Baseline {
     let mut preset_targets = HashSet::new();
-    if let Ok(Some(active)) = store.get_active_scenario_id() {
-        for skill_id in store
-            .get_skill_ids_for_scenario(&active)
+    let active = store.get_active_scenario_id().ok().flatten();
+    if let Some(active) = &active {
+        for skill_id in store.get_skill_ids_for_scenario(active).unwrap_or_default() {
+            for adapter in scenario_service::enabled_installed_adapters_for_scenario_skill(
+                store, active, &skill_id,
+            )
             .unwrap_or_default()
-        {
-            for tool in store
-                .get_enabled_tools_for_scenario_skill(&active, &skill_id)
-                .unwrap_or_default()
             {
-                preset_targets.insert((skill_id.clone(), tool));
+                preset_targets.insert((skill_id.clone(), adapter.key));
             }
         }
     }
     Baseline {
+        active,
         preset_targets,
         targets: store.get_all_targets().unwrap_or_default(),
         skills: store
@@ -104,10 +105,14 @@ fn reapply(store: &SkillStore, before: &Baseline) -> Result<Vec<AuditDraft>, App
         .map(|t| (t.skill_id.clone(), t.tool.clone()))
         .collect();
 
+    // Another host switched the shared active preset: like a switch here,
+    // everything outside the new preset goes, direct deploys included (SID-98).
+    let switched = before.active.as_deref() != Some(active.as_str());
     let mut entries = Vec::new();
     for target in &before.targets {
         let key = (target.skill_id.clone(), target.tool.clone());
-        let left_preset = before.preset_targets.contains(&key) && !desired_keys.contains(&key);
+        let left_preset =
+            (switched || before.preset_targets.contains(&key)) && !desired_keys.contains(&key);
         let left_library = store
             .get_skill_by_id(&target.skill_id)
             .map_err(AppError::db)?
@@ -769,5 +774,78 @@ mod tests {
             summary(&reapply_resources(&ctx)),
             vec![(ACTION_REVIEW.to_string(), "Rules".to_string(), false)]
         );
+    }
+
+    #[test]
+    fn a_switch_removes_everything_outside_the_new_preset() {
+        // SID-98: a switch leaves exactly the new preset on the agents;
+        // skills added directly go too.
+        let (repo, agent_dir) = setup();
+        let store = &repo.store;
+        add_skill(store, "alpha", true);
+        add_skill(store, "beta", false);
+        add_skill(store, "gamma", false);
+        reapply_active_preset(store, &capture(store));
+        scenario_service::sync_single_skill_to_tool(
+            store,
+            "gamma",
+            "test_agent",
+            scenario_service::DeployIntent::Managed,
+        )
+        .unwrap();
+        store
+            .insert_scenario(&ScenarioRecord {
+                id: "ops".to_string(),
+                name: "Ops".to_string(),
+                description: None,
+                icon: None,
+                sort_order: 1,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        store.add_skill_to_scenario("ops", "beta").unwrap();
+
+        let removals = scenario_service::preview_switch_removals(store, "ops").unwrap();
+        assert_eq!(
+            removals,
+            [
+                ("alpha".to_string(), "test_agent".to_string()),
+                ("gamma".to_string(), "test_agent".to_string())
+            ]
+        );
+        scenario_service::apply_scenario_to_default(store, "ops").unwrap();
+        assert!(!agent_dir.join("alpha").is_symlink());
+        assert!(!agent_dir.join("gamma").is_symlink());
+        assert!(agent_dir.join("beta").is_symlink());
+    }
+
+    #[test]
+    fn a_switch_pulled_from_another_host_is_applied_here() {
+        let (repo, agent_dir) = setup();
+        let store = &repo.store;
+        add_skill(store, "alpha", true);
+        add_skill(store, "beta", false);
+        store
+            .insert_scenario(&ScenarioRecord {
+                id: "ops".to_string(),
+                name: "Ops".to_string(),
+                description: None,
+                icon: None,
+                sort_order: 1,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        store.add_skill_to_scenario("ops", "beta").unwrap();
+        reapply_active_preset(store, &capture(store));
+        assert!(agent_dir.join("alpha").is_symlink());
+        let before = capture(store);
+
+        // The pull brings another host's switch: the reindex makes Ops active.
+        store.set_active_scenario("ops").unwrap();
+        reapply_active_preset(store, &before);
+        assert!(!agent_dir.join("alpha").is_symlink());
+        assert!(agent_dir.join("beta").is_symlink());
     }
 }

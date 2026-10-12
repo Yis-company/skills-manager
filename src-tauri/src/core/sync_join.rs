@@ -360,12 +360,19 @@ fn plan(store: &SkillStore, local_dir: &Path, remote_dir: &Path) -> Plan {
         mcps: Vec::new(),
         shared_ids: HashMap::new(),
     };
-    let active_name = store
-        .get_active_scenario_id()
-        .ok()
-        .flatten()
-        .and_then(|id| local.presets.iter().find(|p| p.scenario_id == id))
+    // Joining switches to Sync's active preset (SID-98, SID-100); a remote
+    // without one keeps this host's active preset by name.
+    let shared_active = shared_active_preset(remote_dir)
+        .and_then(|id| remote.presets.iter().find(|p| p.scenario_id == id))
         .map(|p| p.name.clone());
+    let active_name = shared_active.or_else(|| {
+        store
+            .get_active_scenario_id()
+            .ok()
+            .flatten()
+            .and_then(|id| local.presets.iter().find(|p| p.scenario_id == id))
+            .map(|p| p.name.clone())
+    });
     if remote_empty || local_empty {
         // One side becomes the whole: nothing to match.
         let presets = if remote_empty {
@@ -465,6 +472,17 @@ fn plan(store: &SkillStore, local_dir: &Path, remote_dir: &Path) -> Plan {
     // or added); a host without one takes the first shared preset.
     plan.preview.active_preset = active_name.or_else(|| first_preset(&remote.presets));
     plan
+}
+
+fn shared_active_preset(dir: &Path) -> Option<String> {
+    let raw = fs::read_to_string(
+        dir.join(METADATA_DIR)
+            .join(sync_metadata::ACTIVE_PRESET_FILE),
+    )
+    .ok()?;
+    serde_json::from_str::<sync_metadata::ActivePresetFile>(&raw)
+        .ok()
+        .map(|f| f.scenario_id)
 }
 
 fn plan_id(shared_ids: &HashMap<String, String>, id: &String) -> String {

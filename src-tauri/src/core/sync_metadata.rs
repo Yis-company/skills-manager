@@ -116,6 +116,7 @@ pub(crate) fn write_all_from_db_unlocked(store: &SkillStore) -> Result<()> {
     write_schema()?;
     write_skill_records_from_db(store)?;
     write_scenario_records_from_db(store)?;
+    write_active_preset_from_db(store)?;
     remove_stale_metadata_files(store)?;
     Ok(())
 }
@@ -234,8 +235,47 @@ pub(crate) fn reindex_from_metadata_unlocked(store: &SkillStore) -> Result<()> {
     if has_complete_scenario_snapshot {
         store.replace_scenarios_from_metadata(&scenarios)?;
         store.replace_scenario_memberships_from_metadata(&memberships)?;
+        // The shared active preset (SID-98): every host switches to it.
+        if let Some(active) = read_active_preset_file() {
+            if scenarios
+                .iter()
+                .any(|s| s.scenario_id == active.scenario_id)
+                && store.get_active_scenario_id()?.as_deref() != Some(active.scenario_id.as_str())
+            {
+                store.set_active_scenario(&active.scenario_id)?;
+            }
+        }
     }
     Ok(())
+}
+
+/// The active preset, shared by every host in Sync (SID-98).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ActivePresetFile {
+    pub schema_version: u32,
+    pub scenario_id: String,
+}
+
+pub const ACTIVE_PRESET_FILE: &str = "active-preset.json";
+
+fn read_active_preset_file() -> Option<ActivePresetFile> {
+    let raw = fs::read_to_string(metadata_dir().join(ACTIVE_PRESET_FILE)).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_active_preset_from_db(store: &SkillStore) -> Result<()> {
+    let path = metadata_dir().join(ACTIVE_PRESET_FILE);
+    match store.get_active_scenario_id()? {
+        Some(scenario_id) => atomic_write_json(
+            &path,
+            &ActivePresetFile {
+                schema_version: SCHEMA_VERSION,
+                scenario_id,
+            },
+        ),
+        None if path.exists() => Ok(fs::remove_file(path)?),
+        None => Ok(()),
+    }
 }
 
 #[allow(dead_code)]
@@ -306,10 +346,12 @@ fn write_scenario_records_from_db(store: &SkillStore) -> Result<()> {
         write_scenario_file(&scenario)?;
         let skill_ids = store.get_skill_ids_for_scenario(&scenario.id)?;
         for (index, skill_id) in skill_ids.iter().enumerate() {
+            // Only explicit "off" choices sync; a missing toggle means on (SID-98).
             let tools = store
                 .get_scenario_skill_tool_toggles(&scenario.id, skill_id)?
                 .into_iter()
-                .map(|toggle| (toggle.tool, toggle.enabled))
+                .filter(|toggle| !toggle.enabled)
+                .map(|toggle| (toggle.tool, false))
                 .collect::<BTreeMap<_, _>>();
             let member = ScenarioSkillMetaFile {
                 schema_version: SCHEMA_VERSION,

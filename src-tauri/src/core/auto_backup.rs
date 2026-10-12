@@ -695,6 +695,76 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn round_follows_another_hosts_preset_switch() {
+        // SID-98: the active preset is shared; a switch pushed by another
+        // host is applied here on the next round.
+        use crate::core::{skill_store::ScenarioRecord, sync_apply, sync_metadata};
+        let env = test_env();
+        let agent_dir = env._tmp.path().join("agent-skills");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let custom = serde_json::json!([{
+            "key": "test_agent", "display_name": "Test Agent", "skills_dir": agent_dir,
+        }]);
+        let builtin: Vec<String> = crate::core::tool_adapters::default_tool_adapters()
+            .into_iter()
+            .map(|a| a.key)
+            .collect();
+        env.store
+            .set_setting("custom_tools", &custom.to_string())
+            .unwrap();
+        env.store
+            .set_setting("disabled_tools", &serde_json::to_string(&builtin).unwrap())
+            .unwrap();
+        write_skill(&env.skills_dir, "skill-1", "alpha", "a");
+        write_skill(&env.skills_dir, "skill-2", "beta", "b");
+        sync_metadata::reindex_from_metadata_unlocked(&env.store).unwrap();
+        for (id, name, skill) in [("web", "Web", "skill-1"), ("ops", "Ops", "skill-2")] {
+            env.store
+                .insert_scenario(&ScenarioRecord {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    description: None,
+                    icon: None,
+                    sort_order: 0,
+                    created_at: 1,
+                    updated_at: 1,
+                })
+                .unwrap();
+            env.store.add_skill_to_scenario(id, skill).unwrap();
+        }
+        env.store.set_active_scenario("web").unwrap();
+        sync_apply::reapply_active_preset(&env.store, &sync_apply::capture(&env.store));
+        sync_metadata::write_all_from_db_unlocked(&env.store).unwrap();
+        git_backup::commit_all_unlocked(&env.skills_dir, "seed").unwrap();
+        git_backup::push_unlocked(&env.skills_dir).unwrap();
+        assert!(agent_dir.join("alpha").is_symlink());
+
+        let other = clone_other_device(&env);
+        let active = sync_metadata::ActivePresetFile {
+            schema_version: 1,
+            scenario_id: "ops".to_string(),
+        };
+        std::fs::write(
+            other
+                .join(".skills-manager")
+                .join(sync_metadata::ACTIVE_PRESET_FILE),
+            sync_metadata::canonical_json_bytes(&active).unwrap(),
+        )
+        .unwrap();
+        git_backup::commit_all_unlocked(&other, "switch to Ops").unwrap();
+        git(&other, &["push", "origin", "main"]);
+
+        run_round_blocking(&env.store);
+        assert_eq!(
+            env.store.get_active_scenario_id().unwrap().as_deref(),
+            Some("ops")
+        );
+        assert!(!agent_dir.join("alpha").is_symlink());
+        assert!(agent_dir.join("beta").is_symlink());
+    }
+
     #[test]
     fn round_stops_with_update_required_when_the_remote_format_is_newer() {
         // SID-101: a remote written by a newer version is never merged with

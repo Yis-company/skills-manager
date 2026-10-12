@@ -817,6 +817,10 @@ export const switchPreset = (id: string) => invoke<void>("switch_preset", { id }
 
 export const applyPresetToDefault = (id: string) => invoke<void>("apply_preset_to_default", { id });
 
+/** What switching to a preset takes off the agents, as [skill, agent] pairs. */
+export const previewPresetSwitch = (id: string) =>
+  invoke<[string, string][]>("preview_preset_switch", { id });
+
 export const addSkillToPreset = (skillId: string, presetId: string) =>
   invoke<void>("add_skill_to_preset", { skillId, presetId });
 

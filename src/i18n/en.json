@@ -1293,6 +1293,9 @@
     }
   },
   "presetActions": {
+    "switch": "Switch",
+    "firstSwitchTitle": "Switch to {{name}}?",
+    "firstSwitchMessage": "A preset is now shared by every host: switching puts exactly its skills on your agents, everywhere. These come off, including skills you added directly:",
     "button": "Apply Preset",
     "applyToProject": "Apply Preset to This Project",
     "applyToGlobal": "Apply Preset to Global Workspace",

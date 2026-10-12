@@ -93,29 +93,9 @@ pub fn sync_skill_to_tool_core(
 ) -> Result<(), AppError> {
     let store = ctx.store.clone();
     let outcome = (|| -> Result<(), AppError> {
+        // Adding directly changes no toggle: it stays on this host until the
+        // next switch (SID-98).
         sync_skill_to_tool_internal(&store, &skill_id, &tool)?;
-
-        if let Some(active_id) = store.get_active_scenario_id().map_err(AppError::db)? {
-            let skill_ids = store
-                .get_skill_ids_for_scenario(&active_id)
-                .map_err(AppError::db)?;
-            if skill_ids.contains(&skill_id) {
-                let adapter_keys: Vec<String> = tool_adapters::enabled_installed_adapters(&store)
-                    .iter()
-                    .map(|a| a.key.clone())
-                    .collect();
-                sync_metadata::with_repo_lock("enable skill for tool", || {
-                    store.ensure_scenario_skill_tool_defaults(
-                        &active_id,
-                        &skill_id,
-                        &adapter_keys,
-                    )?;
-                    store.set_scenario_skill_tool_enabled(&active_id, &skill_id, &tool, true)?;
-                    sync_metadata::write_all_from_db_unlocked(&store)
-                })
-                .map_err(AppError::db)?;
-            }
-        }
 
         Ok(())
     })();
@@ -229,28 +209,6 @@ pub fn unsync_skill_from_tool_core(
             .delete_target(&skill_id, &tool)
             .map_err(AppError::db)?;
 
-        if let Some(active_id) = store.get_active_scenario_id().map_err(AppError::db)? {
-            let skill_ids = store
-                .get_skill_ids_for_scenario(&active_id)
-                .map_err(AppError::db)?;
-            if skill_ids.contains(&skill_id) {
-                let adapter_keys: Vec<String> = tool_adapters::enabled_installed_adapters(&store)
-                    .iter()
-                    .map(|a| a.key.clone())
-                    .collect();
-                sync_metadata::with_repo_lock("disable skill for tool", || {
-                    store.ensure_scenario_skill_tool_defaults(
-                        &active_id,
-                        &skill_id,
-                        &adapter_keys,
-                    )?;
-                    store.set_scenario_skill_tool_enabled(&active_id, &skill_id, &tool, false)?;
-                    sync_metadata::write_all_from_db_unlocked(&store)
-                })
-                .map_err(AppError::db)?;
-            }
-        }
-
         Ok(())
     })();
     log_sync_outcome(&store, "disable", &skill_id, &tool, outcome.as_ref());
@@ -308,21 +266,11 @@ pub fn get_skill_tool_toggles_core(
 
     let disabled = disabled_tools(&store);
     let all_adapters = tool_adapters::all_tool_adapters(&store);
-    let default_enabled_keys: Vec<String> = all_adapters
-        .iter()
-        .filter(|adapter| adapter.is_installed() && !disabled.contains(&adapter.key))
-        .map(|adapter| adapter.key.clone())
-        .collect();
-    store
-        .ensure_scenario_skill_tool_defaults(&preset_id, &skill_id, &default_enabled_keys)
-        .map_err(AppError::db)?;
-
-    let toggles = store
-        .get_scenario_skill_tool_toggles(&preset_id, &skill_id)
-        .map_err(AppError::db)?;
-    let enabled_map: std::collections::HashMap<String, bool> = toggles
+    // A missing toggle means on (SID-98); only explicit choices are stored.
+    let off: std::collections::HashSet<String> = store
+        .get_disabled_tools_for_scenario_skill(&preset_id, &skill_id)
+        .map_err(AppError::db)?
         .into_iter()
-        .map(|toggle| (toggle.tool, toggle.enabled))
         .collect();
 
     Ok(all_adapters
@@ -333,7 +281,7 @@ pub fn get_skill_tool_toggles_core(
             SkillToolToggleDto {
                 // Unavailable tools are always presented as disabled in UI.
                 enabled: if available {
-                    enabled_map.get(&adapter.key).copied().unwrap_or(false)
+                    !off.contains(&adapter.key)
                 } else {
                     false
                 },
@@ -756,111 +704,56 @@ mod tests {
     }
 
     #[test]
-    fn unsync_persists_tool_toggle_through_metadata_reindex_and_startup() {
+    fn adding_or_removing_directly_changes_no_toggle_and_only_offs_sync() {
+        // SID-98: a direct deploy stays on this host until the next switch;
+        // the toggle panel is where per-agent choices live, and only an
+        // explicit "off" goes to Sync.
         let fixture = preset_toggle_fixture();
-        let target = fixture._tmp.path().join("agent-skills/my-skill");
-        for tool in ["agent_a", "agent_b"] {
-            fixture
-                .ctx
-                .store
-                .set_scenario_skill_tool_enabled("preset", "s1", tool, true)
-                .unwrap();
-        }
-        sync_metadata::write_all_from_db(&fixture.ctx.store).unwrap();
-        scenario_service::apply_skills_to_tools(
-            &fixture.ctx.store,
-            &["s1".into()],
-            &["agent_a".into(), "agent_b".into()],
-            scenario_service::BatchApplyMode::Add,
+        let store = &fixture.ctx.store;
+        sync_skill_to_tool_core(&fixture.ctx, "s1".into(), "agent_a".into()).unwrap();
+        unsync_skill_from_tool_core(&fixture.ctx, "s1".into(), "agent_a".into()).unwrap();
+        assert!(store
+            .get_scenario_skill_tool_toggles("preset", "s1")
+            .unwrap()
+            .is_empty());
+
+        set_skill_tool_toggle_core(
+            &fixture.ctx,
+            "s1".into(),
+            "preset".into(),
+            "agent_b".into(),
+            false,
         )
         .unwrap();
-
-        unsync_skill_from_tool_core(&fixture.ctx, "s1".into(), "agent_a".into()).unwrap();
-
-        // Reopen the same database the app uses, then let metadata restore the
-        // per-tool scenario state that survives a process restart.
         let reloaded = SkillStore::new(&fixture._tmp.path().join("manager/test.db")).unwrap();
         sync_metadata::reindex_from_metadata(&reloaded).unwrap();
         let toggles = reloaded
             .get_scenario_skill_tool_toggles("preset", "s1")
             .unwrap();
-        assert!(
-            !toggles
-                .iter()
-                .find(|t| t.tool == "agent_a")
-                .unwrap()
-                .enabled
-        );
-        assert!(
-            toggles
-                .iter()
-                .find(|t| t.tool == "agent_b")
-                .unwrap()
-                .enabled
-        );
-        reloaded.set_active_scenario("preset").unwrap();
-        scenario_service::ensure_default_startup_scenario(&reloaded).unwrap();
-        assert!(!reloaded
-            .get_targets_for_skill("s1")
-            .unwrap()
-            .iter()
-            .any(|t| t.tool == "agent_a"));
-        assert!(reloaded
-            .get_targets_for_skill("s1")
-            .unwrap()
-            .iter()
-            .any(|t| t.tool == "agent_b"));
-        assert!(
-            target.exists(),
-            "agent_b still references the shared deployment"
+        assert_eq!(toggles.len(), 1);
+        assert_eq!(
+            (toggles[0].tool.as_str(), toggles[0].enabled),
+            ("agent_b", false)
         );
 
+        // Turning it back on stores nothing: a missing toggle means on.
         let reloaded_ctx = HostCtx::for_tests(reloaded, std::sync::Arc::new(NoopEvents));
-        unsync_skill_from_tool_core(&reloaded_ctx, "s1".into(), "agent_b".into()).unwrap();
-        assert!(
-            !target.exists(),
-            "disabling the final agent removes its deployment"
-        );
-        let after_b_disable =
-            SkillStore::new(&fixture._tmp.path().join("manager/test.db")).unwrap();
-        sync_metadata::reindex_from_metadata(&after_b_disable).unwrap();
-        scenario_service::ensure_default_startup_scenario(&after_b_disable).unwrap();
-        assert!(after_b_disable
-            .get_targets_for_skill("s1")
+        set_skill_tool_toggle_core(
+            &reloaded_ctx,
+            "s1".into(),
+            "preset".into(),
+            "agent_b".into(),
+            true,
+        )
+        .unwrap();
+        let again = SkillStore::new(&fixture._tmp.path().join("manager/test.db")).unwrap();
+        sync_metadata::reindex_from_metadata(&again).unwrap();
+        assert!(again
+            .get_scenario_skill_tool_toggles("preset", "s1")
             .unwrap()
             .is_empty());
-        assert!(
-            !target.exists(),
-            "startup must not restore either disabled agent"
-        );
-
-        let after_b_ctx = HostCtx::for_tests(after_b_disable, std::sync::Arc::new(NoopEvents));
-        sync_skill_to_tool_core(&after_b_ctx, "s1".into(), "agent_a".into()).unwrap();
-        let enabled_again = SkillStore::new(&fixture._tmp.path().join("manager/test.db")).unwrap();
-        sync_metadata::reindex_from_metadata(&enabled_again).unwrap();
-        assert!(
-            enabled_again
-                .get_scenario_skill_tool_toggles("preset", "s1")
-                .unwrap()
-                .iter()
-                .find(|t| t.tool == "agent_a")
-                .unwrap()
-                .enabled
-        );
-        scenario_service::ensure_default_startup_scenario(&enabled_again).unwrap();
-        assert!(enabled_again
-            .get_targets_for_skill("s1")
-            .unwrap()
-            .iter()
-            .any(|t| t.tool == "agent_a"));
-        assert!(!enabled_again
-            .get_targets_for_skill("s1")
-            .unwrap()
-            .iter()
-            .any(|t| t.tool == "agent_b"));
     }
 
-    #[cfg(unix)]
     #[test]
     fn unsync_removes_the_target_record_when_preserving_replaced_content() {
         let fixture = preset_toggle_fixture();
@@ -928,42 +821,6 @@ mod tests {
             fixture.ctx.store.get_targets_for_skill("s1").unwrap().len(),
             1
         );
-    }
-
-    #[test]
-    fn unsync_reports_metadata_write_errors_to_the_caller() {
-        let fixture = preset_toggle_fixture();
-        let target = fixture._tmp.path().join("agent-skills/my-skill");
-        fs::create_dir_all(&target).unwrap();
-        fs::write(target.join("SKILL.md"), "---\nname: my-skill\n---\n").unwrap();
-        fixture
-            .ctx
-            .store
-            .insert_target(&crate::core::skill_store::SkillTargetRecord {
-                id: "t1".into(),
-                skill_id: "s1".into(),
-                tool: "agent_a".into(),
-                target_path: target.to_string_lossy().to_string(),
-                mode: "copy".into(),
-                status: "ok".into(),
-                synced_at: Some(1),
-                last_error: None,
-                source_hash: None,
-            })
-            .unwrap();
-        fs::write(sync_metadata::metadata_dir(), "blocks metadata directory").unwrap();
-
-        let err =
-            unsync_skill_from_tool_core(&fixture.ctx, "s1".into(), "agent_a".into()).unwrap_err();
-
-        assert_eq!(err.kind, crate::core::error::ErrorKind::Database);
-        assert!(fixture
-            .ctx
-            .store
-            .get_targets_for_skill("s1")
-            .unwrap()
-            .is_empty());
-        assert!(!target.exists());
     }
 
     #[test]

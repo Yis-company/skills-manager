@@ -132,6 +132,7 @@ pub const COMMANDS: &[&str] = &[
     "delete_preset",
     "switch_preset",
     "apply_preset_to_default",
+    "preview_preset_switch",
     "apply_preset_to_coding_agents",
     "add_skill_to_preset",
     "remove_skill_from_preset",
@@ -554,6 +555,7 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.opt("icon")?,
         )),
         "delete_preset" => reply(presets::delete_preset_core(ctx, a.req("id")?)),
+        "preview_preset_switch" => reply(presets::preview_preset_switch_core(ctx, a.req("id")?)),
         "switch_preset" | "apply_preset_to_default" => {
             reply(presets::apply_preset_to_default_core(ctx, a.req("id")?))
         }

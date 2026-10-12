@@ -1,6 +1,6 @@
 //! Merge protocol markers (merge-engine design §6).
 //!
-//! Every commit the app creates carries a `Skills-Manager-Protocol: 2`
+//! Every commit the app creates carries a `Skills-Manager-Protocol: N`
 //! trailer and guarantees `.skills-manager/protocol.json` exists in the tree
 //! (sticky — restoring a pre-protocol snapshot self-heals on the next
 //! commit). Together these let the object-merge engine detect writes made by
@@ -14,7 +14,7 @@ use std::path::Path;
 
 /// Object-merge protocol generation. Bump when merge semantics change in a
 /// way old clients must not mix with.
-pub const MERGE_PROTOCOL_VERSION: u32 = 2;
+pub const MERGE_PROTOCOL_VERSION: u32 = 3;
 const PROTOCOL_SCHEMA_VERSION: u32 = 1;
 
 pub const TRAILER_PROTOCOL: &str = "Skills-Manager-Protocol";
@@ -206,7 +206,7 @@ mod tests {
         let msg = app_commit_message("backup");
         assert_eq!(
             msg,
-            "backup\n\nSkills-Manager-Protocol: 2\nAgents-Manager-Resources: 1"
+            "backup\n\nSkills-Manager-Protocol: 3\nAgents-Manager-Resources: 1"
         );
         assert!(has_protocol_trailer(&msg));
         assert!(!has_protocol_trailer("backup"));

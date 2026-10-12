@@ -1228,6 +1228,25 @@ impl SkillStore {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Agents a preset skill is explicitly turned off for. Every other agent
+    /// is on (SID-98).
+    pub fn get_disabled_tools_for_scenario_skill(
+        &self,
+        scenario_id: &str,
+        skill_id: &str,
+    ) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT tool
+             FROM scenario_skill_tools
+             WHERE scenario_id = ?1 AND skill_id = ?2 AND enabled = 0",
+        )?;
+        let rows = stmt.query_map(params![scenario_id, skill_id], |row| {
+            row.get::<_, String>(0)
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn get_enabled_tools_for_scenario_skill(
         &self,
         scenario_id: &str,
