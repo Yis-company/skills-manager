@@ -500,11 +500,13 @@
       "undoRemove": "Click to keep this tag"
     },
     "batchHeldBack": "{{count}} skill(s) were left alone — updating them would remove files ({{names}}). Update them one at a time to see what.",
-    "batchSyncAgents": "Add {{count}} skills to agents",
+    "batchSyncAgents_one": "Add {{count}} skill to agents",
+    "batchSyncAgents_other": "Add {{count}} skills to agents",
     "batchSynced": "Added {{count}} skill-agent item(s)",
     "batchSyncFailed": "{{count}} skill-agent item(s) failed to add",
     "batchSyncDialog": {
-      "title": "Add {{count}} skills to agents",
+      "title_one": "Add {{count}} skill to agents",
+      "title_other": "Add {{count}} skills to agents",
       "description": "Pick the target agents. Only skills that are not there yet are added — remove from an agent one at a time with the agent dots on a card.",
       "apply": "Add {{count}}",
       "noAgents": "No installed and enabled agents.",
