@@ -14,6 +14,7 @@ use crate::commands::{
 };
 use crate::core::error::AppError;
 use crate::core::host::HostCtx;
+use crate::core::sync_service;
 
 /// Every command [`dispatch`] accepts.
 pub const COMMANDS: &[&str] = &[
@@ -65,6 +66,15 @@ pub const COMMANDS: &[&str] = &[
     "resolve_edited_copy",
     "get_skill_tool_toggles",
     "set_skill_tool_toggle",
+    // Sync (SID-110): the app runs a host's Sync over its session.
+    "sync_status",
+    "sync_now",
+    "sync_history",
+    "sync_conflicts",
+    "sync_resolve",
+    "sync_restore",
+    "sync_pause",
+    "sync_resume",
     // Scan
     "scan_local_skills",
     "import_existing_skill",
@@ -314,6 +324,26 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.req("tool")?,
             a.req("keepMine")?,
         )),
+        "sync_status" => reply(Ok(sync_service::sync_status(&ctx.store))),
+        "sync_now" => reply(sync_service::sync_now(
+            ctx,
+            sync_service::SYNC_COMMIT_MESSAGE,
+        )),
+        "sync_history" => reply(sync_service::history(a.opt("limit")?)),
+        "sync_conflicts" => reply(Ok(sync_service::conflicts(&ctx.store))),
+        "sync_resolve" => reply((|| {
+            let keep: Option<String> = a.opt("keep")?;
+            let (skill_id, action) = sync_service::resolve_choice(
+                &ctx.store,
+                &a.req::<String>("skill")?,
+                keep.as_deref(),
+                a.opt("both")?.unwrap_or(false),
+            )?;
+            sync_service::resolve(ctx, &skill_id, action)
+        })()),
+        "sync_restore" => reply(sync_service::restore(ctx, &a.req::<String>("point")?)),
+        "sync_pause" => reply(sync_service::set_paused(&ctx.store, true)),
+        "sync_resume" => reply(sync_service::set_paused(&ctx.store, false)),
         "get_skill_tool_toggles" => reply(sync::get_skill_tool_toggles_core(
             ctx,
             a.req("skillId")?,

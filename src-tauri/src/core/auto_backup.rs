@@ -24,7 +24,7 @@ use super::skill_store::SkillStore;
 use super::sync_metadata;
 
 /// Off-switch setting. Anything except an explicit "off"-ish value means on.
-const SETTING_ENABLED: &str = "backup_auto_enabled";
+pub const SETTING_ENABLED: &str = "backup_auto_enabled";
 /// Last auto-backup failure, kept until a successful push (auto or manual)
 /// clears it, so the Backup page failure card survives navigation/restart.
 pub const SETTING_LAST_ERROR: &str = "backup_last_auto_error";
@@ -196,6 +196,7 @@ fn handle_outcome<R: Runtime>(
         }
         Outcome::UpToDate => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Release);
+            super::sync_service::stamp_last_sync(store);
             // Only worth telling the UI if the round pulled something or a
             // stale failure card should clear.
             if clear_error(store) || merged {
@@ -204,6 +205,7 @@ fn handle_outcome<R: Runtime>(
         }
         Outcome::BackedUp => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Release);
+            super::sync_service::stamp_last_sync(store);
             clear_error(store);
             log::info!("auto backup: committed/pushed");
             emit(true, false, None);

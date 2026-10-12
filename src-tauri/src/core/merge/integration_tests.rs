@@ -801,6 +801,44 @@ fn skill_flagged_on_two_devices_moves_the_conflict_to_the_newest_version() {
     assert_eq!(a.tree_oid(), b.tree_oid());
 }
 
+#[test]
+fn conflict_choices_are_named_by_host() {
+    // SID-108: `sync resolve --keep <host>` picks a side by host name.
+    use crate::core::sync_service::{conflicts, resolve_choice};
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    b.activate();
+    b.write_skill("skill-1", "alpha", "edited on B");
+    b.commit("edit on B");
+    b.push();
+    a.activate();
+    a.write_skill("skill-1", "alpha", "edited on A");
+    a.commit("edit on A");
+    a.pull();
+    a.store
+        .set_setting("backup_device_name", "Device A")
+        .unwrap();
+
+    let found = conflicts(&a.store);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        (found[0].this_host.as_str(), found[0].other_host.as_str()),
+        ("Device A", "Device B")
+    );
+    let choose = |keep: Option<&str>, both| resolve_choice(&a.store, "skill-1", keep, both);
+    assert_eq!(
+        choose(Some("device b"), false).unwrap().1,
+        ResolveAction::UseRemote
+    );
+    assert_eq!(
+        choose(Some("Device A"), false).unwrap().1,
+        ResolveAction::KeepLocal
+    );
+    assert_eq!(choose(None, true).unwrap().1, ResolveAction::KeepBoth);
+    let err = choose(Some("Mac"), false).unwrap_err().to_string();
+    assert!(err.contains("--keep Device A or --keep Device B"), "{err}");
+}
+
 // ── R3 反例: pending placeholder derived from theirs trailers only ──
 
 #[test]

@@ -53,6 +53,7 @@ pub mod skillssh_api;
 pub mod sync_apply;
 pub mod sync_engine;
 pub mod sync_metadata;
+pub mod sync_service;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod timing;

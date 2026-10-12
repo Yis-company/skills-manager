@@ -3,12 +3,7 @@
 use std::sync::Arc;
 
 use app_lib::core::{
-    central_repo, git_backup,
-    host::{HostCtx, NoopEvents},
-    install_cancel::InstallCancelRegistry,
-    merge,
-    repo_lock::RepoLock,
-    skill_store::SkillStore,
+    central_repo, git_backup, host::HostCtx, merge, repo_lock::RepoLock, skill_store::SkillStore,
     sync_apply, sync_metadata,
 };
 
@@ -51,6 +46,18 @@ pub(crate) fn run_git(
     has_skills_root: bool,
     json: bool,
 ) -> anyhow::Result<()> {
+    let new_name = match &args.command {
+        GitCommand::Status => Some("sync status"),
+        GitCommand::Pull | GitCommand::Push | GitCommand::Commit { .. } => Some("sync now"),
+        GitCommand::Versions { .. } => Some("sync history"),
+        GitCommand::Restore { .. } => Some("sync restore"),
+        GitCommand::PruneSyncRefs => Some("sync prune-refs"),
+        GitCommand::Init | GitCommand::Clone { .. } | GitCommand::SetRemote { .. } => None,
+    };
+    // Humans only: with --json, stderr carries nothing but a failure envelope.
+    if let Some(new_name) = new_name.filter(|_| !json) {
+        eprintln!("note: `git` is now `sync`; use `skills-manager-cli {new_name}`");
+    }
     match args.command {
         GitCommand::Status => {
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json)
@@ -102,11 +109,7 @@ pub(crate) fn run_git(
             // then apply the active preset to the agents, as the app does.
             sync_metadata::reindex_from_metadata(store)?;
             sync_apply::reapply_active_preset(store, &before);
-            sync_apply::reapply_resources(&HostCtx {
-                store: store.clone(),
-                cancel: Arc::new(InstallCancelRegistry::new()),
-                events: Arc::new(NoopEvents),
-            });
+            sync_apply::reapply_resources(&HostCtx::headless(store.clone()));
             print_json(&git_backup::get_status(&dir)?, json);
         }
         GitCommand::Push => {

@@ -1,6 +1,6 @@
 use crate::core::{
     central_repo, error::AppError, git_backup, git_credentials, git_fetcher, github_api,
-    host::HostCtx, merge, sync_apply, sync_metadata,
+    host::HostCtx, merge, sync_apply, sync_metadata, sync_service, sync_service::SyncOutcome,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -371,16 +371,6 @@ pub async fn git_backup_pull(
     .await?
 }
 
-/// Outcome of a full sync transaction for the frontend.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SyncOutcome {
-    /// Local changes were committed as part of this sync.
-    pub committed: bool,
-    /// Merge result when a merge ran (None when nothing to pull).
-    pub merge: Option<merge::MergeSummary>,
-    pub pushed: bool,
-}
-
 /// Full backup sync as one transaction under a single repo lock (merge-engine
 /// design §9 并发收敛): commit → fetch/merge → push, retrying the
 /// fetch/merge/push tail when another device pushes concurrently. Replaces
@@ -392,113 +382,9 @@ pub async fn git_backup_sync(
     ctx: State<'_, HostCtx>,
     message: String,
 ) -> Result<SyncOutcome, AppError> {
-    let store = store.inner().clone();
-    let ctx = ctx.inner().clone();
     sync_engine_pref(&store);
-    let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || {
-        let outcome = git_backup::with_repo_lock("git sync", || {
-            run_sync_blocking(&store, &skills_dir, &message)
-        })
-        .map_err(classify_git_chain)?;
-        if outcome.merge.as_ref().is_some_and(|m| !m.up_to_date) {
-            sync_apply::reapply_resources(&ctx);
-        }
-        Ok(outcome)
-    })
-    .await?
-}
-
-const SYNC_PUSH_ATTEMPTS: usize = 3;
-
-fn run_sync_blocking(
-    store: &SkillStore,
-    skills_dir: &Path,
-    message: &str,
-) -> anyhow::Result<SyncOutcome> {
-    apply_device_identity(store, skills_dir);
-
-    // Local changes first — they must be safe before any network step.
-    sync_metadata::write_all_from_db_unlocked(store)?;
-    // Rebuild the oversized exclusions BEFORE the dirty check: a previously
-    // excluded skill that shrank below the limit re-enters the backup by
-    // making .gitignore (and the skill itself) show up as changes.
-    if let Err(e) =
-        git_backup::apply_oversized_exclusions(skills_dir, git_backup::SKILL_SIZE_LIMIT_BYTES)
-    {
-        log::warn!("backup size: exclusion scan failed (continuing): {e:#}");
-    }
-    let mut committed = false;
-    if git_backup::has_uncommitted_changes(skills_dir)? {
-        git_backup::commit_all_unlocked(skills_dir, message)?;
-        committed = true;
-    }
-
-    // Best-effort initial fetch: a missing remote branch (fresh remote) or a
-    // network failure must not block the local commit; push surfaces real
-    // connectivity errors below when there is something to push.
-    let branch = git_backup::current_branch(skills_dir);
-    if let Err(e) = git_backup::fetch_branch(skills_dir, &branch) {
-        log::info!("git sync: initial fetch failed (continuing): {e:#}");
-    }
-
-    let mut merge_summary: Option<merge::MergeSummary> = None;
-    let mut pushed = false;
-    for attempt in 0..SYNC_PUSH_ATTEMPTS {
-        let status = git_backup::get_status(skills_dir)?;
-        if status.behind > 0 {
-            let summary = merge::object_merge_pull_unlocked(store, skills_dir)?;
-            reconcile_skills_index_unlocked(store)?;
-            merge_summary = Some(summary);
-        }
-
-        let status = git_backup::get_status(skills_dir)?;
-        let needs_push = committed || status.ahead > 0 || status.upstream_health == "no_upstream";
-        if !needs_push {
-            break;
-        }
-        match git_backup::push_unlocked(skills_dir) {
-            Ok(()) => {
-                pushed = true;
-                break;
-            }
-            Err(e) => {
-                let msg = format!("{e:#}");
-                let rejected = msg.contains("non-fast-forward")
-                    || msg.contains("fetch first")
-                    || msg.contains("[rejected]")
-                    || msg.contains("failed to push some refs");
-                if !rejected || attempt + 1 == SYNC_PUSH_ATTEMPTS {
-                    return Err(e);
-                }
-                log::info!(
-                    "git sync: push rejected (attempt {}), refetching",
-                    attempt + 1
-                );
-                git_backup::fetch_branch(skills_dir, &branch)?;
-            }
-        }
-    }
-
-    if pushed {
-        // A successful sync also clears a lingering auto-backup failure card.
-        let _ = store.set_setting(crate::core::auto_backup::SETTING_LAST_ERROR, "");
-    }
-    store.log_audit(
-        crate::core::audit_log::AuditDraft::new("sync")
-            .detail(format!(
-                "committed={} merged={} pushed={}",
-                committed,
-                merge_summary.is_some(),
-                pushed
-            ))
-            .ok(),
-    );
-    Ok(SyncOutcome {
-        committed,
-        merge: merge_summary,
-        pushed,
-    })
+    let ctx = ctx.inner().clone();
+    tokio::task::spawn_blocking(move || sync_service::sync_now(&ctx, &message)).await?
 }
 
 /// Pending "needs attention" conflicts (merge-engine design §4) for the
@@ -516,31 +402,15 @@ pub async fn git_backup_pending_conflicts(
 /// "keep_local" | "use_remote" | "keep_both".
 #[tauri::command]
 pub async fn git_backup_resolve_conflict(
-    store: State<'_, Arc<SkillStore>>,
+    ctx: State<'_, HostCtx>,
     skill_id: String,
     action: String,
 ) -> Result<(), AppError> {
     let Some(action) = merge::resolve::ResolveAction::parse(&action) else {
         return Err(AppError::invalid_input("Unknown resolve action"));
     };
-    let store = store.inner().clone();
-    let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || {
-        git_backup::with_repo_lock("resolve conflict", || {
-            apply_device_identity(&store, &skills_dir);
-            merge::resolve::resolve_conflict_unlocked(&store, &skills_dir, &skill_id, action)?;
-            reconcile_skills_index_unlocked(&store)?;
-            store.log_audit(
-                crate::core::audit_log::AuditDraft::new("resolve_conflict")
-                    .skill(skill_id.clone(), skill_id.clone())
-                    .detail(format!("action={action:?}"))
-                    .ok(),
-            );
-            Ok(())
-        })
-        .map_err(classify_git_chain)
-    })
-    .await?
+    let ctx = ctx.inner().clone();
+    tokio::task::spawn_blocking(move || sync_service::resolve(&ctx, &skill_id, action)).await?
 }
 
 #[tauri::command]
@@ -594,11 +464,7 @@ pub async fn git_backup_reclone(
 pub async fn sync_history(
     limit: Option<u32>,
 ) -> Result<Vec<git_backup::SyncHistoryEntry>, AppError> {
-    let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || {
-        git_backup::sync_history(&skills_dir, limit.map(|v| v as usize)).map_err(AppError::git)
-    })
-    .await?
+    tokio::task::spawn_blocking(move || sync_service::history(limit.map(|v| v as usize))).await?
 }
 
 /// Restore the library to a commit from the Sync history (or a legacy
@@ -606,25 +472,11 @@ pub async fn sync_history(
 /// be undone from the history.
 #[tauri::command]
 pub async fn git_backup_restore_version(
-    store: State<'_, Arc<SkillStore>>,
     ctx: State<'_, HostCtx>,
     commit: String,
 ) -> Result<(), AppError> {
-    let store = store.inner().clone();
     let ctx = ctx.inner().clone();
-    let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || {
-        git_backup::with_repo_lock("git restore snapshot", || {
-            // The safety-point and restore commits are made by this device.
-            apply_device_identity(&store, &skills_dir);
-            git_backup::restore_snapshot_version_unlocked(&skills_dir, &commit)?;
-            reconcile_skills_index_unlocked(&store)
-        })
-        .map_err(AppError::git)?;
-        sync_apply::reapply_resources(&ctx);
-        Ok(())
-    })
-    .await?
+    tokio::task::spawn_blocking(move || sync_service::restore(&ctx, &commit)).await?
 }
 
 /// Effective device name (§4.3 设备命名): the saved setting, or a persisted
@@ -808,7 +660,8 @@ mod tests {
         // Local uncommitted edit + being behind: one sync call must commit,
         // merge and push — no separate commit/pull/push round trips.
         std::fs::write(env.skills_dir.join("local.md"), "a").unwrap();
-        let outcome = run_sync_blocking(&env.store, &env.skills_dir, "backup").unwrap();
+        let outcome =
+            sync_service::run_sync_blocking(&env.store, &env.skills_dir, "backup").unwrap();
         assert!(outcome.committed);
         assert!(outcome.merge.is_some(), "a merge must have run");
         assert!(outcome.pushed);
@@ -845,7 +698,7 @@ mod tests {
         assert!(env.skills_dir.join("local.md").exists());
 
         // A second sync with nothing new is a full no-op.
-        let quiet = run_sync_blocking(&env.store, &env.skills_dir, "backup").unwrap();
+        let quiet = sync_service::run_sync_blocking(&env.store, &env.skills_dir, "backup").unwrap();
         assert!(!quiet.committed);
         assert!(quiet.merge.is_none());
         assert!(!quiet.pushed);

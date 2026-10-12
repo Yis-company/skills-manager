@@ -3,11 +3,12 @@ use std::path::PathBuf;
 use app_lib::core::{app_state, central_repo, serve};
 use clap::{Args, Parser, Subcommand};
 
-use crate::args::{GitArgs, PresetArgs, RepoArgs, RepoCommand, SkillsArgs, ToolsArgs};
+use crate::args::{GitArgs, PresetArgs, RepoArgs, RepoCommand, SkillsArgs, SyncArgs, ToolsArgs};
 use crate::output::{error_envelope, print_json};
 use crate::presets::run_presets;
 use crate::repo::{run_git, run_repo};
 use crate::skills::run_skills;
+use crate::sync::run_sync;
 use crate::tools::run_tools;
 
 mod args;
@@ -17,6 +18,7 @@ mod repo;
 mod reports;
 mod resources;
 mod skills;
+mod sync;
 mod tools;
 
 #[derive(Parser, Debug)]
@@ -50,6 +52,11 @@ enum Commands {
     Mcps(resources::ResourceArgs),
     #[command(alias = "scenarios")]
     Presets(PresetArgs),
+    /// Share this host's library and presets with other hosts through the
+    /// Sync remote.
+    Sync(SyncArgs),
+    /// The old step-by-step commands, now under `sync`.
+    #[command(hide = true)]
     Git(GitArgs),
     /// Answer the app's commands over stdin/stdout, for a Skills Manager app
     /// on another machine connected over ssh.
@@ -151,6 +158,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Instructions(args) => resources::run("instructions", args, store, cli.json),
         Commands::Mcps(args) => resources::run("mcps", args, store, cli.json),
         Commands::Presets(args) => run_presets(args, &store, cli.json),
+        Commands::Sync(args) => run_sync(args, &store, cli.json),
         Commands::Git(args) => run_git(args, &store, cli.skills_root.is_some(), cli.json),
         // stdout carries the protocol; nothing else may print there.
         Commands::Serve(_) => Ok(serve::serve_stdio(store)?),
