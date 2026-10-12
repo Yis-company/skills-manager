@@ -934,6 +934,15 @@ pub fn run() {
                 );
             });
 
+            // The first start after an update installs this build's CLI on
+            // every host whose installed one is behind. A host it cannot
+            // reach stays "Update pending" until the next start or connect.
+            let store_for_roll_out = store_for_setup.clone();
+            let events_for_roll_out = host.events.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                core::remote_install::roll_out(&store_for_roll_out, &*events_for_roll_out);
+            });
+
             let step = Instant::now();
             if is_tray_icon_enabled(&store_for_setup) {
                 ensure_tray_icon(app.handle())?;

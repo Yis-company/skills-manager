@@ -45,12 +45,32 @@ fn validated_fields(
     ))
 }
 
+/// A saved host as the Hosts list shows it.
+#[derive(Serialize)]
+pub struct RemoteHostListItem {
+    #[serde(flatten)]
+    host: RemoteHostRecord,
+    /// The CLI this app installed there is behind; the next start or connect
+    /// installs this version.
+    update_pending: bool,
+}
+
 #[tauri::command]
 pub async fn remote_hosts_list(
     store: State<'_, Arc<SkillStore>>,
-) -> Result<Vec<RemoteHostRecord>, AppError> {
+) -> Result<Vec<RemoteHostListItem>, AppError> {
     let store = store.inner().clone();
-    tokio::task::spawn_blocking(move || store.get_all_remote_hosts().map_err(AppError::db)).await?
+    tokio::task::spawn_blocking(move || {
+        let hosts = store.get_all_remote_hosts().map_err(AppError::db)?;
+        Ok(hosts
+            .into_iter()
+            .map(|host| RemoteHostListItem {
+                update_pending: remote_install::update_pending(&host),
+                host,
+            })
+            .collect())
+    })
+    .await?
 }
 
 #[tauri::command]

@@ -243,6 +243,14 @@ export function RemoteHostsSection() {
                   <span className="truncate font-mono text-[12px] text-muted">
                     {host.ssh_target}
                   </span>
+                  {host.update_pending && (
+                    <span
+                      title={t("remoteHosts.updatePendingHint")}
+                      className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+                    >
+                      {t("remoteHosts.updatePending")}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-0.5 flex min-h-[16px] items-center gap-2">
                   {host.cli_path && (

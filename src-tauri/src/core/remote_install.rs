@@ -2,8 +2,14 @@
 //!
 //! The release asset is downloaded by the desktop app, then streamed as bytes
 //! to a private staging directory. The host's configured CLI is changed only
-//! after the staged binary reports the exact app version.
+//! after the staged binary reports the exact app version and its handshake
+//! passes; then `remote-cli/current` points at it, and only it and the
+//! version before it are kept.
+//!
+//! An install never downgrades a host, and holds while an Agents Manager app
+//! there is older: the CLI migrates the database that app shares.
 
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -11,8 +17,12 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use semver::Version;
+use serde_json::Value;
+
 use super::app_release::cli_download_url;
-use super::error::AppError;
+use super::error::{AppError, ErrorKind};
+use super::host::HostEvents;
 use super::remote_host::shell_quote;
 use super::skill_store::{RemoteHostRecord, SkillStore};
 
@@ -20,6 +30,10 @@ const SSH_TIMEOUT: Duration = Duration::from_secs(120);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_BINARY_BYTES: usize = 100 * 1024 * 1024;
 const OUTPUT_LIMIT: usize = 16 * 1024;
+
+/// Tells the UI a host's CLI changed without it asking: on connect, or in the
+/// roll-out at start.
+pub const HOSTS_CHANGED_EVENT: &str = "remote-hosts-changed";
 
 static ACTIVE_HOSTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -216,11 +230,20 @@ fn wrap_sh(script: &str) -> String {
     format!("sh -c {}", shell_quote(script))
 }
 
+/// HOME and platform, then the version stamp of an Agents Manager app there
+/// and the version `remote-cli/current` points at (empty when missing).
 fn probe_script() -> &'static str {
-    "printf '%s\\n' \"$HOME\" \"$(uname -s)\" \"$(uname -m)\""
+    r#"printf '%s\n' "$HOME" "$(uname -s)" "$(uname -m)" "$(cat "$HOME/.skills-manager/bin/.version" 2>/dev/null)" "$(readlink "$HOME/.skills-manager/remote-cli/current" 2>/dev/null)""#
 }
 
-fn parse_probe(output: &[u8]) -> Result<(String, RemotePlatform), AppError> {
+struct Probe {
+    home: String,
+    platform: RemotePlatform,
+    desktop_app: Option<String>,
+    current_cli: Option<String>,
+}
+
+fn parse_probe(output: &[u8]) -> Result<Probe, AppError> {
     let mut lines = output.split(|byte| *byte == b'\n');
     let home = std::str::from_utf8(lines.next().unwrap_or_default())
         .map_err(|_| AppError::invalid_input("Remote HOME is not valid UTF-8"))?;
@@ -236,7 +259,50 @@ fn parse_probe(output: &[u8]) -> Result<(String, RemotePlatform), AppError> {
     if os.is_empty() || arch.is_empty() {
         return Err(AppError::network("Could not read remote platform over SSH"));
     }
-    Ok((home.to_owned(), platform(os, arch)?))
+    let mut version = || {
+        lines
+            .next()
+            .and_then(|line| std::str::from_utf8(line).ok())
+            .map(str::trim)
+            .filter(|version| !version.is_empty())
+            .map(str::to_owned)
+    };
+    Ok(Probe {
+        home: home.to_owned(),
+        platform: platform(os, arch)?,
+        desktop_app: version(),
+        current_cli: version(),
+    })
+}
+
+/// Whether this app may install its CLI on a host whose newest CLI is
+/// `host_cli` and whose Agents Manager app is `desktop_app` (either may be
+/// missing). It never downgrades a host, and holds while that app is older:
+/// the CLI would migrate the database they share past what the app can open.
+/// A version that does not parse decides nothing.
+pub(crate) fn check_install(
+    host_name: &str,
+    app: &str,
+    host_cli: Option<&str>,
+    desktop_app: Option<&str>,
+) -> Result<(), AppError> {
+    let app_version = Version::parse(app).ok();
+    let order = |version: &str| Some(Version::parse(version).ok()?.cmp(app_version.as_ref()?));
+    if let Some(newer) = [host_cli, desktop_app]
+        .into_iter()
+        .flatten()
+        .find(|version| order(version) == Some(Ordering::Greater))
+    {
+        return Err(version_error(format!(
+            "Agents Manager on {host_name} is {newer}, newer than this app ({app}). Update this app to connect."
+        )));
+    }
+    if let Some(older) = desktop_app.filter(|version| order(version) == Some(Ordering::Less)) {
+        return Err(version_error(format!(
+            "Update Agents Manager on {host_name} first. It is {older}; this app needs {app}."
+        )));
+    }
+    Ok(())
 }
 
 fn download(url: &str, proxy_url: Option<&str>) -> Result<Vec<u8>, AppError> {
@@ -311,11 +377,75 @@ printf '%s\n' "$final/skills-manager-cli"
     )
 }
 
-fn version_mismatch(name: &str, actual: &str, expected: &str) -> AppError {
+/// Point `current` at `version`, whose handshake passed, and delete all but
+/// the two newest versions: this one and the one before it.
+fn activate_script(home: &str, version: &str) -> String {
+    let root = format!("{home}/.skills-manager/remote-cli");
+    format!(
+        r#"set -eu
+root={root}
+if [ -L "$HOME/.skills-manager" ] || [ -L "$root" ]; then echo SYMLINK_REFUSED >&2; exit 41; fi
+if [ -e "$root/current" ] && [ ! -L "$root/current" ]; then echo CURRENT_NOT_A_LINK >&2; exit 45; fi
+ln -sfn {version} "$root/current"
+ls "$root" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$' | sort -t. -k1,1nr -k2,2nr -k3,3nr | tail -n +3 | while IFS= read -r old; do rm -rf "$root/$old"; done
+"#,
+        root = shell_quote(&root),
+        version = shell_quote(version),
+    )
+}
+
+fn version_error(message: String) -> AppError {
     AppError {
-        kind: super::error::ErrorKind::RemoteVersionMismatch,
-        message: format!("CLI on {name} reported {actual}; expected skills-manager-cli {expected}"),
+        kind: ErrorKind::RemoteVersionMismatch,
+        message,
         details: None,
+    }
+}
+
+fn version_mismatch(name: &str, actual: &str, expected: &str) -> AppError {
+    version_error(format!(
+        "CLI on {name} reported {actual}; expected skills-manager-cli {expected}"
+    ))
+}
+
+/// The version of a CLI this installer put on a host, read from its path.
+fn installed_version(cli_path: &str) -> Option<&str> {
+    let dir = cli_path.strip_suffix("/skills-manager-cli")?;
+    let (root, version) = dir.rsplit_once('/')?;
+    root.ends_with("/.skills-manager/remote-cli")
+        .then_some(version)
+}
+
+/// Whether the CLI this app installed on `host` is another version, so the
+/// next start or connect installs this one.
+pub fn update_pending(host: &RemoteHostRecord) -> bool {
+    host.cli_path
+        .as_deref()
+        .and_then(installed_version)
+        .is_some_and(|version| version != env!("CARGO_PKG_VERSION"))
+}
+
+/// Install this build's CLI on every host where [`update_pending`], one at a
+/// time over short SSH calls, with no session. A host that cannot be reached
+/// or refuses the version stays pending for the next start or connect.
+pub fn roll_out(store: &SkillStore, events: &dyn HostEvents) {
+    let hosts = match store.get_all_remote_hosts() {
+        Ok(hosts) => hosts,
+        Err(e) => return log::warn!("CLI roll-out skipped: {e:#}"),
+    };
+    let mut installed = false;
+    for host in hosts.into_iter().filter(update_pending) {
+        let name = host.name.clone();
+        match install_cli(store, host, |_| {}) {
+            Ok(_) => {
+                installed = true;
+                log::info!("Installed CLI {} on {name}", env!("CARGO_PKG_VERSION"));
+            }
+            Err(e) => log::warn!("CLI update pending on {name}: {e}"),
+        }
+    }
+    if installed {
+        events.emit(HOSTS_CHANGED_EVENT, Value::Null);
     }
 }
 
@@ -347,7 +477,18 @@ fn install_cli_with(
             stderr.trim()
         )));
     }
-    let (home, platform) = parse_probe(&probe)?;
+    let Probe {
+        home,
+        platform,
+        desktop_app,
+        current_cli,
+    } = parse_probe(&probe)?;
+    check_install(
+        &host.name,
+        version,
+        current_cli.as_deref(),
+        desktop_app.as_deref(),
+    )?;
     emit("downloading");
     let url = cli_download_url(version, platform.asset);
     let binary = download(&url, store.proxy_url().as_deref())?;
@@ -401,6 +542,14 @@ fn install_cli_with(
         .find_map(|line| serde_json::from_slice(line).ok())
         .ok_or_else(|| AppError::network("Installed CLI did not return a valid handshake"))?;
     super::remote_session::check_hello(&hello.hello, &host.name)?;
+    let (code, _, stderr) = run(&host, &wrap_sh(&activate_script(&home, version)), None)?;
+    if code != 0 {
+        return Err(AppError::network(format!(
+            "Could not select the installed CLI on {}: {}",
+            host.ssh_target,
+            stderr.trim()
+        )));
+    }
     let updated = store
         .set_remote_host_cli_path_if_unchanged(
             &host.id,
@@ -508,7 +657,7 @@ mod tests {
         let probe = local_ssh(home.path(), &wrap_sh(probe_script()), None)
             .unwrap()
             .1;
-        let (_, platform) = parse_probe(&probe).unwrap();
+        let platform = parse_probe(&probe).unwrap().platform;
         let expected_url = format!(
             "https://github.com/Yis-company/skills-manager/releases/download/v{version}/{}",
             platform.asset
@@ -548,6 +697,10 @@ mod tests {
             updated.cli_path
         );
         assert_eq!(std::fs::read(installed).unwrap(), binary);
+        assert_eq!(
+            std::fs::read_link(home.path().join(".skills-manager/remote-cli/current")).unwrap(),
+            Path::new(version)
+        );
         assert_eq!(std::fs::read(old_path).unwrap(), b"previous CLI");
         assert_eq!(
             stages.into_inner(),
@@ -619,6 +772,11 @@ mod tests {
                     ".skills-manager/remote-cli/{version}/skills-manager-cli"
                 ))
                 .is_file());
+            assert!(
+                std::fs::symlink_metadata(home.path().join(".skills-manager/remote-cli/current"))
+                    .is_err(),
+                "current moved before the handshake passed"
+            );
         }
     }
 
@@ -686,8 +844,135 @@ mod tests {
         assert!(parse_probe(b"relative\nLinux\nx86_64\n").is_err());
         assert!(parse_probe(b"/home/me\nLinux\naarch64\n").is_ok());
         assert!(parse_probe(b"/home/me\nFreeBSD\nx86_64\n").is_err());
-        let (home, _) = parse_probe(b"/home/my user/ \nLinux\nx86_64\n").unwrap();
-        assert_eq!(home, "/home/my user/ ");
+        let probe = parse_probe(b"/home/my user/ \nLinux\nx86_64\n").unwrap();
+        assert_eq!(probe.home, "/home/my user/ ");
+        assert_eq!((probe.desktop_app, probe.current_cli), (None, None));
+        let probe = parse_probe(b"/home/me\nLinux\nx86_64\n1.44.0\n1.45.0\n").unwrap();
+        assert_eq!(probe.desktop_app.as_deref(), Some("1.44.0"));
+        assert_eq!(probe.current_cli.as_deref(), Some("1.45.0"));
+    }
+
+    #[test]
+    fn install_brings_an_older_or_missing_cli_up_to_this_app() {
+        assert!(check_install("box", "1.45.0", Some("1.44.0"), None).is_ok());
+        assert!(check_install("box", "1.45.0", None, None).is_ok());
+        assert!(check_install("box", "1.45.0", Some("1.45.0"), Some("1.45.0")).is_ok());
+        assert!(check_install("box", "1.45.0", Some("unknown"), None).is_ok());
+    }
+
+    #[test]
+    fn install_never_downgrades_a_newer_host() {
+        for (host_cli, desktop_app) in [(Some("1.46.0"), None), (None, Some("1.46.0"))] {
+            let error = check_install("box", "1.45.0", host_cli, desktop_app).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::RemoteVersionMismatch);
+            assert_eq!(
+                error.message,
+                "Agents Manager on box is 1.46.0, newer than this app (1.45.0). Update this app to connect."
+            );
+        }
+    }
+
+    #[test]
+    fn install_holds_while_the_hosts_desktop_app_is_older() {
+        let error = check_install("box", "1.45.0", Some("1.44.0"), Some("1.44.0")).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::RemoteVersionMismatch);
+        assert_eq!(
+            error.message,
+            "Update Agents Manager on box first. It is 1.44.0; this app needs 1.45.0."
+        );
+    }
+
+    #[test]
+    fn only_a_cli_this_app_installed_at_another_version_is_pending() {
+        let version = env!("CARGO_PKG_VERSION");
+        let host = |cli_path: Option<String>| RemoteHostRecord {
+            id: "h".into(),
+            name: "box".into(),
+            ssh_target: "me@box".into(),
+            cli_path,
+            created_at: 0,
+        };
+        let installed = |version: &str| {
+            Some(format!(
+                "/home/me/.skills-manager/remote-cli/{version}/skills-manager-cli"
+            ))
+        };
+        assert!(update_pending(&host(installed("0.1.0"))));
+        assert!(!update_pending(&host(installed(version))));
+        assert!(!update_pending(&host(None)));
+        assert!(!update_pending(&host(Some(
+            "/opt/sm/skills-manager-cli".into()
+        ))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn activation_points_current_at_the_new_version_and_keeps_the_one_before() {
+        let home = tempdir().unwrap();
+        let root = home.path().join(".skills-manager/remote-cli");
+        for dir in ["1.9.0", "1.10.0", "1.44.0", "1.45.0", ".install-other"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        std::os::unix::fs::symlink("1.44.0", root.join("current")).unwrap();
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(activate_script(home.path().to_str().unwrap(), "1.45.0"))
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_link(root.join("current")).unwrap(),
+            Path::new("1.45.0")
+        );
+        let mut kept: Vec<String> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        kept.sort();
+        assert_eq!(kept, [".install-other", "1.44.0", "1.45.0", "current"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_newer_or_held_host_is_refused_before_anything_is_downloaded() {
+        let version = env!("CARGO_PKG_VERSION");
+        let older_desktop_app = |home: &Path| {
+            let bin = home.join(".skills-manager/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(bin.join(".version"), "0.1.0").unwrap();
+        };
+        let newer_current_cli = |home: &Path| {
+            let root = home.join(".skills-manager/remote-cli");
+            std::fs::create_dir_all(&root).unwrap();
+            std::os::unix::fs::symlink("999.0.0", root.join("current")).unwrap();
+        };
+        for setup in [&older_desktop_app as &dyn Fn(&Path), &newer_current_cli] {
+            let home = tempdir().unwrap();
+            let (store, host, _) = host_fixture(home.path());
+            setup(home.path());
+            let error = install_cli_with(
+                &store,
+                host.clone(),
+                |_| {},
+                |_, command, input| local_ssh(home.path(), command, input),
+                |_, _| panic!("the host must be refused before the download"),
+            )
+            .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::RemoteVersionMismatch);
+            assert_eq!(
+                store.get_remote_host(&host.id).unwrap().unwrap().cli_path,
+                host.cli_path
+            );
+            assert!(!home
+                .path()
+                .join(format!(".skills-manager/remote-cli/{version}"))
+                .exists());
+        }
     }
 
     #[cfg(unix)]

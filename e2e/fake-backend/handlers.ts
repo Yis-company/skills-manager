@@ -123,12 +123,16 @@ export const handlers = {
   remote_host_disconnect: nothing,
   remote_hosts_list: (_args, state) => state.remoteHosts,
   remote_host_connect: ({ hostId }: { hostId: string }, state) => {
-    if (state.remoteCliNeedsUpdate) {
+    if (state.remoteHostNewer) {
       throw {
         kind: "remote_version_mismatch",
-        message: "Remote CLI version does not match",
+        message:
+          "Agents Manager on Build box is 1.41.0, newer than this app (1.40.0). Update this app to connect.",
       };
     }
+
+    // An older CLI is replaced while connecting, without asking.
+    state.remoteCliNeedsUpdate = false;
 
     return {
       host_id: hostId,
