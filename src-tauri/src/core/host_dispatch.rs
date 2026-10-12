@@ -135,7 +135,6 @@ const LOCAL_ONLY_SETTINGS: &[&str] = &[
     "text_size",
     "close_action",
     "show_tray_icon",
-    "merge_engine",
 ];
 const LOCAL_ONLY_SETTING_PREFIXES: &[&str] = &["backup_", "git_backup_", "github_"];
 

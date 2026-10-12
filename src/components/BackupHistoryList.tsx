@@ -1,8 +1,7 @@
 import { History, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { displaySnapshotLabel } from "../lib/backupFormat";
-import type { GitBackupStatus, GitBackupVersion } from "../lib/tauri";
+import type { GitBackupStatus, SyncHistoryEntry } from "../lib/tauri";
 import { cn } from "../utils";
 
 function formatDateTime(iso: string) {
@@ -15,17 +14,17 @@ function formatDateTime(iso: string) {
 }
 
 interface BackupHistoryListProps {
-  versions: GitBackupVersion[];
+  versions: SyncHistoryEntry[];
   versionsLoading: boolean;
   gitStatus: GitBackupStatus | null;
-  /** Tag of the snapshot being restored, if any. */
+  /** Commit being restored, if any. */
   restoringVersionTag: null | string;
   onRefresh: () => void;
-  /** Ask to restore a snapshot; the view confirms first. */
-  onRestore: (tag: string) => void;
+  /** Ask to restore a commit; the view confirms first. */
+  onRestore: (entry: SyncHistoryEntry) => void;
 }
 
-/** The backup snapshots, newest first, each restorable. */
+/** The Sync history, newest first, each commit restorable. */
 export function BackupHistoryList({
   versions,
   versionsLoading,
@@ -66,28 +65,25 @@ export function BackupHistoryList({
         <div className="max-h-[360px] space-y-1.5 overflow-auto pr-1">
           {versions.map((version) => (
             <div
-              key={version.tag}
+              key={version.commit}
               className="flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-bg-secondary px-3 py-2"
             >
               <div className="min-w-0">
                 <div className="truncate text-[13px] font-semibold text-secondary">
-                  {displaySnapshotLabel(version.tag)}
-                </div>
-                <div className="truncate text-[12px] text-muted">
-                  {version.message || version.commit}
+                  {version.message || version.commit.slice(0, 7)}
                 </div>
                 <div className="text-[11px] text-faint">
-                  {version.author ? `${version.author} · ` : ""}
-                  {version.commit} · {formatDateTime(version.committed_at)}
+                  {version.host ? `${version.host} · ` : ""}
+                  {version.commit.slice(0, 7)} · {formatDateTime(version.committed_at)}
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => onRestore(version.tag)}
+                onClick={() => onRestore(version)}
                 disabled={!!restoringVersionTag}
                 className="shrink-0 rounded-lg border border-border-subtle px-2 py-1 text-[12px] font-medium text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
               >
-                {restoringVersionTag === version.tag
+                {restoringVersionTag === version.commit
                   ? t("mySkills.gitVersionRestoring")
                   : t("mySkills.gitVersionRestore")}
               </button>

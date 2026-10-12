@@ -344,9 +344,7 @@ pub async fn git_backup_pull(
         git_backup::with_repo_lock("git pull", || {
             // Merge commits must carry this device's identity too.
             apply_device_identity(&store, &skills_dir);
-            // Object merge by default since 3d-β; merge_engine=system is the
-            // escape hatch back to the line-level git merge.
-            let summary = merge::gated_pull_unlocked(&store, &skills_dir)?;
+            let summary = merge::object_merge_pull_unlocked(&store, &skills_dir)?;
             reconcile_skills_index_unlocked(&store)?;
             store.log_audit(
                 crate::core::audit_log::AuditDraft::new("sync_merge")
@@ -375,12 +373,10 @@ pub struct SyncOutcome {
     /// Merge result when a merge ran (None when nothing to pull).
     pub merge: Option<merge::MergeSummary>,
     pub pushed: bool,
-    /// Snapshot tag on the pushed state (None when nothing was pushed).
-    pub snapshot_tag: Option<String>,
 }
 
 /// Full backup sync as one transaction under a single repo lock (merge-engine
-/// design §9 并发收敛): commit → fetch/merge → snapshot → push, retrying the
+/// design §9 并发收敛): commit → fetch/merge → push, retrying the
 /// fetch/merge/push tail when another device pushes concurrently. Replaces
 /// the frontend-orchestrated commit/pull/push sequence, whose lock gaps let a
 /// benign race surface as a non-fast-forward "needs recovery" error.
@@ -436,11 +432,10 @@ fn run_sync_blocking(
 
     let mut merge_summary: Option<merge::MergeSummary> = None;
     let mut pushed = false;
-    let mut snapshot_tag: Option<String> = None;
     for attempt in 0..SYNC_PUSH_ATTEMPTS {
         let status = git_backup::get_status(skills_dir)?;
         if status.behind > 0 {
-            let summary = merge::gated_pull_unlocked(store, skills_dir)?;
+            let summary = merge::object_merge_pull_unlocked(store, skills_dir)?;
             reconcile_skills_index_unlocked(store)?;
             merge_summary = Some(summary);
         }
@@ -450,8 +445,6 @@ fn run_sync_blocking(
         if !needs_push {
             break;
         }
-        // Reuses an existing tag on HEAD, so retries don't mint duplicates.
-        snapshot_tag = Some(git_backup::create_snapshot_tag_unlocked(skills_dir)?);
         match git_backup::push_unlocked(skills_dir) {
             Ok(()) => {
                 pushed = true;
@@ -493,7 +486,6 @@ fn run_sync_blocking(
         committed,
         merge: merge_summary,
         pushed,
-        snapshot_tag,
     })
 }
 
@@ -509,14 +501,13 @@ pub async fn git_backup_pending_conflicts(
 }
 
 /// Resolve one pending conflict (§4 解决动作): action is one of
-/// "keep_local" | "use_remote" | "keep_both". Returns the safety snapshot
-/// tag taken before the resolution.
+/// "keep_local" | "use_remote" | "keep_both".
 #[tauri::command]
 pub async fn git_backup_resolve_conflict(
     store: State<'_, Arc<SkillStore>>,
     skill_id: String,
     action: String,
-) -> Result<String, AppError> {
+) -> Result<(), AppError> {
     let Some(action) = merge::resolve::ResolveAction::parse(&action) else {
         return Err(AppError::invalid_input("Unknown resolve action"));
     };
@@ -525,8 +516,7 @@ pub async fn git_backup_resolve_conflict(
     tokio::task::spawn_blocking(move || {
         git_backup::with_repo_lock("resolve conflict", || {
             apply_device_identity(&store, &skills_dir);
-            let safety_tag =
-                merge::resolve::resolve_conflict_unlocked(&store, &skills_dir, &skill_id, action)?;
+            merge::resolve::resolve_conflict_unlocked(&store, &skills_dir, &skill_id, action)?;
             reconcile_skills_index_unlocked(&store)?;
             store.log_audit(
                 crate::core::audit_log::AuditDraft::new("resolve_conflict")
@@ -534,7 +524,7 @@ pub async fn git_backup_resolve_conflict(
                     .detail(format!("action={action:?}"))
                     .ok(),
             );
-            Ok(safety_tag)
+            Ok(())
         })
         .map_err(classify_git_chain)
     })
@@ -586,48 +576,35 @@ pub async fn git_backup_reclone(
     .await?
 }
 
+/// The Sync history, newest first (SID-99): commits with the host that made
+/// each one.
 #[tauri::command]
-pub async fn git_backup_create_snapshot(
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<String, AppError> {
-    let _ = store;
-    let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || {
-        git_backup::create_snapshot_tag(&skills_dir).map_err(AppError::git)
-    })
-    .await?
-}
-
-#[tauri::command]
-pub async fn git_backup_list_versions(
-    store: State<'_, Arc<SkillStore>>,
+pub async fn sync_history(
     limit: Option<u32>,
-) -> Result<Vec<git_backup::GitBackupVersion>, AppError> {
-    let _ = store;
+) -> Result<Vec<git_backup::SyncHistoryEntry>, AppError> {
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
-        git_backup::list_snapshot_versions(&skills_dir, limit.map(|v| v as usize))
-            .map_err(AppError::git)
+        git_backup::sync_history(&skills_dir, limit.map(|v| v as usize)).map_err(AppError::git)
     })
     .await?
 }
 
-/// Restore a snapshot. Returns the safety-point tag that captured the
-/// pre-restore state, so the UI can tell the user the restore is undoable.
+/// Restore the library to a commit from the Sync history (or a legacy
+/// snapshot tag). The state before it is committed first, so the restore can
+/// be undone from the history.
 #[tauri::command]
 pub async fn git_backup_restore_version(
     store: State<'_, Arc<SkillStore>>,
-    tag: String,
-) -> Result<String, AppError> {
+    commit: String,
+) -> Result<(), AppError> {
     let store = store.inner().clone();
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
         git_backup::with_repo_lock("git restore snapshot", || {
             // The safety-point and restore commits are made by this device.
             apply_device_identity(&store, &skills_dir);
-            let safety_tag = git_backup::restore_snapshot_version_unlocked(&skills_dir, &tag)?;
-            reconcile_skills_index_unlocked(&store)?;
-            Ok(safety_tag)
+            git_backup::restore_snapshot_version_unlocked(&skills_dir, &commit)?;
+            reconcile_skills_index_unlocked(&store)
         })
         .map_err(AppError::git)
     })
@@ -813,13 +790,20 @@ mod tests {
         git(&other, &["push", "origin", "main"]);
 
         // Local uncommitted edit + being behind: one sync call must commit,
-        // merge, snapshot and push — no separate commit/pull/push round trips.
+        // merge and push — no separate commit/pull/push round trips.
         std::fs::write(env.skills_dir.join("local.md"), "a").unwrap();
         let outcome = run_sync_blocking(&env.store, &env.skills_dir, "backup").unwrap();
         assert!(outcome.committed);
         assert!(outcome.merge.is_some(), "a merge must have run");
         assert!(outcome.pushed);
-        assert!(outcome.snapshot_tag.is_some());
+        // SID-109: a manual sync no longer mints a snapshot tag.
+        let tags = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&env.skills_dir)
+            .args(["tag", "--list", "sm-v-*"])
+            .output()
+            .unwrap();
+        assert!(tags.stdout.is_empty());
 
         // Remote now holds the merged state with both files.
         let remote_head = {
@@ -849,7 +833,6 @@ mod tests {
         assert!(!quiet.committed);
         assert!(quiet.merge.is_none());
         assert!(!quiet.pushed);
-        assert!(quiet.snapshot_tag.is_none());
     }
 
     #[test]

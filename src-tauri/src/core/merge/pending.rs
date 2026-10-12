@@ -62,13 +62,14 @@ pub fn replay_trailers(
     Ok(state)
 }
 
-#[derive(Debug)]
-pub enum PendingOutcome {
+#[derive(Debug, Default)]
+pub struct PendingPins {
     /// Declared-pending skills and the side whose version is pinned.
-    Pinned(BTreeMap<String, Side>),
-    /// Both sides independently declared the same skill pending with
-    /// different versions — the merge must stop and go manual (§4).
-    Blocked(Vec<String>),
+    pub pinned: BTreeMap<String, Side>,
+    /// Skills both sides flagged independently with different versions. Ours
+    /// stays pinned and the merge flags them again, so the conflict moves to
+    /// the newest remote version instead of stopping the sync (SID-108).
+    pub reflagged: Vec<String>,
 }
 
 /// Combine the trailer state of both sides into the declared-pending pin set
@@ -79,8 +80,8 @@ pub enum PendingOutcome {
 /// - `Closed` + inherited `Active` → the resolution wins, not pending; the
 ///   resolving side's tree change merges as a normal edit;
 /// - `Closed` + re-declared `Active` → the newer declaration stays pending;
-/// - independently declared on both sides: identical versions pin ours,
-///   different versions block.
+/// - independently declared on both sides: pin ours; different versions are
+///   also flagged again (SID-108).
 pub fn effective_pending(
     repo: &Repository,
     base: Oid,
@@ -88,14 +89,13 @@ pub fn effective_pending(
     theirs_tip: Oid,
     ours_snap: &Snapshot,
     theirs_snap: &Snapshot,
-) -> Result<PendingOutcome> {
+) -> Result<PendingPins> {
     let full_ours = replay_trailers(repo, ours_tip, None)?;
     let full_theirs = replay_trailers(repo, theirs_tip, None)?;
     let range_ours = replay_trailers(repo, ours_tip, Some(base))?;
     let range_theirs = replay_trailers(repo, theirs_tip, Some(base))?;
 
-    let mut pinned: BTreeMap<String, Side> = BTreeMap::new();
-    let mut blocked: Vec<String> = Vec::new();
+    let mut pins = PendingPins::default();
 
     let ids: std::collections::BTreeSet<&String> =
         full_ours.keys().chain(full_theirs.keys()).collect();
@@ -112,40 +112,34 @@ pub fn effective_pending(
                         (None, None) => true,
                         _ => false,
                     };
-                    if same {
-                        pinned.insert(id.clone(), Side::Ours);
-                    } else {
-                        blocked.push(id.clone());
+                    pins.pinned.insert(id.clone(), Side::Ours);
+                    if !same {
+                        pins.reflagged.push(id.clone());
                     }
                 } else if declared_b {
-                    pinned.insert(id.clone(), Side::Theirs);
+                    pins.pinned.insert(id.clone(), Side::Theirs);
                 } else {
                     // declared in ours range, or shared pre-base declaration
-                    pinned.insert(id.clone(), Side::Ours);
+                    pins.pinned.insert(id.clone(), Side::Ours);
                 }
             }
             (Some(TrailerState::Active), None) => {
-                pinned.insert(id.clone(), Side::Ours);
+                pins.pinned.insert(id.clone(), Side::Ours);
             }
             (None, Some(TrailerState::Active)) => {
-                pinned.insert(id.clone(), Side::Theirs);
+                pins.pinned.insert(id.clone(), Side::Theirs);
             }
             (Some(TrailerState::Active), Some(TrailerState::Closed)) if declared_a => {
-                pinned.insert(id.clone(), Side::Ours);
+                pins.pinned.insert(id.clone(), Side::Ours);
             }
             (Some(TrailerState::Closed), Some(TrailerState::Active)) if declared_b => {
-                pinned.insert(id.clone(), Side::Theirs);
+                pins.pinned.insert(id.clone(), Side::Theirs);
             }
             _ => {} // closed or never declared on both sides
         }
     }
 
-    if blocked.is_empty() {
-        Ok(PendingOutcome::Pinned(pinned))
-    } else {
-        blocked.sort();
-        Ok(PendingOutcome::Blocked(blocked))
-    }
+    Ok(pins)
 }
 
 // ── hidden refs ──

@@ -622,13 +622,14 @@ export interface GitBackupStatus {
   upstream_health: GitUpstreamHealth;
 }
 
-export interface GitBackupVersion {
-  tag: string;
+/** One commit in the Sync history; any of them can be restored. */
+export interface SyncHistoryEntry {
+  /** Full commit id; restore takes it. */
   commit: string;
   message: string;
   committed_at: string;
-  /** Device name of the machine that made this backup (empty for old commits). */
-  author: string;
+  /** The host that made the commit (empty for old commits). */
+  host: string;
 }
 
 export interface GitBackupSizeReport {
@@ -706,11 +707,22 @@ export const gitBackupCommit = (message: string) => invoke<void>("git_backup_com
 
 export const gitBackupPush = () => invoke<void>("git_backup_push");
 
+export type MergeChangeKind = "added" | "changed" | "removed";
+
 export interface MergeUpdatedSkill {
   skill_id: string;
   path: string;
   /** Device (commit author) that last touched this skill on the remote. */
   from_device: string;
+  kind: MergeChangeKind;
+}
+
+/** A preset whose file or skill list the sync changed. */
+export interface MergeUpdatedPreset {
+  preset_id: string;
+  name: string;
+  from_device: string;
+  kind: MergeChangeKind;
 }
 
 /** Outcome of a sync merge (merge-engine design §8). With the default
@@ -719,7 +731,9 @@ export interface MergeSummary {
   engine: "object" | "system";
   up_to_date: boolean;
   fast_forward: boolean;
+  /** Skills this sync added, changed or removed in the local library. */
   updated: MergeUpdatedSkill[];
+  presets: MergeUpdatedPreset[];
   kept_local: string[];
   new_conflicts: string[];
   pending_total: number;
@@ -729,13 +743,12 @@ export interface MergeSummary {
 
 export const gitBackupPull = () => invoke<MergeSummary>("git_backup_pull");
 
-/** Outcome of the one-transaction sync (commit → merge → snapshot → push,
- * with automatic retry when another device pushes concurrently). */
+/** Outcome of the one-transaction sync (commit → merge → push, with
+ * automatic retry when another device pushes concurrently). */
 export interface SyncOutcome {
   committed: boolean;
   merge: MergeSummary | null;
   pushed: boolean;
-  snapshot_tag: null | string;
 }
 
 export const gitBackupSync = (message: string) =>
@@ -754,24 +767,22 @@ export const gitBackupPendingConflicts = () =>
 
 export type ResolveConflictAction = "keep_both" | "keep_local" | "use_remote";
 
-/** Resolve a pending conflict; returns the safety snapshot tag. */
+/** Resolve a pending conflict. The state before it stays in the Sync history. */
 export const gitBackupResolveConflict = (skillId: string, action: ResolveConflictAction) =>
-  invoke<string>("git_backup_resolve_conflict", { skillId, action });
+  invoke<void>("git_backup_resolve_conflict", { skillId, action });
 
 export const gitBackupClone = (url: string) => invoke<void>("git_backup_clone", { url });
 
 export const gitBackupReclone = (url: string) => invoke<void>("git_backup_reclone", { url });
 
-export const gitBackupCreateSnapshot = () => invoke<string>("git_backup_create_snapshot");
+/** The Sync history, newest first. */
+export const syncHistory = (limit?: number) =>
+  invoke<SyncHistoryEntry[]>("sync_history", { limit: limit ?? null });
 
-export const gitBackupListVersions = (limit?: number) =>
-  invoke<GitBackupVersion[]>("git_backup_list_versions", {
-    limit: limit ?? null,
-  });
-
-/** Returns the safety-point tag that captured the pre-restore state. */
-export const gitBackupRestoreVersion = (tag: string) =>
-  invoke<string>("git_backup_restore_version", { tag });
+/** Restore a commit from the Sync history. The state before it is committed
+ * first, so the restore can be undone from the history. */
+export const gitBackupRestoreVersion = (commit: string) =>
+  invoke<void>("git_backup_restore_version", { commit });
 
 // ── Presets ──
 

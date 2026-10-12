@@ -2,11 +2,10 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type * as api from "../lib/tauri";
-import type { GitBackupStatus, ManagedSkill } from "../lib/tauri";
+import type { ManagedSkill } from "../lib/tauri";
 
 interface BackupConflictsProps {
   conflicts: api.PendingConflict[];
-  gitStatus: GitBackupStatus | null;
   /** This computer's skills, for display names; null while a host is active. */
   localSkills: ManagedSkill[] | null;
   /** Skill id of the conflict being resolved, if any. */
@@ -19,7 +18,6 @@ interface BackupConflictsProps {
 /** Sync conflicts that need the user to pick a side (merge-engine design §4). */
 export function BackupConflicts({
   conflicts,
-  gitStatus,
   localSkills,
   resolvingConflict,
   loading,
@@ -45,10 +43,7 @@ export function BackupConflicts({
           {conflicts.length}
         </span>
       </div>
-      <p className="mb-3 text-[13px] leading-5 text-muted">
-        {t("backup.conflicts.desc")}
-        {(gitStatus?.behind ?? 0) > 0 && <> {t("backup.conflicts.autoPaused")}</>}
-      </p>
+      <p className="mb-3 text-[13px] leading-5 text-muted">{t("backup.conflicts.desc")}</p>
       <ul className="space-y-2">
         {conflicts.map((conflict) => {
           const busy = resolvingConflict === conflict.skill_id;

@@ -12,6 +12,8 @@ export function mapGitErrorMessage(cause: unknown, t: TFunction): string {
 
   if (kind === "network") return t("settings.gitErrorNetwork");
 
+  if (message.includes("SYNC_UPDATE_REQUIRED")) return t("settings.gitErrorUpdateRequired");
+
   if (
     message.includes("Authentication failed") ||
     message.includes("Permission denied") ||

@@ -26,7 +26,7 @@ import { ToggleSwitch } from "../components/ToggleSwitch";
 import { useApp } from "../context/AppContext";
 import { useBackupStatus } from "../hooks/useBackupStatus";
 import { useGithubDeviceFlow } from "../hooks/useGithubDeviceFlow";
-import { displaySnapshotLabel, formatBytes } from "../lib/backupFormat";
+import { formatBytes } from "../lib/backupFormat";
 import { getErrorMessage } from "../lib/error";
 import {
   isAuthFailureMessage,
@@ -81,7 +81,7 @@ export function Backup() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [recoveryReason, setRecoveryReason] = useState<RecoveryReason>("unrelated_histories");
-  const [restoreVersionTag, setRestoreVersionTag] = useState<null | string>(null);
+  const [restoreTarget, setRestoreTarget] = useState<api.SyncHistoryEntry | null>(null);
   const [restoringVersionTag, setRestoringVersionTag] = useState<null | string>(null);
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [githubToken, setGithubToken] = useState("");
@@ -263,12 +263,8 @@ export function Backup() {
         await Promise.all([refreshManagedSkills(), refreshPresets()]);
       }
 
-      if (outcome.pushed && outcome.snapshot_tag) {
-        toast.success(
-          t("mySkills.gitSyncSuccessWithVersion", {
-            tag: displaySnapshotLabel(outcome.snapshot_tag),
-          }),
-        );
+      if (outcome.pushed) {
+        toast.success(t("settings.gitSyncSuccess"));
       } else if (!merge) {
         toast.success(t("settings.gitUpToDate"));
       }
@@ -279,13 +275,8 @@ export function Backup() {
     } catch (error) {
       setBackupError(mapGitError(error));
       setBackupErrorRaw(getErrorMessage(error, ""));
-      const message = getErrorMessage(error, "");
 
-      if (message.includes("pending on both devices")) {
-        // Object-merge block (§4 双侧声明): the fix is resolving the pending
-        // conflict on one device — reclone/recovery would be wrong advice.
-        toast.error(t("backup.conflicts.blockedBothDevices"), { duration: 12000 });
-      } else if (isRecoverableSetupError(error)) {
+      if (isRecoverableSetupError(error)) {
         toast.error(mapGitError(error));
         const latest = await refreshGitStatus();
         setRecoveryReason(
@@ -306,8 +297,8 @@ export function Backup() {
     setResolvingConflict(skillId);
 
     try {
-      const safetyTag = await api.gitBackupResolveConflict(skillId, action);
-      toast.success(t("backup.conflicts.resolved", { tag: displaySnapshotLabel(safetyTag) }));
+      await api.gitBackupResolveConflict(skillId, action);
+      toast.success(t("backup.conflicts.resolved"));
       await Promise.all([
         refreshPendingConflicts(),
         refreshGitStatus(),
@@ -425,23 +416,23 @@ export function Backup() {
     setLoading(null);
   };
 
+  const restoreWhen = restoreTarget ? new Date(restoreTarget.committed_at).toLocaleString() : "";
+
   const handleRestoreVersion = async () => {
-    if (!restoreVersionTag) return;
-    setRestoringVersionTag(restoreVersionTag);
+    if (!restoreTarget) return;
+    setRestoringVersionTag(restoreTarget.commit);
 
     try {
-      const safetyTag = await api.gitBackupRestoreVersion(restoreVersionTag);
-      toast.success(
-        t("mySkills.gitVersionRestoreSuccess", { tag: displaySnapshotLabel(restoreVersionTag) }),
-      );
-      toast.info(t("backup.restoreSafetyPoint", { tag: displaySnapshotLabel(safetyTag) }));
+      await api.gitBackupRestoreVersion(restoreTarget.commit);
+      toast.success(t("mySkills.gitVersionRestoreSuccess", { when: restoreWhen }));
+      toast.info(t("backup.restoreSafetyPoint"));
       await Promise.all([
         refreshGitStatus(),
         refreshVersions(),
         refreshManagedSkills(),
         refreshPresets(),
       ]);
-      setRestoreVersionTag(null);
+      setRestoreTarget(null);
     } catch (error) {
       toast.error(mapGitError(error));
     } finally {
@@ -550,7 +541,6 @@ export function Backup() {
           {pendingConflicts.length > 0 && (
             <BackupConflicts
               conflicts={pendingConflicts}
-              gitStatus={gitStatus}
               localSkills={localSkills}
               resolvingConflict={resolvingConflict}
               loading={loading}
@@ -618,7 +608,7 @@ export function Backup() {
             gitStatus={gitStatus}
             restoringVersionTag={restoringVersionTag}
             onRefresh={refreshVersions}
-            onRestore={setRestoreVersionTag}
+            onRestore={setRestoreTarget}
           />
         </div>
 
@@ -778,14 +768,12 @@ export function Backup() {
       </div>
 
       <ConfirmDialog
-        open={restoreVersionTag !== null}
+        open={restoreTarget !== null}
         title={t("mySkills.gitVersionRestoreTitle")}
-        message={t("mySkills.gitVersionRestoreConfirm", {
-          tag: displaySnapshotLabel(restoreVersionTag || ""),
-        })}
+        message={t("mySkills.gitVersionRestoreConfirm", { when: restoreWhen })}
         tone="warning"
         confirmLabel={t("mySkills.gitVersionRestore")}
-        onClose={() => setRestoreVersionTag(null)}
+        onClose={() => setRestoreTarget(null)}
         onConfirm={handleRestoreVersion}
       />
       <ConfirmDialog

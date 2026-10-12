@@ -131,7 +131,6 @@ export const LOCAL_ONLY_SETTING_KEYS: readonly string[] = [
   "text_size",
   "close_action",
   "show_tray_icon",
-  "merge_engine",
 ];
 
 export const LOCAL_ONLY_SETTING_PREFIXES: readonly string[] = ["backup_", "git_backup_", "github_"];
