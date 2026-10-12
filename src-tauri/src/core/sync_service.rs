@@ -13,6 +13,7 @@ use super::git_backup_store::{
 };
 use super::host::HostCtx;
 use super::merge::{self, resolve::ResolveAction};
+use super::resource_sync::{self, ResourceConflict};
 use super::scenario_service::{self, STATUS_EDITED};
 use super::skill_store::SkillStore;
 use super::{auto_backup, central_repo, git_backup, sync_apply, sync_metadata};
@@ -68,6 +69,8 @@ pub struct SyncStatus {
     /// Last successful sync, ms since the epoch.
     pub last_sync: Option<i64>,
     pub conflicts: Vec<SyncConflict>,
+    /// Instructions and MCPs changed on two hosts (SID-108).
+    pub resource_conflicts: Vec<ResourceConflict>,
     pub same_name_presets: Vec<SameNamePreset>,
     pub edited_here: Vec<EditedCopy>,
     pub version: String,
@@ -120,6 +123,10 @@ pub fn sync_status(store: &SkillStore) -> SyncStatus {
     let git = git_backup::get_status(&central_repo::skills_dir()).ok();
     let remote = git.as_ref().and_then(|s| s.remote_url.clone());
     let conflicts = conflicts(store);
+    let resource_conflicts = git2::Repository::open(central_repo::skills_dir())
+        .ok()
+        .and_then(|repo| resource_sync::conflicts(&repo).ok())
+        .unwrap_or_default();
     let same_name_presets = same_name_presets(store);
     let edited_here = edited_copies(store);
     let last_error = store
@@ -143,10 +150,14 @@ pub fn sync_status(store: &SkillStore) -> SyncStatus {
             SyncState::NeedsReview
         };
         (state, Some(error))
-    } else if !conflicts.is_empty() || !same_name_presets.is_empty() || !edited_here.is_empty() {
+    } else if !conflicts.is_empty()
+        || !resource_conflicts.is_empty()
+        || !same_name_presets.is_empty()
+        || !edited_here.is_empty()
+    {
         let reason = format!(
             "{} changed on two hosts, {} with the same name, {} edited here",
-            plural(conflicts.len(), "skill"),
+            plural(conflicts.len() + resource_conflicts.len(), "item"),
             plural(same_name_presets.len(), "preset"),
             plural(edited_here.len(), "agent copy"),
         );
@@ -165,6 +176,7 @@ pub fn sync_status(store: &SkillStore) -> SyncStatus {
             .flatten()
             .and_then(|v| v.parse().ok()),
         conflicts,
+        resource_conflicts,
         same_name_presets,
         edited_here,
         version: env!("CARGO_PKG_VERSION").to_string(),

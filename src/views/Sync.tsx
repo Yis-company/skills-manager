@@ -52,8 +52,9 @@ export function Sync() {
   const current = selection ?? (thisHost.inSync ? "overview" : "local");
   const host = screen.hosts.find((h) => hostKey(h) === current);
   const conflicts = screen.local?.conflicts ?? [];
+  const resources = screen.local?.resource_conflicts ?? [];
   const presets = screen.local?.same_name_presets ?? [];
-  const reviewCount = conflicts.length + presets.length;
+  const reviewCount = conflicts.length + resources.length + presets.length;
   const settingUp = add.run && !add.run.done ? add.run : null;
 
   const navItem = (key: Selection, label: ReactNode, extra?: ReactNode) => (
@@ -157,7 +158,12 @@ export function Sync() {
             />
           )}
           {current === "review" && (
-            <Review conflicts={conflicts} presets={presets} onResolved={screen.refresh} />
+            <Review
+              conflicts={conflicts}
+              resources={resources}
+              presets={presets}
+              onResolved={screen.refresh}
+            />
           )}
           {(current === "add" || (settingUp && settingUp.hostId === current)) && (
             <AddHost add={add} />

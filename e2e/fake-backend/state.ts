@@ -14,6 +14,7 @@ import type {
   ProjectAgentTarget,
   ProjectSkill,
   RemoteHost,
+  ResourceConflict,
   SameNamePreset,
   ScanResult,
   SkillsShSkill,
@@ -73,6 +74,8 @@ export interface Seed {
   remoteCliNeedsUpdate?: boolean;
   /** Skills changed on two hosts, as this computer's `sync status` lists them. */
   syncConflicts?: SyncConflict[];
+  /** Instructions and MCPs changed on two hosts, as `sync status` lists them. */
+  resourceConflicts?: ResourceConflict[];
   /** Presets renamed apart from a same-name preset, waiting for review. */
   sameNamePresets?: SameNamePreset[];
   /** Ids of hosts that joined Sync. */
@@ -196,6 +199,7 @@ export function createState({ settings, ...seed }: Seed): State {
     remoteStates: {},
     remoteCliNeedsUpdate: false,
     syncConflicts: [],
+    resourceConflicts: [],
     sameNamePresets: [],
     hostsInSync: [],
     pasteKeyFirst: false,

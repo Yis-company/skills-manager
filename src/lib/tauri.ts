@@ -1084,6 +1084,16 @@ export interface SyncConflict {
   other_host: string;
 }
 
+/** An instruction or MCP changed on two hosts, recorded in Sync. */
+export interface ResourceConflict {
+  key: string;
+  kind: "instructions" | "mcps";
+  name: string;
+  /** The host whose version Sync kept, and the host with the other one. */
+  this_host: string;
+  other_host: string;
+}
+
 /** A preset renamed apart from another host's preset with the same name. */
 export interface SameNamePreset {
   preset_id: string;
@@ -1108,6 +1118,7 @@ export interface SyncStatus {
   remote: null | string;
   last_sync: null | number;
   conflicts: SyncConflict[];
+  resource_conflicts: ResourceConflict[];
   same_name_presets: SameNamePreset[];
   edited_here: EditedCopy[];
   version: string;

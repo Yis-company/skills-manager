@@ -105,7 +105,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         .refname_to_id(&format!("refs/remotes/origin/{branch}"))
         .with_context(|| format!("origin/{branch} not found after fetch"))?;
 
-    crate::core::resource_sync::reconcile_completed(&repo, store)?;
+    crate::core::resource_sync::drop_legacy_records(&repo, store)?;
 
     if theirs == ours {
         return Ok(up_to_date_summary(&repo, store));
@@ -160,15 +160,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         snapshot::read_snapshot(&repo, &ours_tree).context("failed to read local snapshot")?;
     let theirs_snap =
         snapshot::read_snapshot(&repo, &theirs_tree).context("failed to read remote snapshot")?;
-    let resources = crate::core::resource_sync::merge(
-        &repo,
-        store,
-        &base_snap,
-        &ours_snap,
-        &theirs_snap,
-        ours,
-        theirs,
-    )?;
+    let resources = crate::core::resource_sync::merge(&base_snap, &ours_snap, &theirs_snap);
 
     // §4/§11-4: declared-pending set from trailers.
     let pending::PendingPins { pinned, reflagged } =
@@ -219,7 +211,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         !path.starts_with(".agents-manager/instructions/")
             && !path.starts_with(".agents-manager/mcps/")
     });
-    plan.residual.extend(resources);
+    plan.residual.extend(resources.files);
     // SID-104: presets renamed apart from a same-name preset wait for review.
     if !plan.same_name.is_empty() {
         let path = format!("{METADATA_DIR}/{}", sync_metadata::PRESET_REVIEW_FILE);
@@ -324,6 +316,10 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         message.push('\n');
         message.push_str(line);
     }
+    if let Some(line) = crate::core::resource_sync::conflicts_trailer(&resources.conflicts) {
+        message.push('\n');
+        message.push_str(&line);
+    }
     let sig = repo
         .signature()
         .or_else(|_| git2::Signature::now("Skills Manager", "skills-manager@local"))?;
@@ -363,7 +359,6 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     }
 
     let pending_total = rebuild_pending_projection(&repo, store)?;
-    crate::core::resource_sync::clear_resolved(&repo, store)?;
     let summary = MergeSummary {
         engine: "object".to_string(),
         updated,

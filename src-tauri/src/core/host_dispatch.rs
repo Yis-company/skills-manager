@@ -83,6 +83,7 @@ pub const COMMANDS: &[&str] = &[
     "sync_conflicts",
     "sync_resolve",
     "sync_resolve_preset",
+    "sync_resolve_resource",
     "sync_restore",
     "sync_pause",
     "sync_resume",
@@ -381,6 +382,14 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             };
             sync_service::resolve_preset(&ctx.store, &a.req::<String>("preset")?, choice)
         })()),
+        "sync_resolve_resource" => reply(
+            crate::core::resource_sync::resolve(
+                ctx,
+                &a.req::<String>("key")?,
+                a.opt("other")?.unwrap_or(false),
+            )
+            .map_err(|e| AppError::classify_git_error(format!("{e:#}"))),
+        ),
         "sync_restore" => reply(sync_service::restore(ctx, &a.req::<String>("point")?)),
         "sync_pause" => reply(sync_service::set_paused(&ctx.store, true)),
         "sync_resume" => reply(sync_service::set_paused(&ctx.store, false)),

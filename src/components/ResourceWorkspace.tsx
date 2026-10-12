@@ -328,7 +328,8 @@ function ResourceBackupConflicts({
     name: string;
     local: null | Record<string, string>;
     remote: null | Record<string, string>;
-    choice: "local" | "remote" | null;
+    this_host: string;
+    other_host: string;
   };
 
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
@@ -369,7 +370,7 @@ function ResourceBackupConflicts({
   const resolve = async (id: string, choice: "local" | "remote") => {
     try {
       await request({ action: "resolve", id, choice });
-      setMessage("Choice saved. Run backup sync again to continue.");
+      setMessage("Choice recorded in Sync. Every host applies it on its next sync.");
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -381,11 +382,10 @@ function ResourceBackupConflicts({
   return (
     <div className="app-panel space-y-3 p-4">
       <div>
-        <h3 className="text-[13px] font-semibold">Backup needs a choice</h3>
+        <h3 className="text-[13px] font-semibold">Sync needs a choice</h3>
         <p className="mt-1 text-[11px] text-muted">
-          This item changed on both sides. Compare the files and choose which copy to keep, then run
-          backup sync again.
-          {hostId && " Local means the selected host; remote means the backup repository."}
+          This item changed on two hosts. Sync kept one version for now. Compare the files and
+          choose which version to keep on every host.
         </p>
       </div>
       {conflicts.map((item) => (
@@ -394,8 +394,8 @@ function ResourceBackupConflicts({
           <div className="mt-2 grid gap-2 md:grid-cols-2">
             {(
               [
-                ["Local copy", item.local],
-                ["Backup copy", item.remote],
+                [`${item.this_host}'s version (in Sync now)`, item.local],
+                [`${item.other_host}'s version`, item.remote],
               ] as const
             ).map(([label, files]) => (
               <div key={label} className="min-w-0 rounded border border-border-faint p-2">
@@ -413,10 +413,10 @@ function ResourceBackupConflicts({
           </div>
           <div className="mt-2 flex gap-2">
             <button className="app-button" onClick={() => void resolve(item.id, "local")}>
-              Keep local copy
+              Keep {item.this_host}'s version
             </button>
             <button className="app-button" onClick={() => void resolve(item.id, "remote")}>
-              Use backup copy
+              Keep {item.other_host}'s version
             </button>
           </div>
         </div>

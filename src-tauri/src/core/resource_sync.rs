@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 use git2::{Oid, Repository, Tree};
 use serde_json::{json, Value};
 
+use super::merge::protocol::parse_trailer_ids;
 use super::{
     central_repo,
     error::AppError,
@@ -18,8 +19,13 @@ use super::{
 };
 
 const PREFIX: &str = ".agents-manager/";
-const STATE: &str = "resource_sync_conflict";
+/// Where release 1 kept its per-host conflict rows; dropped on the next pull.
+const LEGACY_STATE: &str = "resource_sync_conflict";
 pub const TRAILER: &str = "Agents-Manager-Resources: 1";
+/// Instruction and MCP conflicts are recorded in Sync's history like skill
+/// conflicts (SID-108), so every host sees them and any host resolves them.
+pub const TRAILER_CONFLICTS: &str = "Agents-Manager-Resource-Conflicts";
+pub const TRAILER_RESOLVED: &str = "Agents-Manager-Resource-Resolved";
 type Files = BTreeMap<String, FileEntry>;
 
 fn key(path: &str) -> Option<String> {
@@ -215,80 +221,44 @@ pub fn check_current_writer(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-pub fn clear_resolved(repo: &Repository, store: &SkillStore) -> Result<()> {
-    for record in store.resource_state_list(STATE)? {
-        if record["choice"].as_str().is_some() {
-            if let Some(id) = record["id"].as_str() {
-                store.resource_state_delete(STATE, id)?;
-                remove_conflict_refs(repo, id);
-            }
+/// Drop release 1's per-host conflict rows and retention refs: conflicts now
+/// live in Sync's history, and the next merge finds any that remain.
+pub fn drop_legacy_records(repo: &Repository, store: &SkillStore) -> Result<()> {
+    for record in store.resource_state_list(LEGACY_STATE)? {
+        if let Some(id) = record["id"].as_str() {
+            store.resource_state_delete(LEGACY_STATE, id)?;
+        }
+    }
+    let legacy: Vec<String> = repo
+        .references_glob("refs/skills-manager/resource-conflicts/*")?
+        .flatten()
+        .filter_map(|r| r.name().map(str::to_owned))
+        .collect();
+    for name in legacy {
+        if let Ok(mut reference) = repo.find_reference(&name) {
+            reference.delete()?;
         }
     }
     Ok(())
 }
 
-/// Git and SQLite cannot commit together. If a process ended after installing
-/// the reviewed merge, prove that exact merge exists before clearing its UI row.
-pub fn reconcile_completed(repo: &Repository, store: &SkillStore) -> Result<()> {
-    let Ok(head) = repo.head().and_then(|head| head.peel_to_commit()) else {
-        return Ok(());
-    };
-    for record in store.resource_state_list(STATE)? {
-        let Some(choice @ ("local" | "remote")) = record["choice"].as_str() else {
-            continue;
-        };
-        let ours = Oid::from_str(record["ours"].as_str().context("Invalid conflict tip")?)?;
-        let theirs = Oid::from_str(record["theirs"].as_str().context("Invalid conflict tip")?)?;
-        if ![ours, theirs].iter().all(|tip| {
-            head.id() == *tip || repo.graph_descendant_of(head.id(), *tip).unwrap_or(false)
-        }) {
-            continue;
-        }
-        let selected = repo
-            .find_commit(if choice == "local" { ours } else { theirs })?
-            .tree()?;
-        let expected = groups(&super::merge::snapshot::read_snapshot(repo, &selected)?.residual);
-        let key = record["key"].as_str().context("Invalid conflict key")?;
-        let mut walk = repo.revwalk()?;
-        walk.push(head.id())?;
-        walk.hide(ours)?;
-        walk.hide(theirs)?;
-        for oid in walk {
-            let commit = repo.find_commit(oid?)?;
-            let parents: Vec<_> = commit.parent_ids().collect();
-            if !parents.contains(&ours) || !parents.contains(&theirs) {
-                continue;
-            }
-            let actual =
-                groups(&super::merge::snapshot::read_snapshot(repo, &commit.tree()?)?.residual);
-            if actual.get(key) == expected.get(key) {
-                let id = record["id"].as_str().context("Invalid conflict id")?;
-                store.resource_state_delete(STATE, id)?;
-                remove_conflict_refs(repo, id);
-            }
-            break;
-        }
-    }
-    Ok(())
+/// Merged instruction and MCP files, plus the resources changed differently
+/// on both sides. Those keep this host's version and are recorded as
+/// conflicts in the merge commit (SID-108); a bundle never merges newest-wins.
+pub struct Merged {
+    pub files: Files,
+    pub conflicts: Vec<String>,
 }
 
-pub fn merge(
-    repo: &Repository,
-    store: &SkillStore,
-    base: &Snapshot,
-    ours: &Snapshot,
-    theirs: &Snapshot,
-    ours_tip: Oid,
-    theirs_tip: Oid,
-) -> Result<Files> {
+pub fn merge(base: &Snapshot, ours: &Snapshot, theirs: &Snapshot) -> Merged {
     let b = groups(&base.residual);
     let o = groups(&ours.residual);
     let t = groups(&theirs.residual);
     let keys: BTreeSet<_> = b.keys().chain(o.keys()).chain(t.keys()).collect();
-    let mut result = BTreeMap::new();
-    let previous = store.resource_state_list(STATE)?;
-    let mut active = BTreeSet::new();
-    let mut blocked = Vec::new();
+    let mut merged = Merged {
+        files: BTreeMap::new(),
+        conflicts: Vec::new(),
+    };
     for item_key in keys {
         let (base_item, local, remote) = (b.get(item_key), o.get(item_key), t.get(item_key));
         let choice = if local == remote || remote == base_item {
@@ -296,71 +266,157 @@ pub fn merge(
         } else if local == base_item {
             remote
         } else {
-            let existing = previous.iter().find(|v| {
-                v["key"] == *item_key
-                    && v["ours"] == ours_tip.to_string()
-                    && v["theirs"] == theirs_tip.to_string()
-            });
-            let record = existing.cloned().unwrap_or_else(|| {
-                json!({
-                    "id":uuid::Uuid::new_v4().to_string(),"key":item_key,
-                    "ours":ours_tip.to_string(),"theirs":theirs_tip.to_string(),"choice":null
-                })
-            });
-            let id = record["id"].as_str().context("Invalid resource conflict")?;
-            active.insert(id.to_owned());
-            // Retain both commits while a human reviews this conflict, even if
-            // the remote branch advances and Git later garbage-collects.
-            if repo.find_commit(ours_tip).is_ok() && repo.find_commit(theirs_tip).is_ok() {
-                repo.reference(
-                    &format!("refs/skills-manager/resource-conflicts/{id}/local"),
-                    ours_tip,
-                    true,
-                    "retain resource conflict",
-                )?;
-                repo.reference(
-                    &format!("refs/skills-manager/resource-conflicts/{id}/remote"),
-                    theirs_tip,
-                    true,
-                    "retain resource conflict",
-                )?;
-            }
-            store.resource_state_put(STATE, id, &record)?;
-            match record["choice"].as_str() {
-                Some("local") => local,
-                Some("remote") => remote,
-                _ => {
-                    blocked.push(item_key.to_owned());
-                    local
-                }
-            }
+            merged.conflicts.push(item_key.clone());
+            local
         };
         if let Some(files) = choice {
-            result.extend(files.clone());
+            merged.files.extend(files.clone());
         }
     }
-    for stale in previous {
-        if let Some(id) = stale["id"].as_str() {
-            if !active.contains(id) {
-                store.resource_state_delete(STATE, id)?;
-                remove_conflict_refs(repo, id);
-            }
-        }
-    }
-    if !blocked.is_empty() {
-        bail!("Instruction/MCP library changes need review in Library before syncing again ({} conflicting resources). No merged files were applied.", blocked.len());
-    }
-    Ok(result)
+    merged
 }
 
-fn remove_conflict_refs(repo: &Repository, id: &str) {
-    for side in ["local", "remote"] {
-        if let Ok(mut reference) = repo.find_reference(&format!(
-            "refs/skills-manager/resource-conflicts/{id}/{side}"
-        )) {
-            let _ = reference.delete();
+/// The conflict trailer line for a merge commit.
+pub fn conflicts_trailer(keys: &[String]) -> Option<String> {
+    (!keys.is_empty()).then(|| format!("{TRAILER_CONFLICTS}: {}", keys.join(", ")))
+}
+
+/// Open instruction and MCP conflicts in HEAD's history, each with the merge
+/// that recorded it last: its second parent holds the other host's version.
+fn open_conflicts(repo: &Repository) -> Result<BTreeMap<String, Oid>> {
+    let mut open = BTreeMap::new();
+    let Ok(head) = repo.head().and_then(|head| head.peel_to_commit()) else {
+        return Ok(open);
+    };
+    let mut walk = repo.revwalk()?;
+    walk.push(head.id())?;
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?;
+    for oid in walk {
+        let oid = oid?;
+        let commit = repo.find_commit(oid)?;
+        let message = commit.message().unwrap_or_default();
+        for key in parse_trailer_ids(message, TRAILER_CONFLICTS) {
+            open.insert(key, oid);
+        }
+        for key in parse_trailer_ids(message, TRAILER_RESOLVED) {
+            open.remove(&key);
         }
     }
+    Ok(open)
+}
+
+/// An instruction or MCP changed on two hosts, as the review lists it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResourceConflict {
+    pub key: String,
+    pub kind: String,
+    pub name: String,
+    /// The host whose version Sync kept, and the host with the other one.
+    pub this_host: String,
+    pub other_host: String,
+}
+
+pub fn conflicts(repo: &Repository) -> Result<Vec<ResourceConflict>> {
+    open_conflicts(repo)?
+        .into_iter()
+        .map(|(key, declared)| describe(repo, key, declared).map(|(conflict, ..)| conflict))
+        .collect()
+}
+
+type Contents = Option<BTreeMap<String, String>>;
+
+/// A conflict with the files Sync has now and the other host's files.
+fn describe(
+    repo: &Repository,
+    key: String,
+    declared: Oid,
+) -> Result<(ResourceConflict, Contents, Contents)> {
+    let merge = repo.find_commit(declared)?;
+    let other = merge.parent(1)?;
+    let head = repo.head()?.peel_to_commit()?;
+    let kept = content(repo, &head.id().to_string(), &key)?;
+    let alternative = content(repo, &other.id().to_string(), &key)?;
+    let author = |commit: &git2::Commit| commit.author().name().unwrap_or_default().to_owned();
+    let conflict = ResourceConflict {
+        kind: key.split('/').next().unwrap_or_default().to_owned(),
+        name: resource_name(&key, kept.as_ref().or(alternative.as_ref())),
+        this_host: author(&merge),
+        other_host: author(&other),
+        key,
+    };
+    Ok((conflict, kept, alternative))
+}
+
+fn resource_name(key: &str, files: Option<&BTreeMap<String, String>>) -> String {
+    files
+        .and_then(|files| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with("definition.json") || key.starts_with("mcps/"))
+                .and_then(|(_, raw)| serde_json::from_str::<Value>(raw).ok())
+                .and_then(|v| v["name"].as_str().map(str::to_owned))
+        })
+        .unwrap_or_else(|| key.to_owned())
+}
+
+/// Resolve a conflict, then apply the result to this host's agents.
+pub fn resolve(ctx: &HostCtx, key: &str, use_other: bool) -> Result<()> {
+    {
+        let _lock = RepoLock::acquire_foreground("resolve instruction or MCP conflict")?;
+        resolve_unlocked(&ctx.store, key, use_other)?;
+    }
+    super::sync_apply::reapply_resources(ctx);
+    Ok(())
+}
+
+/// Settle an open conflict with a commit carrying the resolved trailer: keep
+/// the version Sync has, or put back the other host's. Every host applies it
+/// on its next pull. Caller holds the repo lock.
+pub fn resolve_unlocked(store: &SkillStore, key: &str, use_other: bool) -> Result<()> {
+    let skills_dir = central_repo::skills_dir();
+    super::git_backup::ensure_no_interrupted_git_operation(&skills_dir)?;
+    super::sync_metadata::write_all_from_db_unlocked(store)?;
+    if super::git_backup::has_uncommitted_changes(&skills_dir)? {
+        super::git_backup::commit_all_unlocked(&skills_dir, "backup")?;
+    }
+    let repo = Repository::open(&skills_dir)?;
+    let declared = *open_conflicts(&repo)?
+        .get(key)
+        .context("This conflict is already resolved")?;
+    if use_other {
+        let other = repo.find_commit(declared)?.parent(1)?.tree()?;
+        let files = groups(&super::merge::snapshot::read_snapshot(&repo, &other)?.residual)
+            .remove(key)
+            .unwrap_or_default();
+        let current = skills_dir
+            .join(PREFIX)
+            .join(match key.strip_prefix("mcps/") {
+                Some(id) => format!("mcps/{id}.json"),
+                None => key.to_owned(),
+            });
+        if current.is_dir() {
+            std::fs::remove_dir_all(&current)?;
+        } else if current.exists() {
+            std::fs::remove_file(&current)?;
+        }
+        for (path, entry) in files {
+            let target = skills_dir.join(path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(target, repo.find_blob(entry.oid)?.content())?;
+        }
+    }
+    let label = if use_other {
+        "other version"
+    } else {
+        "kept version"
+    };
+    let message = format!(
+        "{}\n{TRAILER_RESOLVED}: {key}",
+        super::merge::protocol::app_commit_message(&format!("sync: resolve {key}: {label}"))
+    );
+    super::git_backup::commit_resolution_unlocked(&skills_dir, &message)
 }
 
 fn content(
@@ -395,63 +451,29 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
 fn dispatch_inner(ctx: &HostCtx, request: Value) -> Result<Value> {
     match request["action"].as_str() {
         Some("list") => {
-            let records = ctx.store.resource_state_list(STATE)?;
-            if records.is_empty() {
-                return Ok(json!({"conflicts":[]}));
-            }
-            let repo = Repository::open(central_repo::skills_dir())?;
-            let mut conflicts = Vec::new();
-            for mut value in records {
-                let item_key = value["key"]
-                    .as_str()
-                    .context("Invalid resource conflict")?
-                    .to_owned();
-                let local = content(
-                    &repo,
-                    value["ours"].as_str().context("Missing local version")?,
-                    &item_key,
-                )?;
-                let remote = content(
-                    &repo,
-                    value["theirs"].as_str().context("Missing remote version")?,
-                    &item_key,
-                )?;
-                let kind = item_key.split('/').next().unwrap_or_default();
-                let name = local
-                    .as_ref()
-                    .or(remote.as_ref())
-                    .and_then(|files| {
-                        files
-                            .iter()
-                            .find(|(path, _)| path.ends_with("definition.json") || kind == "mcps")
-                            .and_then(|(_, raw)| serde_json::from_str::<Value>(raw).ok())
-                            .and_then(|v| v["name"].as_str().map(str::to_owned))
-                    })
-                    .unwrap_or_else(|| item_key.clone());
-                value["kind"] = json!(kind);
-                value["name"] = json!(name);
+            let Ok(repo) = Repository::open(central_repo::skills_dir()) else {
+                return Ok(json!({"conflicts": []}));
+            };
+            let mut out = Vec::new();
+            for (key, declared) in open_conflicts(&repo)? {
+                let (conflict, local, remote) = describe(&repo, key, declared)?;
+                let mut value = serde_json::to_value(&conflict)?;
+                value["id"] = json!(conflict.key);
                 value["local"] = json!(local);
                 value["remote"] = json!(remote);
-                conflicts.push(value);
+                out.push(value);
             }
-            Ok(json!({"conflicts":conflicts}))
+            Ok(json!({"conflicts": out}))
         }
         Some("resolve") => {
-            let _lock = RepoLock::acquire_foreground("review resource library conflict")?;
-            let id = request["id"].as_str().context("Missing conflict id")?;
-            let choice = request["choice"]
-                .as_str()
-                .context("Missing conflict choice")?;
-            if !matches!(choice, "local" | "remote") {
-                bail!("Choose local or remote");
-            }
-            let mut record = ctx
-                .store
-                .resource_state_get(STATE, id)?
-                .context("Conflict no longer exists")?;
-            record["choice"] = json!(choice);
-            ctx.store.resource_state_put(STATE, id, &record)?;
-            Ok(json!({"resolved":true}))
+            let key = request["id"].as_str().context("Missing conflict id")?;
+            let use_other = match request["choice"].as_str() {
+                Some("local") => false,
+                Some("remote") => true,
+                _ => bail!("Choose local or remote"),
+            };
+            resolve(ctx, key, use_other)?;
+            Ok(json!({"resolved": true}))
         }
         _ => bail!("Unknown resource sync action"),
     }
@@ -467,10 +489,8 @@ mod tests {
         }
     }
     #[test]
-    fn bundle_changes_are_never_newest_wins() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path()).unwrap();
-        let store = SkillStore::new(&dir.path().join("state.db")).unwrap();
+    fn a_bundle_changed_on_both_sides_keeps_ours_and_is_recorded() {
+        // Never newest-wins: ours stays and the merge records a conflict.
         let path =
             ".agents-manager/instructions/00000000-0000-0000-0000-000000000001/definition.json";
         let mut base = Snapshot::default();
@@ -479,65 +499,24 @@ mod tests {
         ours.residual.insert(path.into(), entry(2));
         let mut theirs = Snapshot::default();
         theirs.residual.insert(path.into(), entry(3));
-        assert!(merge(
-            &repo,
-            &store,
-            &base,
-            &ours,
-            &theirs,
-            entry(4).oid,
-            entry(5).oid
-        )
-        .is_err());
-        let mut record = store.resource_state_list(STATE).unwrap().pop().unwrap();
-        record["choice"] = json!("remote");
-        store
-            .resource_state_put(STATE, record["id"].as_str().unwrap(), &record)
-            .unwrap();
-        let merged = merge(
-            &repo,
-            &store,
-            &base,
-            &ours,
-            &theirs,
-            entry(4).oid,
-            entry(5).oid,
-        )
-        .unwrap();
-        assert_eq!(merged[path], entry(3));
-        // A different remote invalidates the previous reviewed choice.
-        assert!(merge(
-            &repo,
-            &store,
-            &base,
-            &ours,
-            &theirs,
-            entry(4).oid,
-            entry(6).oid
-        )
-        .is_err());
+        let merged = merge(&base, &ours, &theirs);
+        assert_eq!(merged.files[path], entry(2));
+        assert_eq!(
+            merged.conflicts,
+            ["instructions/00000000-0000-0000-0000-000000000001"]
+        );
+        assert_eq!(
+            conflicts_trailer(&merged.conflicts).unwrap(),
+            format!("{TRAILER_CONFLICTS}: {}", merged.conflicts[0])
+        );
     }
     #[test]
     fn independent_resources_merge_and_deleted_bundle_stays_deleted() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path()).unwrap();
-        let store = SkillStore::new(&dir.path().join("state.db")).unwrap();
         let path = ".agents-manager/mcps/00000000-0000-0000-0000-000000000001.json";
         let mut base = Snapshot::default();
         base.residual.insert(path.into(), entry(1));
-        let ours = Snapshot::default();
-        let theirs = Snapshot::default();
-        assert!(merge(
-            &repo,
-            &store,
-            &base,
-            &ours,
-            &theirs,
-            entry(2).oid,
-            entry(3).oid
-        )
-        .unwrap()
-        .is_empty());
+        let merged = merge(&base, &Snapshot::default(), &Snapshot::default());
+        assert!(merged.files.is_empty() && merged.conflicts.is_empty());
     }
 
     #[test]

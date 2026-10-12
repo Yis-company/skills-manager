@@ -227,6 +227,32 @@ test("needs review offers choices named by host", async ({ page, backend }) => {
   });
 });
 
+test("an MCP changed on two hosts is resolved from Needs review", async ({ page, backend }) => {
+  await backend.seed({
+    gitStatus: gitStatus(),
+    settings: { git_backup_remote_url: REMOTE, backup_sync_notice_dismissed: "1" },
+    resourceConflicts: [
+      {
+        key: "mcps/m-1",
+        kind: "mcps",
+        name: "GitHub",
+        this_host: "e2e-machine",
+        other_host: "Remote-agent",
+      },
+    ],
+  });
+  await page.goto("/backup");
+  await page.getByRole("button", { name: /Needs review/ }).click();
+  await expect(page.getByText("MCP changed on two hosts")).toBeVisible();
+  await page.getByRole("button", { name: "Keep Remote-agent's version" }).click();
+
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  expect(await backend.calls("sync_screen_call")).toContainEqual({
+    command: "sync_resolve_resource",
+    args: { key: "mcps/m-1", other: true },
+  });
+});
+
 test("a preset added on two hosts with one name can be combined", async ({ page, backend }) => {
   await backend.seed({
     gitStatus: gitStatus(),

@@ -6,23 +6,25 @@ import { getErrorMessage } from "../../lib/error";
 import * as api from "../../lib/tauri";
 
 /**
- * Skills changed on two hosts (SID-108) and presets with the same name from
- * two hosts (SID-104). Choices are recorded in Sync, and each host applies
- * them on its next pull.
+ * Skills, instructions and MCPs changed on two hosts (SID-108) and presets
+ * with the same name from two hosts (SID-104). Choices are recorded in Sync,
+ * and each host applies them on its next pull.
  */
 export function Review({
   conflicts,
+  resources,
   presets,
   onResolved,
 }: {
   conflicts: api.SyncConflict[];
+  resources: api.ResourceConflict[];
   presets: api.SameNamePreset[];
   onResolved: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState<null | string>(null);
 
-  if (conflicts.length === 0 && presets.length === 0) {
+  if (conflicts.length === 0 && resources.length === 0 && presets.length === 0) {
     return <div className="py-16 text-center text-[13px] text-muted">{t("sync.review.empty")}</div>;
   }
 
@@ -80,6 +82,26 @@ export function Review({
           </ReviewCard>
         );
       })}
+      {resources.map((resource) => (
+        <ReviewCard
+          key={resource.key}
+          kind={t(`sync.review.${resource.kind}`)}
+          name={resource.name}
+          detail={t("sync.review.changedOnBoth", {
+            one: resource.this_host,
+            other: resource.other_host || t("sync.review.anotherHost"),
+          })}
+        >
+          {[resource.this_host, resource.other_host].map((host, index) =>
+            choice(host || String(index), t("sync.review.keep", { host }), () =>
+              resolve(resource.key, "sync_resolve_resource", {
+                key: resource.key,
+                other: index === 1,
+              }),
+            ),
+          )}
+        </ReviewCard>
+      ))}
       {presets.map((preset) => {
         const settle = (args: api.SyncCallArgs) =>
           resolve(preset.preset_id, "sync_resolve_preset", { preset: preset.preset_id, ...args });

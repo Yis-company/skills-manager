@@ -115,6 +115,8 @@
       "empty": "Nothing needs review.",
       "desc": "Choices are recorded in Sync. Each host applies them on its next pull, even when it isn't connected.",
       "skill": "Skill changed on two hosts",
+      "instructions": "Instructions changed on two hosts",
+      "mcps": "MCP changed on two hosts",
       "changedOnBoth": "Changed on {{one}} and on {{other}}.",
       "anotherHost": "another host",
       "keep": "Keep {{host}}'s version",

@@ -29,6 +29,7 @@ pub const SCREEN_COMMANDS: &[&str] = &[
     "sync_conflicts",
     "sync_resolve",
     "sync_resolve_preset",
+    "sync_resolve_resource",
     "sync_agent_log",
     "sync_pre_join_copies",
     "sync_delete_pre_join_copy",
