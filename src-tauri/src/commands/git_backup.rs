@@ -1,6 +1,6 @@
 use crate::core::{
-    central_repo, error::AppError, git_backup, git_credentials, git_fetcher, github_api, merge,
-    sync_metadata,
+    central_repo, error::AppError, git_backup, git_credentials, git_fetcher, github_api,
+    host::HostCtx, merge, sync_apply, sync_metadata,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -336,12 +336,14 @@ pub async fn git_backup_push(store: State<'_, Arc<SkillStore>>) -> Result<(), Ap
 #[tauri::command]
 pub async fn git_backup_pull(
     store: State<'_, Arc<SkillStore>>,
+    ctx: State<'_, HostCtx>,
 ) -> Result<merge::MergeSummary, AppError> {
     let store = store.inner().clone();
+    let ctx = ctx.inner().clone();
     sync_engine_pref(&store);
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
-        git_backup::with_repo_lock("git pull", || {
+        let summary = git_backup::with_repo_lock("git pull", || {
             // Merge commits must carry this device's identity too.
             apply_device_identity(&store, &skills_dir);
             let summary = merge::object_merge_pull_unlocked(&store, &skills_dir)?;
@@ -360,7 +362,11 @@ pub async fn git_backup_pull(
             );
             Ok(summary)
         })
-        .map_err(classify_git_chain)
+        .map_err(classify_git_chain)?;
+        if !summary.up_to_date {
+            sync_apply::reapply_resources(&ctx);
+        }
+        Ok(summary)
     })
     .await?
 }
@@ -383,16 +389,22 @@ pub struct SyncOutcome {
 #[tauri::command]
 pub async fn git_backup_sync(
     store: State<'_, Arc<SkillStore>>,
+    ctx: State<'_, HostCtx>,
     message: String,
 ) -> Result<SyncOutcome, AppError> {
     let store = store.inner().clone();
+    let ctx = ctx.inner().clone();
     sync_engine_pref(&store);
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
-        git_backup::with_repo_lock("git sync", || {
+        let outcome = git_backup::with_repo_lock("git sync", || {
             run_sync_blocking(&store, &skills_dir, &message)
         })
-        .map_err(classify_git_chain)
+        .map_err(classify_git_chain)?;
+        if outcome.merge.as_ref().is_some_and(|m| !m.up_to_date) {
+            sync_apply::reapply_resources(&ctx);
+        }
+        Ok(outcome)
     })
     .await?
 }
@@ -595,9 +607,11 @@ pub async fn sync_history(
 #[tauri::command]
 pub async fn git_backup_restore_version(
     store: State<'_, Arc<SkillStore>>,
+    ctx: State<'_, HostCtx>,
     commit: String,
 ) -> Result<(), AppError> {
     let store = store.inner().clone();
+    let ctx = ctx.inner().clone();
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
         git_backup::with_repo_lock("git restore snapshot", || {
@@ -606,7 +620,9 @@ pub async fn git_backup_restore_version(
             git_backup::restore_snapshot_version_unlocked(&skills_dir, &commit)?;
             reconcile_skills_index_unlocked(&store)
         })
-        .map_err(AppError::git)
+        .map_err(AppError::git)?;
+        sync_apply::reapply_resources(&ctx);
+        Ok(())
     })
     .await?
 }

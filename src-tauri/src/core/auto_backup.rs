@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::central_repo;
 use super::git_backup;
@@ -129,7 +129,17 @@ pub fn start<R: Runtime>(app: AppHandle<R>, store: Arc<SkillStore>) {
                 })
                 .await
                 .unwrap_or_else(|e| (Outcome::Failed(format!("join error: {e}")), None));
+                let merged = summary.is_some();
                 handle_outcome(&app, &store, outcome, summary);
+                // Deployed instructions and MCPs follow the merge (SID-99),
+                // after the round released the repo lock.
+                if let Some(ctx) = app.try_state::<super::host::HostCtx>().filter(|_| merged) {
+                    let ctx = ctx.inner().clone();
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        super::sync_apply::reapply_resources(&ctx)
+                    })
+                    .await;
+                }
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }

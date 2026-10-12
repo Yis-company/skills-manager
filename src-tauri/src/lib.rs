@@ -963,11 +963,15 @@ pub fn run() {
             // roll back an interrupted sync apply before any background work
             // can touch the repo. Best-effort, never blocks startup.
             let store_for_merge_recovery = store_for_setup.clone();
+            let host_for_startup_apply = host.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 core::merge::recover_on_startup(
                     &store_for_merge_recovery,
                     &core::central_repo::skills_dir(),
                 );
+                // Deployed instructions and MCPs follow library changes made
+                // while the app was closed (SID-99).
+                core::sync_apply::reapply_resources(&host_for_startup_apply);
             });
 
             // Automatic backup (§3.4): debounced commit+push after central-repo

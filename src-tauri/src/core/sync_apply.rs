@@ -9,27 +9,35 @@
 //! Skills added directly to an agent stay until the next preset switch
 //! (SID-98). A copy edited in its agent folder is never overwritten or
 //! removed: it is flagged "Edited here" until the user picks "Use Sync
-//! version" or "Keep my edit". Each change is written to the audit log,
-//! which doubles as the host's agent log.
+//! version" or "Keep my edit". Deployed instructions and MCPs follow their
+//! library definitions when the update applies cleanly, and otherwise wait
+//! for review. Each change is written to the audit log, which doubles as the
+//! host's agent log.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use serde_json::{json, Value};
+
 use super::audit_log::AuditDraft;
 use super::central_repo;
 use super::error::AppError;
+use super::host::HostCtx;
 use super::scenario_service::{
     self, DeployIntent, ScenarioSyncTarget, STATUS_EDITED, STATUS_EDITED_LEFT,
 };
 use super::skill_store::{SkillStore, SkillTargetRecord};
 use super::sync_engine;
+use super::{instructions, mcps};
 
 /// Audit actions of the agent log.
 pub const ACTION_DEPLOY: &str = "agent_deploy";
 pub const ACTION_REMOVE: &str = "agent_remove";
 pub const ACTION_FLAG: &str = "agent_flag";
 pub const ACTION_RESOLVE: &str = "agent_resolve_edit";
+/// An instruction or MCP update that meets edits on this host and waits.
+pub const ACTION_REVIEW: &str = "agent_review";
 
 /// What this host had on its agents before the library changed. The
 /// database forgets a deleted skill's deployments (cascade), so this is the
@@ -227,6 +235,120 @@ pub fn resolve_edited_copy(
             .ok(),
     );
     Ok(())
+}
+
+/// Deployed instructions and MCPs follow their library definitions after a
+/// sync (SID-99). An update that applies cleanly happens on its own; one that
+/// meets edits made on this host, or can't be previewed, waits for review in
+/// the agent log. Which items are deployed stays per host. Runs through the
+/// regular preview and apply, which take the repo lock: call it after the
+/// sync released it.
+pub fn reapply_resources(ctx: &HostCtx) -> Vec<AuditDraft> {
+    let mut entries = Vec::new();
+    let instructions = |request| instructions::dispatch(ctx, request);
+    let mcps = |request| mcps::dispatch(ctx, request);
+    let deployed = instructions(json!({"action": "deployments"})).unwrap_or_default();
+    for item in deployed["items"].as_array().into_iter().flatten() {
+        let id = item["instruction_id"].as_str().unwrap_or_default();
+        // A bundle deleted in the library keeps its files on this host.
+        let Ok(found) = instructions(json!({"action": "get", "id": id})) else {
+            continue;
+        };
+        let definition = &found["item"];
+        if definition["revision"] == item["definition_revision"] {
+            continue;
+        }
+        let update = instructions(
+            json!({"action": "preview", "target": item["target"], "instruction_id": id}),
+        )
+        .and_then(|preview| {
+            let conflict = preview["changes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|change| change["status"] == "conflict");
+            match conflict {
+                Some(change) => Err(AppError::invalid_input(format!(
+                    "{}: {}",
+                    change["path"].as_str().unwrap_or_default(),
+                    change["conflict"].as_str().unwrap_or("edited here")
+                ))),
+                None => Ok(preview),
+            }
+        });
+        let applied = update.as_ref().map_err(|e| e.to_string()).map(|preview| {
+            instructions(json!({"action": "apply", "preview_id": preview["preview_id"]}))
+        });
+        entries.push(resource_entry(
+            "instruction",
+            id,
+            definition,
+            &item["target"],
+            applied,
+        ));
+    }
+
+    let deployed = mcps(json!({"action": "deployments"})).unwrap_or_default();
+    for item in deployed["deployments"].as_array().into_iter().flatten() {
+        let id = item["definitionId"].as_str().unwrap_or_default();
+        let Ok(found) = mcps(json!({"action": "get", "id": id})) else {
+            continue;
+        };
+        let definition = &found["definition"];
+        if definition["revision"] == item["revision"] {
+            continue;
+        }
+        let operation =
+            json!({"kind": "update", "definitionId": id, "serverName": item["serverName"]});
+        let applied =
+            mcps(json!({"action": "preview", "target": item["target"], "operations": [operation]}))
+                .map_err(|e| e.to_string())
+                .map(|preview| mcps(json!({"action": "apply", "previewId": preview["previewId"]})));
+        entries.push(resource_entry(
+            "MCP",
+            id,
+            definition,
+            &item["target"],
+            applied,
+        ));
+    }
+
+    for entry in &entries {
+        ctx.store.log_audit(entry.clone());
+    }
+    entries
+}
+
+/// Agent log entry for one instruction or MCP update: the outer result is the
+/// preview (an error waits for review), the inner one the apply.
+fn resource_entry(
+    kind: &str,
+    id: &str,
+    definition: &Value,
+    target: &Value,
+    applied: Result<Result<Value, AppError>, String>,
+) -> AuditDraft {
+    let agent = target["agent_key"]
+        .as_str()
+        .or_else(|| target["agentKey"].as_str())
+        .unwrap_or_default();
+    let entry = |action| {
+        AuditDraft::new(action)
+            .skill(id, definition["name"].as_str().unwrap_or(id))
+            .tool(agent)
+    };
+    match applied {
+        Err(reason) => entry(ACTION_REVIEW).fail(format!("{kind}: {reason}")),
+        Ok(Ok(result))
+            if result["partial"] != true
+                && result["applied"] != false
+                && result["failed"].as_array().is_none_or(Vec::is_empty) =>
+        {
+            entry(ACTION_DEPLOY).detail(kind).ok()
+        }
+        Ok(Ok(result)) => entry(ACTION_DEPLOY).fail(format!("{kind}: {}", result["status"])),
+        Ok(Err(e)) => entry(ACTION_DEPLOY).fail(format!("{kind}: {e}")),
+    }
 }
 
 /// The active preset. One deleted on another host can't stay active here:
@@ -540,5 +662,112 @@ mod tests {
         resolve_edited_copy(store, "alpha", "test_agent", false).unwrap();
         assert!(!agent_dir.join("alpha").exists());
         assert!(store.get_targets_for_skill("alpha").unwrap().is_empty());
+    }
+
+    #[test]
+    fn deployed_instructions_and_mcps_follow_clean_updates_and_wait_on_edits() {
+        use crate::core::host::NoopEvents;
+        use crate::core::skill_store::ProjectRecord;
+        use std::sync::Arc;
+
+        let repo = test_repo();
+        // Library paths must not run through the /var symlink on macOS.
+        central_repo::set_test_base_dir_override(Some(
+            repo._tmp.path().canonicalize().unwrap().join("repo"),
+        ));
+        let store = SkillStore::new(&repo._tmp.path().join("resources.db")).unwrap();
+        let ctx = HostCtx::for_tests(store, Arc::new(NoopEvents));
+        let project = |id: &str| {
+            let dir = repo._tmp.path().join(id);
+            fs::create_dir_all(&dir).unwrap();
+            ctx.store
+                .insert_project(&ProjectRecord {
+                    id: id.into(),
+                    name: id.into(),
+                    path: dir.to_string_lossy().into(),
+                    workspace_type: "project".into(),
+                    linked_agent_key: None,
+                    linked_agent_name: None,
+                    disabled_path: None,
+                    sort_order: 0,
+                    created_at: 0,
+                    updated_at: 0,
+                    agent_keys: None,
+                    deploy_mode: "link".into(),
+                })
+                .unwrap();
+            dir
+        };
+        let clean = project("clean");
+        let edited = project("edited");
+        let ins = |request| instructions::dispatch(&ctx, request).unwrap();
+        let mcp = |request| mcps::dispatch(&ctx, request).unwrap();
+
+        let bundle = ins(json!({"action": "save", "name": "Rules", "files": {"CLAUDE.md": "v1"}}));
+        let bundle_id = bundle["item"]["id"].clone();
+        for project_id in ["clean", "edited"] {
+            let target = json!({"agent_key": "claude_code", "project_id": project_id});
+            let preview =
+                ins(json!({"action": "preview", "target": target, "instruction_id": bundle_id}));
+            ins(json!({"action": "apply", "preview_id": preview["preview_id"]}));
+        }
+        fs::write(edited.join("CLAUDE.md"), "my edit").unwrap();
+
+        let server = |args: &[&str]| json!({"command": "npx", "args": args});
+        let saved = mcp(json!({"action": "save", "definition": {
+            "name": "docs", "transport": "stdio", "server": server(&["docs@1"])
+        }}));
+        let definition = &saved["definition"];
+        let mcp_target = json!({"agentKey": "cursor", "projectId": "clean"});
+        let operation = json!({"kind": "deploy", "definitionId": definition["id"]});
+        let preview =
+            mcp(json!({"action": "preview", "target": mcp_target, "operations": [operation]}));
+        mcp(json!({"action": "apply", "previewId": preview["previewId"]}));
+
+        // The pull brings new versions of both.
+        ins(json!({"action": "save", "id": bundle_id, "name": "Rules",
+            "files": {"CLAUDE.md": "v2"}, "expected_revision": bundle["item"]["revision"]}));
+        mcp(
+            json!({"action": "save", "expectedRevision": definition["revision"], "definition": {
+                "id": definition["id"], "name": "docs", "transport": "stdio", "server": server(&["docs@2"])
+            }}),
+        );
+        let entries = reapply_resources(&ctx);
+
+        assert_eq!(fs::read_to_string(clean.join("CLAUDE.md")).unwrap(), "v2");
+        assert_eq!(
+            fs::read_to_string(edited.join("CLAUDE.md")).unwrap(),
+            "my edit"
+        );
+        let cursor_config = fs::read_to_string(clean.join(".cursor/mcp.json")).unwrap();
+        assert!(cursor_config.contains("docs@2"), "{cursor_config}");
+        // Deployments come back in id order, so compare sorted.
+        let summary = |entries: &[AuditDraft]| {
+            let mut summary: Vec<_> = entries
+                .iter()
+                .map(|e| {
+                    (
+                        e.action.clone(),
+                        e.skill_name.clone().unwrap_or_default(),
+                        e.success,
+                    )
+                })
+                .collect();
+            summary.sort();
+            summary
+        };
+        assert_eq!(
+            summary(&entries),
+            vec![
+                (ACTION_DEPLOY.to_string(), "Rules".to_string(), true),
+                (ACTION_DEPLOY.to_string(), "docs".to_string(), true),
+                (ACTION_REVIEW.to_string(), "Rules".to_string(), false),
+            ]
+        );
+        // Up to date now; only the edited copy still waits.
+        assert_eq!(
+            summary(&reapply_resources(&ctx)),
+            vec![(ACTION_REVIEW.to_string(), "Rules".to_string(), false)]
+        );
     }
 }

@@ -1,8 +1,15 @@
 //! `repo` (the base folder and its status) and `git` (backup of the central library).
 
+use std::sync::Arc;
+
 use app_lib::core::{
-    central_repo, git_backup, merge, repo_lock::RepoLock, skill_store::SkillStore, sync_apply,
-    sync_metadata,
+    central_repo, git_backup,
+    host::{HostCtx, NoopEvents},
+    install_cancel::InstallCancelRegistry,
+    merge,
+    repo_lock::RepoLock,
+    skill_store::SkillStore,
+    sync_apply, sync_metadata,
 };
 
 use crate::args::{GitArgs, GitCommand, RepoArgs, RepoCommand};
@@ -40,7 +47,7 @@ pub(crate) fn repo_status(store: &SkillStore) -> RepoStatus {
 
 pub(crate) fn run_git(
     args: GitArgs,
-    store: &SkillStore,
+    store: &Arc<SkillStore>,
     has_skills_root: bool,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -95,6 +102,11 @@ pub(crate) fn run_git(
             // then apply the active preset to the agents, as the app does.
             sync_metadata::reindex_from_metadata(store)?;
             sync_apply::reapply_active_preset(store, &before);
+            sync_apply::reapply_resources(&HostCtx {
+                store: store.clone(),
+                cancel: Arc::new(InstallCancelRegistry::new()),
+                events: Arc::new(NoopEvents),
+            });
             print_json(&git_backup::get_status(&dir)?, json);
         }
         GitCommand::Push => {
