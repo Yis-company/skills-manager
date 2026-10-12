@@ -1055,10 +1055,93 @@ export interface HostSyncLeft {
 export interface HostSyncState {
   host_id: string;
   name: string;
+  key_title: string;
+  timer: boolean;
   /** The host's `sync status`, when it answered. */
-  status: { state: string; reason: null | string } | null;
+  status: null | SyncStatus;
   error: null | string;
 }
+
+// ── The Sync screen (SID-112) ──
+
+/** A host's Sync state, as `sync status` reports it. */
+export type SyncStateKey =
+  | "needs_review"
+  | "not_set_up"
+  | "offline"
+  | "paused"
+  | "up_to_date"
+  | "update_required";
+
+export interface SyncConflict {
+  skill_id: string;
+  name: string;
+  this_host: string;
+  other_host: string;
+}
+
+export interface EditedCopy {
+  skill_id: string;
+  name: string;
+  agent: string;
+  /** The skill left this agent, rather than changed in Sync. */
+  left: boolean;
+}
+
+export interface SyncStatus {
+  state: SyncStateKey;
+  reason: null | string;
+  host: string;
+  remote: null | string;
+  last_sync: null | number;
+  conflicts: SyncConflict[];
+  edited_here: EditedCopy[];
+  version: string;
+  format: number;
+}
+
+/** One entry of a host's agent log (an `agent_*` audit entry). */
+export interface AgentLogEntry {
+  id: number;
+  ts: number;
+  action: string;
+  skill_id: null | string;
+  skill_name: null | string;
+  tool: null | string;
+  success: boolean;
+  detail: null | string;
+}
+
+export interface JoinItem {
+  kind: "instruction" | "mcp" | "preset" | "skill";
+  name: string;
+}
+
+export interface JoinPreview {
+  remote_empty: boolean;
+  local_empty: boolean;
+  adds: JoinItem[];
+  replaced: JoinItem[];
+  active_preset: null | string;
+}
+
+/** Arguments of a Sync screen command: ids, names and flags. */
+export type SyncCallArgs = Record<string, boolean | null | string>;
+
+/** Run a Sync screen command on this computer (`hostId` null) or on a host. */
+export const syncCall = <T>(hostId: null | string, command: string, args: SyncCallArgs = {}) =>
+  hostId === null
+    ? invokeLocal<T>("sync_screen_call", { command, args })
+    : invokeLocal<T>("host_sync_call", { hostId, command, args });
+
+export const hostSyncPreview = (hostId: string) =>
+  invokeLocal<JoinPreview>("host_sync_preview", { hostId });
+
+export const hostSyncJoin = (hostId: string) =>
+  invokeLocal<{ preview: JoinPreview; timer: { installed: boolean; warning: null | string } }>(
+    "host_sync_join",
+    { hostId },
+  );
 
 export const hostSyncPrepare = (hostId: string, pasted = false) =>
   invokeLocal<HostSyncPrepared>("host_sync_prepare", { hostId, pasted });

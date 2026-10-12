@@ -74,6 +74,9 @@ pub const COMMANDS: &[&str] = &[
     "sync_join",
     "sync_undo_join",
     "sync_leave",
+    "sync_pre_join_copies",
+    "sync_delete_pre_join_copy",
+    "sync_agent_log",
     "sync_status",
     "sync_now",
     "sync_history",
@@ -346,6 +349,11 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.opt::<String>("copy")?.as_deref(),
         )),
         "sync_leave" => reply(sync_join::leave(&ctx.store).map(|()| sync_timer::remove())),
+        "sync_pre_join_copies" => reply(Ok(sync_join::pre_join_copies())),
+        "sync_delete_pre_join_copy" => {
+            reply(sync_join::delete_pre_join_copy(&a.req::<String>("name")?))
+        }
+        "sync_agent_log" => reply(sync_service::agent_log(&ctx.store)),
         "sync_status" => reply(Ok(sync_service::sync_status(&ctx.store))),
         "sync_now" => reply(sync_service::sync_now(
             ctx,

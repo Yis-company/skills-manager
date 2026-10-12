@@ -4,8 +4,9 @@ import type { GitBackupStatus, GithubDevicePollResult } from "../../src/lib/taur
 import { gitStatus } from "../fake-backend/state";
 import { expect, type FakeBackend, test } from "../fixtures";
 
-// F2 + F6: the backup page: its status states, GitHub device-flow sign-in and
-// the refresh after a background backup.
+// The Sync page (SID-112): this host's status states, GitHub device-flow
+// sign-in, the refresh after a background round, the one-time notice, Needs
+// review, adding a host and removing one.
 
 const REMOTE = "https://github.com/octo/skills-manager-backup.git";
 
@@ -46,6 +47,15 @@ const statusCases: { state: string; status: GitBackupStatus; title: string; deta
 const statusTitle = (page: Page, title: string) =>
   page.getByRole("heading", { name: title, level: 2 });
 
+/** This host's setup and settings, once it is in Sync (before, they open first). */
+async function openThisHost(page: Page) {
+  await page
+    .getByRole("button", { name: /this host/ })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+}
+
 for (const { state, status, title, detail } of statusCases) {
   test(`status: ${state}`, async ({ page, backend }) => {
     await backend.seed({
@@ -53,6 +63,8 @@ for (const { state, status, title, detail } of statusCases) {
       settings: { git_backup_remote_url: status.remote_url ?? "" },
     });
     await page.goto("/backup");
+
+    if (status.remote_url) await openThisHost(page);
     await expect(statusTitle(page, title)).toBeVisible();
     await expect(page.getByText(detail)).toBeVisible();
   });
@@ -64,6 +76,7 @@ test("refreshes when a background backup completes", async ({ page, backend }) =
     settings: { git_backup_remote_url: REMOTE },
   });
   await page.goto("/backup");
+  await openThisHost(page);
   await expect(statusTitle(page, "Unbacked changes")).toBeVisible();
 
   await backend.patch({ gitStatus: gitStatus() });
@@ -179,4 +192,91 @@ test.describe("GitHub device flow", () => {
     expect(await backend.calls("github_device_flow_poll")).toEqual([]);
     await expect(statusTitle(page, "Not connected")).toBeVisible();
   });
+});
+
+test("the Backup is now Sync notice shows once", async ({ page, backend }) => {
+  await backend.seed({ gitStatus: gitStatus(), settings: { git_backup_remote_url: REMOTE } });
+  await page.goto("/backup");
+  const notice = page.getByRole("note");
+  await expect(notice).toContainText("Backup is now Sync");
+  await notice.getByTitle("Dismiss").click();
+  await expect(notice).toHaveCount(0);
+  expect(await backend.calls("set_settings")).toContainEqual({
+    key: "backup_sync_notice_dismissed",
+    value: "1",
+  });
+});
+
+test("needs review offers choices named by host", async ({ page, backend }) => {
+  await backend.seed({
+    gitStatus: gitStatus(),
+    settings: { git_backup_remote_url: REMOTE, backup_sync_notice_dismissed: "1" },
+    syncConflicts: [
+      { skill_id: "s-1", name: "frontend", this_host: "e2e-machine", other_host: "Remote-agent" },
+    ],
+  });
+  await page.goto("/backup");
+  await page.getByRole("button", { name: /Needs review/ }).click();
+  await expect(page.getByText("Changed on e2e-machine and on Remote-agent.")).toBeVisible();
+  await page.getByRole("button", { name: "Keep Remote-agent's version" }).click();
+
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  expect(await backend.calls("sync_screen_call")).toContainEqual({
+    command: "sync_resolve",
+    args: { skill: "s-1", keep: "Remote-agent", both: false },
+  });
+});
+
+test("adding a host runs the setup log, with the key paste and join inline", async ({
+  page,
+  backend,
+}) => {
+  await backend.seed({
+    gitStatus: gitStatus(),
+    settings: { git_backup_remote_url: REMOTE, backup_sync_notice_dismissed: "1" },
+    pasteKeyFirst: true,
+  });
+  await page.goto("/backup");
+  await page.getByRole("button", { name: "Add host" }).click();
+  await page.getByLabel("Name").fill("gpu-2");
+  await page.getByLabel("SSH target").fill("yi@gpu-2.local");
+  await page.getByRole("button", { name: "Connect and add" }).click();
+
+  const log = page.getByRole("log");
+  await expect(log).toContainText("GitHub refused to add the deploy key");
+  await expect(log).toContainText("ssh-ed25519 AAAAE2E gpu-2");
+  await log.getByRole("button", { name: "I've added it" }).click();
+  await expect(log).toContainText("Sync's version replaces: preset Web.");
+  await log.getByRole("button", { name: "Join Sync" }).click();
+
+  await expect(page.getByRole("heading", { name: "gpu-2" })).toBeVisible();
+  expect(await backend.calls("host_sync_prepare")).toEqual([
+    { hostId: "host-1", pasted: false },
+    { hostId: "host-1", pasted: true },
+  ]);
+  expect(await backend.calls("host_sync_join")).toEqual([{ hostId: "host-1" }]);
+});
+
+test("a host is removed from its details, leaving Sync by default", async ({ page, backend }) => {
+  await backend.seed({
+    gitStatus: gitStatus(),
+    settings: { git_backup_remote_url: REMOTE, backup_sync_notice_dismissed: "1" },
+    remoteHosts: [
+      { id: "box", name: "Build box", ssh_target: "dev@box", cli_path: null, created_at: 1 },
+    ],
+    hostsInSync: ["box"],
+  });
+  await page.goto("/backup");
+  await page
+    .getByRole("button", { name: /Build box/ })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  await expect(page.getByText("Deploy key “Agents Manager · Build box”")).toBeVisible();
+  await page.getByRole("button", { name: "Remove host…" }).click();
+  await expect(page.getByLabel("Also remove from Sync")).toBeChecked();
+  await page.getByRole("button", { name: "Remove", exact: true }).last().click();
+
+  await expect(page.getByRole("button", { name: /Build box/ })).toHaveCount(0);
+  expect(await backend.calls("host_sync_leave")).toEqual([{ hostId: "box" }]);
 });

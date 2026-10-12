@@ -145,6 +145,31 @@ pub async fn host_sync_leave(
     host_sync::leave(store.inner(), &host_id).await
 }
 
+/// Run a Sync screen command on a host, over a session of its own.
+#[tauri::command]
+pub async fn host_sync_call(
+    host_id: String,
+    command: String,
+    args: Value,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Value, AppError> {
+    host_sync::call_screen(store.inner(), &host_id, &command, args).await
+}
+
+/// Run a Sync screen command on this computer, through the same dispatcher
+/// a host answers with.
+#[tauri::command]
+pub async fn sync_screen_call(
+    command: String,
+    args: Value,
+    ctx: State<'_, crate::core::host::HostCtx>,
+) -> Result<Value, AppError> {
+    host_sync::check_screen_command(&command)?;
+    let ctx = ctx.inner().clone();
+    tokio::task::spawn_blocking(move || crate::core::host_dispatch::dispatch(&ctx, &command, &args))
+        .await?
+}
+
 /// The Sync status of every host in Sync, one call each.
 #[tauri::command]
 pub async fn host_sync_status_all(

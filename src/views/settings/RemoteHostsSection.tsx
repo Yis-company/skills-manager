@@ -14,7 +14,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
-import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { RemoveHostDialog } from "../../components/RemoveHostDialog";
 import { useApp } from "../../context/AppContext";
 import { getErrorMessage } from "../../lib/error";
 import * as api from "../../lib/tauri";
@@ -102,29 +102,6 @@ export function RemoteHostsSection() {
   };
 
   const [removing, setRemoving] = useState<api.RemoteHost | null>(null);
-  // SID-111: leaving Sync is the default; unchecked, the host keeps syncing on its own.
-  const [alsoLeave, setAlsoLeave] = useState(true);
-
-  const handleRemove = async (host: api.RemoteHost) => {
-    try {
-      if (alsoLeave) {
-        const left = await api.hostSyncLeave(host.id);
-
-        if (left.delete_key_by_hand) {
-          toast.warning(t("remoteHosts.deleteKeyByHand", { key: left.delete_key_by_hand }), {
-            duration: 15000,
-          });
-        }
-      }
-
-      if (activeHost?.id === host.id) await switchHost(null);
-      await api.remoteHostRemove(host.id);
-      await refreshRemoteHosts();
-      toast.success(t("remoteHosts.removed"));
-    } catch (e) {
-      toast.error(getErrorMessage(e, t("common.error")));
-    }
-  };
 
   const handleProbe = async (host: api.RemoteHost) => {
     setProbes((prev) => ({ ...prev, [host.id]: { state: "checking" } }));
@@ -343,10 +320,7 @@ export function RemoteHostsSection() {
                 <Pencil className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={() => {
-                  setAlsoLeave(true);
-                  setRemoving(host);
-                }}
+                onClick={() => setRemoving(host)}
                 disabled={updatingRemoteCliHostId !== null}
                 className="shrink-0 p-1 text-muted outline-none hover:text-red-400"
                 title={t("remoteHosts.remove")}
@@ -357,28 +331,7 @@ export function RemoteHostsSection() {
           ))
         )}
       </div>
-      <ConfirmDialog
-        open={removing !== null}
-        message={t("remoteHosts.removeConfirm", { name: removing?.name ?? "" })}
-        confirmLabel={t("remoteHosts.remove")}
-        onClose={() => setRemoving(null)}
-        onConfirm={() => (removing ? handleRemove(removing) : Promise.resolve())}
-      >
-        <label className="flex items-start gap-2 text-[13px] text-secondary">
-          <input
-            type="checkbox"
-            checked={alsoLeave}
-            onChange={(e) => setAlsoLeave(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            {t("remoteHosts.alsoLeaveSync")}
-            <span className="block text-[12px] text-muted">
-              {t("remoteHosts.alsoLeaveSyncHint")}
-            </span>
-          </span>
-        </label>
-      </ConfirmDialog>
+      <RemoveHostDialog host={removing} onClose={() => setRemoving(null)} />
     </section>
   );
 }

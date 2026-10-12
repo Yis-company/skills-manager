@@ -268,6 +268,14 @@ pub fn restore(ctx: &HostCtx, point: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// What this host did to its agents (SID-99), newest first: the last 200
+/// `agent_*` audit entries.
+pub fn agent_log(store: &SkillStore) -> Result<Vec<super::audit_log::AuditEntry>, AppError> {
+    store
+        .list_audit_with_prefix("agent_", 200)
+        .map_err(AppError::db)
+}
+
 /// Pause or resume automatic sync on this host (`backup_auto_enabled`).
 pub fn set_paused(store: &SkillStore, paused: bool) -> Result<(), AppError> {
     store

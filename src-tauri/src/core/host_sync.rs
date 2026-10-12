@@ -16,6 +16,46 @@ use super::remote_session::RemoteSession;
 use super::skill_store::SkillStore;
 use super::{central_repo, git_backup, git_credentials, github_api, remote_host, sync_access};
 
+/// What the Sync screen runs on a host, or on this computer, by name: the
+/// dispatcher's Sync commands, minus join, whose setup goes through the
+/// steps above.
+pub const SCREEN_COMMANDS: &[&str] = &[
+    "sync_status",
+    "sync_now",
+    "sync_pause",
+    "sync_resume",
+    "sync_history",
+    "sync_restore",
+    "sync_conflicts",
+    "sync_resolve",
+    "sync_agent_log",
+    "sync_pre_join_copies",
+    "sync_delete_pre_join_copy",
+    "sync_undo_join",
+    "resolve_edited_copy",
+];
+
+pub fn check_screen_command(command: &str) -> Result<(), AppError> {
+    if SCREEN_COMMANDS.contains(&command) {
+        Ok(())
+    } else {
+        Err(AppError::invalid_input(format!(
+            "Not a Sync screen command: {command}"
+        )))
+    }
+}
+
+/// Run a Sync screen command on a host.
+pub async fn call_screen(
+    store: &Arc<SkillStore>,
+    host_id: &str,
+    command: &str,
+    args: Value,
+) -> Result<Value, AppError> {
+    check_screen_command(command)?;
+    call(store, host_id, command, args).await
+}
+
 /// What the app keeps about a host in Sync, in the `host_sync:<host id>`
 /// setting.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -26,6 +66,9 @@ struct Record {
     url: Option<String>,
     /// Left while offline: remove its timer the next time it answers.
     leave_pending: bool,
+    /// The systemd timer runs; otherwise the host syncs on connect only.
+    #[serde(default)]
+    timer: bool,
 }
 
 fn setting(host_id: &str) -> String {
@@ -218,7 +261,12 @@ pub async fn preview(store: &Arc<SkillStore>, host_id: &str) -> Result<Value, Ap
 /// Join the host to Sync. Returns its review list and timer state.
 pub async fn join(store: &Arc<SkillStore>, host_id: &str) -> Result<Value, AppError> {
     let url = prepared_url(store, host_id)?;
-    call(store, host_id, "sync_join", json!({ "url": url })).await
+    let joined = call(store, host_id, "sync_join", json!({ "url": url })).await?;
+    if let Some(mut record) = load(store, host_id) {
+        record.timer = joined["timer"]["installed"] == true;
+        save(store, host_id, &record)?;
+    }
+    Ok(joined)
 }
 
 #[derive(Debug, Serialize)]
@@ -269,6 +317,8 @@ pub async fn leave(store: &Arc<SkillStore>, host_id: &str) -> Result<Left, AppEr
 pub struct HostSyncState {
     pub host_id: String,
     pub name: String,
+    pub key_title: String,
+    pub timer: bool,
     /// The host's `sync status`, when it answered.
     pub status: Option<Value>,
     pub error: Option<String>,
@@ -292,9 +342,27 @@ pub async fn status_all(store: &Arc<SkillStore>) -> Result<Vec<HostSyncState>, A
         states.push(HostSyncState {
             host_id: host.id,
             name: host.name,
+            key_title: record.key_title,
+            timer: record.timer,
             error: answer.as_ref().err().map(|e| e.message.clone()),
             status: answer.ok(),
         });
     }
     Ok(states)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_screen_command_is_a_dispatcher_command() {
+        for command in SCREEN_COMMANDS {
+            assert!(
+                crate::core::host_dispatch::COMMANDS.contains(command),
+                "{command} is not routed by the host dispatcher"
+            );
+        }
+        assert!(check_screen_command("sync_join").is_err());
+    }
 }

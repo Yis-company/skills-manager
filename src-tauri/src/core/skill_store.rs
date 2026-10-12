@@ -1665,6 +1665,32 @@ impl SkillStore {
         );
     }
 
+    /// The most recent audit entries whose action starts with `prefix`,
+    /// newest first.
+    pub fn list_audit_with_prefix(&self, prefix: &str, limit: i64) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, ts, action, skill_id, skill_name, tool, success, detail
+             FROM audit_log WHERE substr(action, 1, length(?1)) = ?1
+             ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![prefix, limit], |row| {
+                Ok(AuditEntry {
+                    id: row.get(0)?,
+                    ts: row.get(1)?,
+                    action: row.get(2)?,
+                    skill_id: row.get(3)?,
+                    skill_name: row.get(4)?,
+                    tool: row.get(5)?,
+                    success: row.get::<_, i32>(6)? != 0,
+                    detail: row.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Read the most recent audit entries (newest first). When `limit` is
     /// `None`, returns everything.
     pub fn list_audit(&self, limit: Option<i64>) -> Result<Vec<AuditEntry>> {

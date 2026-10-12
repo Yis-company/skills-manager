@@ -1179,6 +1179,8 @@ pub fn run() {
             commands::remote_hosts::host_sync_join,
             commands::remote_hosts::host_sync_leave,
             commands::remote_hosts::host_sync_status_all,
+            commands::remote_hosts::host_sync_call,
+            commands::remote_hosts::sync_screen_call,
             commands::remote_hosts::remote_host_probe,
             commands::remote_hosts::remote_host_install_cli,
             commands::remote_hosts::remote_host_connect,
