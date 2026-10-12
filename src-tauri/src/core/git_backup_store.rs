@@ -62,7 +62,7 @@ pub(crate) fn reconcile_skills_index_unlocked(store: &SkillStore) -> anyhow::Res
     Ok(())
 }
 
-fn reindex_library_unlocked(store: &SkillStore) -> anyhow::Result<()> {
+pub(crate) fn reindex_library_unlocked(store: &SkillStore) -> anyhow::Result<()> {
     sync_metadata::cleanup_temporary_files()?;
     if sync_metadata::has_complete_skill_snapshot() {
         sync_metadata::reindex_from_metadata_unlocked(store)?;

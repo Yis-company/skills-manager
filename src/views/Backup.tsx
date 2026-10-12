@@ -343,13 +343,9 @@ export function Backup() {
     const status = await api.gitBackupStatus();
 
     if (res.remote_has_content) {
-      // Existing backup: restore it (or just rewire when a repo already exists).
-      if (!status.is_repo) {
-        await api.gitBackupClone(res.url);
-      } else {
-        await api.gitBackupSetRemote(res.url);
-      }
-
+      // Existing backup: join it (SID-100). Matching items take its version,
+      // this computer's extras are added, and a pre-join copy is kept.
+      await api.gitBackupClone(res.url);
       toast.success(t("backup.github.connectedRestored"));
       await Promise.all([
         refreshGitStatus(true),

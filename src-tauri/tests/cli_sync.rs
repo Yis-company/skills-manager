@@ -49,11 +49,9 @@ fn cli(tmp: &TempDir, args: &[&str]) -> Value {
     serde_json::from_slice(&out.stdout).unwrap()
 }
 
-/// A library with a Sync remote, set up through the old commands until
-/// `sync join` exists.
+/// A library that joined the Sync remote.
 fn joined(tmp: &TempDir, remote: &Path) {
-    cli(tmp, &["git", "init"]);
-    cli(tmp, &["git", "set-remote", remote.to_str().unwrap()]);
+    cli(tmp, &["sync", "join", remote.to_str().unwrap(), "--yes"]);
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -124,8 +122,11 @@ fn sync_status_reports_the_state_the_app_checks_over_ssh() {
     }
 
     joined(&tmp, &tmp.path().join("remote.git"));
-    let synced = cli(&tmp, &["sync", "now"]);
-    assert_eq!(synced["pushed"], true);
+    cli(&tmp, &["sync", "now"]);
+    assert_eq!(
+        git(&tmp.path().join("remote.git"), &["rev-parse", "main"]),
+        git(&tmp.path().join("base/skills"), &["rev-parse", "HEAD"])
+    );
     let status = cli(&tmp, &["sync", "status"]);
     assert_eq!(status["state"], "up_to_date");
     assert!(status["last_sync"].as_i64().is_some(), "{status}");
@@ -137,7 +138,14 @@ fn sync_status_reports_the_state_the_app_checks_over_ssh() {
 #[test]
 fn sync_now_exits_1_when_stuck_and_status_says_why() {
     let tmp = sandbox();
-    joined(&tmp, &tmp.path().join("missing.git"));
+    joined(&tmp, &tmp.path().join("remote.git"));
+    // The remote goes away.
+    let missing = tmp.path().join("missing.git");
+    git(
+        &tmp.path().join("base/skills"),
+        &["remote", "set-url", "origin", missing.to_str().unwrap()],
+    );
+    std::fs::write(tmp.path().join("base/skills/local.md"), "a change").unwrap();
 
     let out = run(&tmp, true, &["sync", "now"]);
     assert_eq!(out.status.code(), Some(1));
@@ -168,4 +176,18 @@ fn old_git_commands_still_work_and_point_to_sync() {
     );
     // With --json, stderr stays free for a failure envelope.
     assert!(run(&tmp, true, &["git", "status"]).stderr.is_empty());
+}
+
+#[test]
+fn sync_join_shows_the_review_list_first_and_leave_keeps_the_library() {
+    let tmp = sandbox();
+    let remote = tmp.path().join("remote.git");
+    let preview = cli(&tmp, &["sync", "join", remote.to_str().unwrap()]);
+    assert_eq!(preview["remote_empty"], true);
+    assert_eq!(cli(&tmp, &["sync", "status"])["state"], "not_set_up");
+
+    joined(&tmp, &remote);
+    assert_eq!(cli(&tmp, &["sync", "status"])["state"], "up_to_date");
+    assert_eq!(cli(&tmp, &["sync", "leave"])["state"], "not_set_up");
+    assert!(tmp.path().join("base/skills/.git").exists());
 }

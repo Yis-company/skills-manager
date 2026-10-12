@@ -793,6 +793,11 @@ export const handlers = {
 
     return url;
   },
+  // Joining an existing remote (SID-100) leaves this computer connected to it.
+  git_backup_clone: ({ url }: { url: string }, state) => {
+    state.gitStatus.is_repo = true;
+    state.gitStatus.remote_url = url;
+  },
   backup_device_name: () => "e2e-machine",
   github_device_flow_start: (_args, state) => state.deviceFlow.start,
   github_device_flow_poll: (_args, state): GithubDevicePollResult => {

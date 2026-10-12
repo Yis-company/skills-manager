@@ -141,7 +141,8 @@ test.describe("GitHub device flow", () => {
       { deviceCode: "device-1", repoName: "skills-manager-backup" },
       { deviceCode: "device-1", repoName: "skills-manager-backup" },
     ]);
-    expect(await backend.calls("git_backup_set_remote")).toEqual([{ url: REMOTE }]);
+    // An existing backup is joined, not just re-pointed (SID-100).
+    expect(await backend.calls("git_backup_clone")).toEqual([{ url: REMOTE }]);
   });
 
   test("polls 5 seconds slower after slow_down", async ({ page, backend }) => {

@@ -1,6 +1,7 @@
 use crate::core::{
     central_repo, error::AppError, git_backup, git_credentials, git_fetcher, github_api,
-    host::HostCtx, merge, sync_apply, sync_metadata, sync_service, sync_service::SyncOutcome,
+    host::HostCtx, merge, sync_apply, sync_join, sync_metadata, sync_service,
+    sync_service::SyncOutcome,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -272,32 +273,7 @@ pub async fn git_backup_set_remote(
 #[tauri::command]
 pub async fn git_backup_remove_remote(store: State<'_, Arc<SkillStore>>) -> Result<(), AppError> {
     let store = store.inner().clone();
-    let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || disconnect_local(&store, &skills_dir)).await?
-}
-
-fn disconnect_local(store: &SkillStore, skills_dir: &Path) -> Result<(), AppError> {
-    // Collect credential hosts before the URLs are gone.
-    let mut hosts = std::collections::HashSet::new();
-    if let Some(url) = git_backup::raw_remote_url(skills_dir) {
-        hosts.extend(git_credentials::https_host(&url));
-    }
-    if let Ok(Some(url)) = store.get_setting("git_backup_remote_url") {
-        hosts.extend(git_credentials::https_host(&url));
-    }
-
-    git_backup::remove_remote(skills_dir).map_err(AppError::git)?;
-    store
-        .set_setting("git_backup_remote_url", "")
-        .map_err(AppError::db)?;
-    let _ = store.set_setting("github_auth_method", "");
-
-    for host in hosts {
-        if let Err(e) = git_credentials::delete_credential(&host) {
-            log::warn!("git disconnect: failed to delete keychain credential: {e:#}");
-        }
-    }
-    Ok(())
+    tokio::task::spawn_blocking(move || sync_join::leave(&store)).await?
 }
 
 #[tauri::command]
@@ -416,46 +392,34 @@ pub async fn git_backup_resolve_conflict(
 #[tauri::command]
 pub async fn git_backup_clone(
     store: State<'_, Arc<SkillStore>>,
+    ctx: State<'_, HostCtx>,
     url: String,
 ) -> Result<(), AppError> {
+    join_remote(&store, &ctx, url).await
+}
+
+/// Connecting to a remote that has content joins it (SID-100): matched by
+/// name, Sync wins, this computer's extras are added, and a pre-join copy
+/// is kept. Replaces the old clone that dropped same-named local items.
+async fn join_remote(store: &Arc<SkillStore>, ctx: &HostCtx, url: String) -> Result<(), AppError> {
     git_fetcher::validate_git_url(&url).map_err(AppError::git)?;
-    let store = store.inner().clone();
-    sync_engine_pref(&store);
-    let skills_dir = central_repo::skills_dir();
+    sync_engine_pref(store);
+    let ctx = ctx.clone();
     tokio::task::spawn_blocking(move || {
         let effective = sanitize_url_to_keychain(url.trim());
-        git_backup::with_repo_lock("git clone", || {
-            git_backup::clone_into_unlocked(&skills_dir, &effective)?;
-            apply_device_identity(&store, &skills_dir);
-            reconcile_skills_index_unlocked(&store)
-        })
-        .map_err(classify_git_chain)
+        sync_join::join(&ctx, &effective).map(|_| ())
     })
     .await?
 }
 
-/// Recovery: discard the local `.git` and re-clone from the configured remote.
-/// Existing skill files are preserved via the same backup-then-merge flow
-/// used by the regular clone path.
+/// Recovery ("Fix Sync Setup", unrelated histories): join the remote again.
 #[tauri::command]
 pub async fn git_backup_reclone(
     store: State<'_, Arc<SkillStore>>,
+    ctx: State<'_, HostCtx>,
     url: String,
 ) -> Result<(), AppError> {
-    git_fetcher::validate_git_url(&url).map_err(AppError::git)?;
-    let store = store.inner().clone();
-    sync_engine_pref(&store);
-    let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || {
-        let effective = sanitize_url_to_keychain(url.trim());
-        git_backup::with_repo_lock("git reclone", || {
-            git_backup::reclone_from_remote_unlocked(&skills_dir, &effective)?;
-            apply_device_identity(&store, &skills_dir);
-            reconcile_skills_index_unlocked(&store)
-        })
-        .map_err(classify_git_chain)
-    })
-    .await?
+    join_remote(&store, &ctx, url).await
 }
 
 /// The Sync history, newest first (SID-99): commits with the host that made
@@ -749,7 +713,7 @@ mod tests {
             .set_setting("git_backup_remote_url", "https://github.com/acme/repo.git")
             .unwrap();
 
-        disconnect_local(&env.store, &env.skills_dir).unwrap();
+        sync_join::leave(&env.store).unwrap();
         assert_eq!(origin_url(&env.skills_dir), "");
         assert_eq!(
             env.store
@@ -760,7 +724,7 @@ mod tests {
         );
 
         // A second disconnect (nothing left to remove) must still succeed.
-        disconnect_local(&env.store, &env.skills_dir).unwrap();
+        sync_join::leave(&env.store).unwrap();
     }
 
     #[test]

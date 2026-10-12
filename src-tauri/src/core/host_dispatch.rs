@@ -14,7 +14,7 @@ use crate::commands::{
 };
 use crate::core::error::AppError;
 use crate::core::host::HostCtx;
-use crate::core::sync_service;
+use crate::core::{sync_join, sync_service};
 
 /// Every command [`dispatch`] accepts.
 pub const COMMANDS: &[&str] = &[
@@ -67,6 +67,10 @@ pub const COMMANDS: &[&str] = &[
     "get_skill_tool_toggles",
     "set_skill_tool_toggle",
     // Sync (SID-110): the app runs a host's Sync over its session.
+    "sync_join_preview",
+    "sync_join",
+    "sync_undo_join",
+    "sync_leave",
     "sync_status",
     "sync_now",
     "sync_history",
@@ -324,6 +328,13 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.req("tool")?,
             a.req("keepMine")?,
         )),
+        "sync_join_preview" => reply(sync_join::preview(&ctx.store, &a.req::<String>("url")?)),
+        "sync_join" => reply(sync_join::join(ctx, &a.req::<String>("url")?)),
+        "sync_undo_join" => reply(sync_join::undo_join(
+            ctx,
+            a.opt::<String>("copy")?.as_deref(),
+        )),
+        "sync_leave" => reply(sync_join::leave(&ctx.store)),
         "sync_status" => reply(Ok(sync_service::sync_status(&ctx.store))),
         "sync_now" => reply(sync_service::sync_now(
             ctx,

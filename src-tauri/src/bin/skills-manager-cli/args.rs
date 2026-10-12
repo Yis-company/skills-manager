@@ -335,6 +335,22 @@ pub(crate) struct SyncArgs {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum SyncCommand {
+    /// Join the Sync remote at <URL>: items match by name, Sync's version
+    /// wins, and this host's extras are added. Shows the review list and
+    /// asks first; with --json it prints the review list only, unless --yes.
+    Join {
+        url: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Restore the library and database from before joining, then leave.
+    UndoJoin {
+        /// A pre-join copy name (default: the newest).
+        #[arg(long)]
+        copy: Option<String>,
+    },
+    /// Stop syncing. The library and the skills on agents stay as they are.
+    Leave,
     /// Sync now: commit, merge, apply to the agents and push. Exits 1 when
     /// it can't, with the reason; recorded conflicts still count as synced.
     Now,

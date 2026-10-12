@@ -59,6 +59,10 @@ export const HOST_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "get_skill_tool_toggles",
   "set_skill_tool_toggle",
   // Sync (SID-110): a host's Sync, run over its session
+  "sync_join_preview",
+  "sync_join",
+  "sync_undo_join",
+  "sync_leave",
   "sync_status",
   "sync_now",
   "sync_history",

@@ -156,7 +156,7 @@
       "repoLabel": "Repository name",
       "connect": "Connect",
       "connecting": "Connecting…",
-      "connectedRestored": "Connected — existing backup restored.",
+      "connectedRestored": "Connected — joined the existing backup. Your own items were added, and a copy from before joining is kept.",
       "repoCreated": "Created private repository {{repo}}.",
       "tokenHint": "Create a token on GitHub (repo scope, pre-filled)",
       "errorToken": "GitHub rejected the token. Check that it hasn't expired and was copied completely.",

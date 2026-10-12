@@ -52,6 +52,7 @@ pub mod skill_update_check;
 pub mod skillssh_api;
 pub mod sync_apply;
 pub mod sync_engine;
+pub mod sync_join;
 pub mod sync_metadata;
 pub mod sync_service;
 #[cfg(test)]

@@ -3,8 +3,10 @@
 
 use std::sync::Arc;
 
+use std::io::Write;
+
 use app_lib::core::{
-    central_repo, git_backup, host::HostCtx, skill_store::SkillStore, sync_service,
+    central_repo, git_backup, host::HostCtx, skill_store::SkillStore, sync_join, sync_service,
 };
 
 use crate::args::{SyncArgs, SyncCommand};
@@ -13,6 +15,26 @@ use crate::output::{map_app_err, print_json};
 pub(crate) fn run_sync(args: SyncArgs, store: &Arc<SkillStore>, json: bool) -> anyhow::Result<()> {
     let ctx = HostCtx::headless(store.clone());
     match args.command {
+        SyncCommand::Join { url, yes } => {
+            if !yes {
+                print_json(&sync_join::preview(store, &url).map_err(map_app_err)?, json);
+                if json || !confirm("Join this Sync? [y/N] ")? {
+                    return Ok(());
+                }
+            }
+            print_json(&join(&ctx, &url)?, json);
+        }
+        SyncCommand::UndoJoin { copy } => {
+            let restored = sync_join::undo_join(&ctx, copy.as_deref()).map_err(map_app_err)?;
+            print_json(
+                &serde_json::json!({ "ok": true, "restored": restored }),
+                json,
+            );
+        }
+        SyncCommand::Leave => {
+            sync_join::leave(store).map_err(map_app_err)?;
+            print_json(&sync_service::sync_status(store), json);
+        }
         SyncCommand::Now => print_json(
             &sync_service::sync_now(&ctx, sync_service::SYNC_COMMIT_MESSAGE)
                 .map_err(map_app_err)?,
@@ -48,4 +70,18 @@ pub(crate) fn run_sync(args: SyncArgs, store: &Arc<SkillStore>, json: bool) -> a
         }
     }
     Ok(())
+}
+
+/// Join without asking: `sync join --yes`, and the old `git clone` and
+/// `git set-remote`, which now go through join.
+pub(crate) fn join(ctx: &HostCtx, url: &str) -> anyhow::Result<sync_join::JoinPreview> {
+    sync_join::join(ctx, url).map_err(map_app_err)
+}
+
+fn confirm(prompt: &str) -> anyhow::Result<bool> {
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }

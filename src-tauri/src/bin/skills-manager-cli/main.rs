@@ -159,7 +159,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Mcps(args) => resources::run("mcps", args, store, cli.json),
         Commands::Presets(args) => run_presets(args, &store, cli.json),
         Commands::Sync(args) => run_sync(args, &store, cli.json),
-        Commands::Git(args) => run_git(args, &store, cli.skills_root.is_some(), cli.json),
+        Commands::Git(args) => run_git(args, &store, cli.json),
         // stdout carries the protocol; nothing else may print there.
         Commands::Serve(_) => Ok(serve::serve_stdio(store)?),
     }

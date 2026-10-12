@@ -40,19 +40,16 @@ pub(crate) fn repo_status(store: &SkillStore) -> RepoStatus {
 
 // ── git ───────────────────────────────────────────────────────────────────
 
-pub(crate) fn run_git(
-    args: GitArgs,
-    store: &Arc<SkillStore>,
-    has_skills_root: bool,
-    json: bool,
-) -> anyhow::Result<()> {
+pub(crate) fn run_git(args: GitArgs, store: &Arc<SkillStore>, json: bool) -> anyhow::Result<()> {
     let new_name = match &args.command {
         GitCommand::Status => Some("sync status"),
         GitCommand::Pull | GitCommand::Push | GitCommand::Commit { .. } => Some("sync now"),
         GitCommand::Versions { .. } => Some("sync history"),
         GitCommand::Restore { .. } => Some("sync restore"),
         GitCommand::PruneSyncRefs => Some("sync prune-refs"),
-        GitCommand::Init | GitCommand::Clone { .. } | GitCommand::SetRemote { .. } => None,
+        GitCommand::Init | GitCommand::Clone { .. } | GitCommand::SetRemote { .. } => {
+            Some("sync join <url>")
+        }
     };
     // Humans only: with --json, stderr carries nothing but a failure envelope.
     if let Some(new_name) = new_name.filter(|_| !json) {
@@ -72,17 +69,9 @@ pub(crate) fn run_git(
             )?;
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
-        GitCommand::Clone { url } => {
-            let target = central_repo::skills_dir();
-            if has_skills_root {
-                git_backup::clone_into_strict(&target, &url)?;
-            } else {
-                git_backup::clone_into(&target, &url)?;
-            }
-            print_json(&git_backup::get_status(&target)?, json);
-        }
-        GitCommand::SetRemote { url } => {
-            git_backup::set_remote(&central_repo::skills_dir(), &url)?;
+        // Both go through join (SID-100): match by name, keep a pre-join copy.
+        GitCommand::Clone { url } | GitCommand::SetRemote { url } => {
+            crate::sync::join(&HostCtx::headless(store.clone()), &url)?;
             print_json(&git_backup::get_status(&central_repo::skills_dir())?, json);
         }
         GitCommand::Pull => {
