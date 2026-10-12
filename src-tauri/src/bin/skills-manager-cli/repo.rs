@@ -74,6 +74,9 @@ pub(crate) fn run_git(
             // Same object merge as the GUI sync. A raw line merge from this CLI
             // would read as an old-client violation on other devices (§6).
             let dir = central_repo::skills_dir();
+            // Finish or roll back a sync this host was interrupted in, as the
+            // app does at startup. Takes its own lock (SID-108).
+            merge::recover_on_startup(store, &dir);
             {
                 let _lock = RepoLock::acquire_foreground("git pull")?;
                 let device = store

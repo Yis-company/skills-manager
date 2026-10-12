@@ -16,6 +16,4 @@ pub mod snapshot;
 pub mod treebuild;
 pub mod validate;
 
-pub use apply::{
-    object_merge_pull_unlocked, recover_on_startup, remote_touches_pending, MergeSummary,
-};
+pub use apply::{object_merge_pull_unlocked, recover_on_startup, MergeSummary};

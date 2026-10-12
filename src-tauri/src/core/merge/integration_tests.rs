@@ -101,7 +101,12 @@ impl Env {
 
     /// Second device: clones the remote after `device_a` pushed.
     fn device_b(&self) -> Device {
-        let base = self._tmp.path().join("b");
+        self.clone_device("b", "Device B")
+    }
+
+    /// Another device cloned from the remote.
+    fn clone_device(&self, dir: &str, name: &'static str) -> Device {
+        let base = self._tmp.path().join(dir);
         std::fs::create_dir_all(&base).unwrap();
         let skills = base.join("skills");
         assert!(Command::new("git")
@@ -117,7 +122,7 @@ impl Env {
             base,
             skills,
             store,
-            name: "Device B",
+            name,
         };
         dev.activate();
         git_backup::configure_device_identity(&dev.skills, dev.name).unwrap();
@@ -220,6 +225,16 @@ impl Device {
 
     fn head_message(&self) -> String {
         git(&self.skills, &["log", "-1", "--format=%B"])
+    }
+
+    /// SKILL.md of the version a pending conflict offers as the alternative.
+    fn conflict_skill_md(&self, id: &str, path: &str) -> String {
+        let repo = git2::Repository::open(&self.skills).unwrap();
+        let commit = pending::ref_target(&repo, &conflict_ref(id)).unwrap();
+        let tree = repo.find_commit(commit).unwrap().tree().unwrap();
+        let entry = tree.get_path(&Path::new(path).join("SKILL.md")).unwrap();
+        let blob = repo.find_blob(entry.id()).unwrap();
+        String::from_utf8_lossy(blob.content()).into_owned()
     }
 
     fn meta_of(&self, id: &str) -> Option<SkillMetaFile> {
@@ -661,6 +676,47 @@ fn ff_guard_blocks_when_remote_touches_pending_skill() {
         repo.find_blob(entry.id()).unwrap().content(),
         b"edited on B again"
     );
+}
+
+#[test]
+fn skill_flagged_on_two_devices_moves_the_conflict_to_the_newest_version() {
+    // SID-108: two devices that each flagged the same skill with their own
+    // version no longer stop the sync. The device that meets the other flag
+    // keeps its version and flags the skill again against the newest remote
+    // version; both devices then converge on that one conflict.
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    let c = env.clone_device("c", "Device C");
+    c.write_skill("skill-1", "alpha", "edited on C");
+    c.commit("edit on C");
+    c.push();
+
+    a.activate();
+    a.write_skill("skill-1", "alpha", "edited on A");
+    a.commit("edit on A");
+    assert_eq!(a.pull().new_conflicts, vec!["skill-1"]);
+    b.activate();
+    b.write_skill("skill-1", "alpha", "edited on B");
+    b.commit("edit on B");
+    assert_eq!(b.pull().new_conflicts, vec!["skill-1"]);
+    a.push();
+
+    let summary = b.pull();
+    assert_eq!(b.skill_md("alpha"), "edited on B");
+    assert_eq!(summary.new_conflicts, vec!["skill-1"]);
+    assert_eq!(summary.kept_local, vec!["skill-1"]);
+    assert_eq!(summary.pending_total, 1);
+    assert!(b
+        .head_message()
+        .contains("Skills-Manager-Conflicts: skill-1"));
+    assert_eq!(b.conflict_skill_md("skill-1", "alpha"), "edited on A");
+    b.push();
+
+    let summary_a = a.pull();
+    assert_eq!(summary_a.pending_total, 1);
+    assert_eq!(a.skill_md("alpha"), "edited on B");
+    assert_eq!(a.conflict_skill_md("skill-1", "alpha"), "edited on A");
+    assert_eq!(a.tree_oid(), b.tree_oid());
 }
 
 // ── R3 反例: pending placeholder derived from theirs trailers only ──

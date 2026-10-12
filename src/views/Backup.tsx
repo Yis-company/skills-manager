@@ -279,13 +279,8 @@ export function Backup() {
     } catch (error) {
       setBackupError(mapGitError(error));
       setBackupErrorRaw(getErrorMessage(error, ""));
-      const message = getErrorMessage(error, "");
 
-      if (message.includes("pending on both devices")) {
-        // Object-merge block (§4 双侧声明): the fix is resolving the pending
-        // conflict on one device — reclone/recovery would be wrong advice.
-        toast.error(t("backup.conflicts.blockedBothDevices"), { duration: 12000 });
-      } else if (isRecoverableSetupError(error)) {
+      if (isRecoverableSetupError(error)) {
         toast.error(mapGitError(error));
         const latest = await refreshGitStatus();
         setRecoveryReason(
@@ -550,7 +545,6 @@ export function Backup() {
           {pendingConflicts.length > 0 && (
             <BackupConflicts
               conflicts={pendingConflicts}
-              gitStatus={gitStatus}
               localSkills={localSkills}
               resolvingConflict={resolvingConflict}
               loading={loading}

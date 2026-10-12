@@ -7,10 +7,8 @@ use git2::{Oid, Repository, Sort};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use super::decision::{self, DecisionInput, MergePlan, Side, Touch};
-use super::pending::{
-    self, conflict_ref, PendingOutcome, TrailerState, REF_APPLYING, REF_PRE_MERGE,
-};
+use super::decision::{self, DecisionInput, MergePlan, NewConflict, Side, Touch};
+use super::pending::{self, conflict_ref, TrailerState, REF_APPLYING, REF_PRE_MERGE};
 use super::protocol::{self, ProtocolFile};
 use super::snapshot::{self, skill_identical, FileEntry, Snapshot, METADATA_DIR};
 use super::treebuild::{apply_tree_edits, TreeEdit};
@@ -151,15 +149,8 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     )?;
 
     // §4/§11-4: declared-pending set from trailers.
-    let pinned = match pending::effective_pending(
-        &repo, base, ours, theirs, &ours_snap, &theirs_snap,
-    )? {
-        PendingOutcome::Pinned(p) => p,
-        PendingOutcome::Blocked(ids) => bail!(
-            "SYNC_CONFLICT: skill(s) {} are pending on both devices with different versions; resolve the conflict on one device first",
-            ids.join(", ")
-        ),
-    };
+    let pending::PendingPins { pinned, reflagged } =
+        pending::effective_pending(&repo, base, ours, theirs, &ours_snap, &theirs_snap)?;
 
     // ff guard (§4): fast-forward unless theirs touches a locally-declared
     // pending skill.
@@ -212,6 +203,17 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
             && !path.starts_with(".agents-manager/mcps/")
     });
     plan.residual.extend(resources);
+    // SID-108: a skill both sides flagged with different versions keeps ours
+    // and is flagged again against the newest remote version.
+    for id in reflagged {
+        if !plan.new_conflicts.iter().any(|c| c.skill_id == id) {
+            plan.kept_local.push(id.clone());
+            plan.new_conflicts.push(NewConflict {
+                theirs_path: theirs_snap.skills.get(&id).map(|s| s.meta.path.clone()),
+                skill_id: id,
+            });
+        }
+    }
 
     // §5 steps 4–5: build + validate the merged tree. Skill dirs that were
     // already unclaimed in either input tip (legacy dirt from old versions)
@@ -882,50 +884,6 @@ pub fn rebuild_pending_projection(repo: &Repository, store: &SkillStore) -> Resu
     let total = rows.len();
     store.replace_pending_conflicts(&rows)?;
     Ok(total)
-}
-
-/// Whether origin/&lt;branch&gt; changes any skill that is pending locally —
-/// the narrowed damping gate of the automatic sync round (§4 收窄阻尼):
-/// unrelated remote updates flow automatically, but while a touched skill
-/// awaits a decision the round applies deliberate backpressure. Errors
-/// reading the remote tree count as "touched" (pause; the manual sync
-/// surfaces the real problem).
-pub fn remote_touches_pending(store: &SkillStore, skills_dir: &Path) -> Result<bool> {
-    let pending = store.list_pending_conflicts()?;
-    if pending.is_empty() {
-        return Ok(false);
-    }
-    let repo = Repository::open(skills_dir)?;
-    let branch = git_backup::current_branch(skills_dir);
-    let Ok(theirs) = repo.refname_to_id(&format!("refs/remotes/origin/{branch}")) else {
-        return Ok(false); // no remote branch — nothing to touch anything
-    };
-    let head = repo
-        .head()
-        .ok()
-        .and_then(|h| h.target())
-        .context("repository has no HEAD commit")?;
-    if theirs == head {
-        return Ok(false);
-    }
-    let head_snap = snapshot::read_snapshot(&repo, &repo.find_commit(head)?.tree()?)?;
-    let theirs_snap = match snapshot::read_snapshot(&repo, &repo.find_commit(theirs)?.tree()?) {
-        Ok(snap) => snap,
-        Err(e) => {
-            log::warn!("auto sync damping: cannot read remote snapshot, pausing: {e:#}");
-            return Ok(true);
-        }
-    };
-    Ok(pending.iter().any(|row| {
-        match (
-            head_snap.skills.get(&row.skill_id),
-            theirs_snap.skills.get(&row.skill_id),
-        ) {
-            (Some(o), Some(t)) => !skill_identical(o, t),
-            (None, None) => false,
-            _ => true,
-        }
-    }))
 }
 
 /// The skill's path inside a pinned theirs commit, for display.

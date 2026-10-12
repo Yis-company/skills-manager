@@ -130,9 +130,7 @@
       "keepLocal": "Keep mine",
       "useRemote": "Use remote",
       "keepBoth": "Keep both",
-      "resolved": "Conflict resolved — safety snapshot {{tag}} saved.",
-      "blockedBothDevices": "The same skill has an unresolved conflict on both devices. Resolve it on either device first, then sync again.",
-      "autoPaused": "Remote updates touching these skills resume automatically after you decide; sync manually to pick everything up now."
+      "resolved": "Conflict resolved — safety snapshot {{tag}} saved."
     },
     "connection": {
       "title": "Connection",
