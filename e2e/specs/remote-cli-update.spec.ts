@@ -19,6 +19,7 @@ test("opening and cancelling Update CLI while checking makes no changes", async 
   await page.getByRole("button", { name: "Update CLI", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("status")).toContainText("Checking host");
+  await expect(dialog.getByText("/opt/skills-manager/bin/skills-manager")).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "Install matching version and reconnect" }),
   ).toBeDisabled();
@@ -48,18 +49,26 @@ test("matching CLI is up to date without reinstalling or reconnecting", async ({
   expect(await backend.calls("remote_host_connect")).toEqual([]);
 });
 
-test("a failed update probe retries checking without installing", async ({ page, backend }) => {
+test("a host with no CLI can still install one", async ({ page, backend }) => {
   await backend.seed({ remoteHosts: [host] });
   await page.goto("/settings/remote");
-  await backend.failNext("remote_host_probe", "SSH temporarily unavailable");
+  await backend.failNext("remote_host_probe", "Skills Manager CLI was not found on Build box.");
   await page.getByRole("button", { name: "Update CLI", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByRole("alert")).toContainText("SSH temporarily unavailable");
-  await dialog.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText("CLI is up to date");
-  expect(await backend.calls("remote_host_probe")).toHaveLength(2);
-  expect(await backend.calls("remote_host_install_cli")).toEqual([]);
-  expect(await backend.calls("remote_host_connect")).toEqual([]);
+  await expect(dialog.getByRole("alert")).toContainText("CLI was not found");
+  await dialog.getByRole("button", { name: "Install matching version and reconnect" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await backend.calls("remote_host_install_cli")).toEqual([{ hostId: "build-box" }]);
+  expect(await backend.calls("remote_host_connect")).toEqual([{ hostId: "build-box" }]);
+});
+
+test("Update pending shows until the host's CLI is installed", async ({ page, backend }) => {
+  await backend.seed({ remoteHosts: [{ ...host, update_pending: true }] });
+  await page.goto("/settings/remote");
+  await expect(page.getByText("Update pending", { exact: true })).toBeVisible();
+  await backend.patch({ remoteHosts: [host] });
+  await backend.emit("remote-hosts-changed", null);
+  await expect(page.getByText("Update pending", { exact: true })).toHaveCount(0);
 });
 
 test("Update CLI remains reachable at the minimum desktop window size", async ({
@@ -79,21 +88,17 @@ test("Update CLI remains reachable at the minimum desktop window size", async ({
   await expect(dialog).toBeInViewport({ ratio: 1 });
 });
 
-test("version mismatch offers update review, and cancelling performs no install", async ({
+test("a newer host asks to update the app instead of offering an install", async ({
   page,
   backend,
 }) => {
-  await backend.seed({ remoteHosts: [host], remoteCliNeedsUpdate: true });
+  await backend.seed({ remoteHosts: [host], remoteHostNewer: true });
   await page.goto("/settings/remote");
 
   await page.getByRole("button", { name: "Connect" }).click();
-  await page.getByRole("button", { name: "Review update" }).first().click();
-  await expect(page.getByRole("dialog", { name: "Update host CLI" })).toBeVisible();
-  await expect(
-    page.getByRole("dialog").getByText("/opt/skills-manager/bin/skills-manager"),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Cancel" }).last().click();
-
+  await expect(page.getByText("Update this app to connect.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review update" })).toHaveCount(0);
   expect(await backend.calls("remote_host_install_cli")).toEqual([]);
 });
 
