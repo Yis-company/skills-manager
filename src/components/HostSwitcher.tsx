@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { Check, ChevronsUpDown, Loader2, Monitor, Server, Settings2 } from "lucide-react";
+import { Check, ChevronsUpDown, Loader2, Monitor, Server, Settings2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -45,11 +45,17 @@ export function HostSwitcher() {
 
   const connectingHost = remoteHosts.find((host) => host.id === connectingHostId);
   const lost = hostSession?.lostMessage != null;
+  const current = activeHost?.id ?? null;
 
+  // Stays usable while a switch connects: picking another host replaces the
+  // switch, and picking the current one cancels it.
   const choose = (hostId: null | string) => {
     setOpen(false);
 
-    if (hostId === (activeHost?.id ?? null) && !lost) return;
+    if (connectingHostId === null ? hostId === current && !lost : hostId === connectingHostId) {
+      return;
+    }
+
     void switchHost(hostId);
   };
 
@@ -62,7 +68,7 @@ export function HostSwitcher() {
     monoDetail: boolean,
   ) => {
     const Icon = icon;
-    const selected = hostId === (activeHost?.id ?? null);
+    const selected = hostId === current;
     const connecting = hostId !== null && hostId === connectingHostId;
 
     return (
@@ -71,9 +77,8 @@ export function HostSwitcher() {
         type="button"
         role="menuitemradio"
         aria-checked={selected}
-        disabled={connectingHostId !== null}
         onClick={() => choose(hostId)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-secondary transition-colors hover:bg-surface-hover disabled:cursor-wait"
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-secondary transition-colors hover:bg-surface-hover"
       >
         <Icon className="h-3.5 w-3.5 shrink-0 text-muted" />
         <span className="min-w-0 flex-1">
@@ -139,6 +144,17 @@ export function HostSwitcher() {
             option(host.id, host.id, Server, host.name, host.ssh_target, true),
           )}
           <div className="my-1 border-t border-border-subtle" />
+          {connectingHostId !== null && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => choose(current)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-tertiary transition-colors hover:bg-surface-hover hover:text-secondary"
+            >
+              <X className="h-3.5 w-3.5 shrink-0 text-muted" />
+              {t("hostSwitcher.cancelConnect")}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

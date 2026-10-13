@@ -108,11 +108,17 @@ impl Env {
 
     /// Another device cloned from the remote.
     fn clone_device(&self, dir: &str, name: &'static str) -> Device {
+        self.clone_device_with(dir, name, &[])
+    }
+
+    /// Another device cloned with extra `git clone` options.
+    fn clone_device_with(&self, dir: &str, name: &'static str, options: &[&str]) -> Device {
         let base = self._tmp.path().join(dir);
         std::fs::create_dir_all(&base).unwrap();
         let skills = base.join("skills");
         assert!(Command::new("git")
             .arg("clone")
+            .args(options)
             .arg(&self.remote)
             .arg(&skills)
             .output()
@@ -216,9 +222,7 @@ impl Device {
     fn commit(&self, message: &str) {
         self.activate();
         self.reindex();
-        if git_backup::has_uncommitted_changes(&self.skills).unwrap() {
-            git_backup::commit_all_unlocked(&self.skills, message).unwrap();
-        }
+        git_backup::commit_changes_unlocked(&self.skills, message).unwrap();
     }
 
     fn push(&self) {
@@ -702,6 +706,28 @@ fn ff_guard_blocks_when_remote_touches_pending_skill() {
         repo.find_blob(entry.id()).unwrap().content(),
         b"edited on B again"
     );
+}
+
+#[test]
+fn a_host_that_converts_line_endings_pulls() {
+    // Git for Windows checks files out with CRLF (core.autocrlf). The pull
+    // rewrites metadata with LF, which `git status` reports as changed even
+    // though staging finds nothing new.
+    let env = setup();
+    let a = env.device_a();
+    a.write_skill("skill-1", "alpha", "base content");
+    a.commit("seed");
+    a.push();
+    let b = env.clone_device_with("b", "Device B", &["-c", "core.autocrlf=true"]);
+
+    a.activate();
+    a.write_skill("skill-2", "beta", "new on A");
+    a.commit("add beta");
+    a.push();
+
+    let summary = b.pull();
+    assert!(summary.fast_forward);
+    assert_eq!(b.skill_md("beta"), "new on A");
 }
 
 #[test]

@@ -1,35 +1,29 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useEffect,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { createContext, type ReactNode, useContext, useState, useSyncExternalStore } from "react";
 
 import { createInstallQueue, type InstallQueue } from "../lib/installQueue";
-import { useApp } from "./AppContext";
 
 const InstallQueueContext = createContext<InstallQueue | null>(null);
 
 export function InstallQueueProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const { activeHostId } = useApp();
   const [queue] = useState(() => createInstallQueue(queryClient));
-
-  useEffect(() => {
-    queue.keepHost(activeHostId);
-  }, [queue, activeHostId]);
 
   return <InstallQueueContext.Provider value={queue}>{children}</InstallQueueContext.Provider>;
 }
 
-export function useInstallQueue() {
+/** The queue itself, for code that acts on it without showing its items. */
+export function useInstallQueueControl() {
   const queue = useContext(InstallQueueContext);
 
   if (!queue) throw new Error("useInstallQueue must be used within InstallQueueProvider");
+
+  return queue;
+}
+
+export function useInstallQueue() {
+  const queue = useInstallQueueControl();
   const items = useSyncExternalStore(queue.subscribe, queue.getItems);
 
   return { items, enqueue: queue.enqueue, remove: queue.remove, cancel: queue.cancel };

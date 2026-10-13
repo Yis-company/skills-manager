@@ -1,5 +1,136 @@
 # Changelog
 
+## 1.47.0
+
+### Minor Changes
+
+- [#77](https://github.com/Yis-company/skills-manager/pull/77) [`132964d`](https://github.com/Yis-company/skills-manager/commit/132964d6da8ab919342971c355f731e2c3193c3c) Thanks [@ybtam](https://github.com/ybtam)! - Connecting to a host with an older CLI now installs the matching one without a click, and
+  the first start after an app update installs it on every host that has one. A newer host
+  asks you to update the app instead of being downgraded, and an older Agents Manager on the
+  host must be updated first. Hosts that could not be reached show "Update pending". The
+  install keeps the current and previous CLI versions, and also works on a host with no CLI.
+
+- [#79](https://github.com/Yis-company/skills-manager/pull/79) [`f79c242`](https://github.com/Yis-company/skills-manager/commit/f79c24291dbc8f489a720e3c57143227ff0709be) Thanks [@ybtam](https://github.com/ybtam)! - A failed switch to another Host now keeps you on the Host you came from, with the
+  error and Retry. A dropped connection, or a Host that stops answering for 30 seconds,
+  reconnects quietly for about 30 seconds before it shows Reconnect. The Host switcher
+  stays usable while connecting, so you can cancel or pick another Host. Editing the
+  active Host reconnects it with the new details, and switching while skill installs
+  are unfinished asks whether to wait for them or cancel them.
+
+- [#78](https://github.com/Yis-company/skills-manager/pull/78) [`377082a`](https://github.com/Yis-company/skills-manager/commit/377082ab26e565f1229428192fcbc0195ad1e72b) Thanks [@ybtam](https://github.com/ybtam)! - The CLI gets a `sync` command group: `sync now`, `sync status`, `sync history`,
+  `sync restore`, `sync pause`, `sync resume`, `sync conflicts` and
+  `sync resolve <skill> --keep <host>|--both`. `sync now` exits 1 with the reason
+  when it can't sync, and `sync status` reports the state, the reason, conflicts,
+  edited agent copies, the last sync, the version and the Sync format. The old
+  `git` commands keep working and point to their `sync` names. The app runs the
+  same commands over its SSH session to a host.
+
+- [#72](https://github.com/Yis-company/skills-manager/pull/72) [`971b6af`](https://github.com/Yis-company/skills-manager/commit/971b6af7db85be350dcb40051f5ced332211d61e) Thanks [@ybtam](https://github.com/ybtam)! - Conflicts no longer stop a device from syncing. Automatic backup keeps merging
+  when another device changes a skill that is waiting for your decision: the skill
+  keeps your version and the conflict moves to the newest remote version. A skill
+  flagged on two devices with different versions is flagged again instead of
+  failing the sync. The CLI's `git pull` now finishes or rolls back an interrupted
+  sync first, as the app does at startup.
+
+- [#78](https://github.com/Yis-company/skills-manager/pull/78) [`7332b9c`](https://github.com/Yis-company/skills-manager/commit/7332b9c2f371a0bbef5226705b3b5cfb7c01442b) Thanks [@ybtam](https://github.com/ybtam)! - A skill copy you edited in an agent's folder is never overwritten or removed
+  automatically, not even by a preset switch. When Sync changes that skill, the
+  copy is flagged "Edited here" instead. "Use Sync version" moves your edit to a
+  backup folder and puts the library version back; "Keep my edit" leaves the copy
+  alone until the skill changes again. Edits are spotted by file times, and
+  Python caches don't count.
+
+- [#72](https://github.com/Yis-company/skills-manager/pull/72) [`accb882`](https://github.com/Yis-company/skills-manager/commit/accb882c36622d2179057934740ddad4d60e64e5) Thanks [@ybtam](https://github.com/ybtam)! - Backup stops with "Update required" when another device has synced with a newer
+  version of the app, instead of merging the newer data with older rules. The
+  "Skill-aware sync merge" setting is removed: every device now always uses the
+  skill-aware merge, because the legacy line merge made other devices block.
+
+- [#72](https://github.com/Yis-company/skills-manager/pull/72) [`ca6de2d`](https://github.com/Yis-company/skills-manager/commit/ca6de2d6b3be730475ea3173780099f127f0d5e7) Thanks [@ybtam](https://github.com/ybtam)! - Backups no longer create `sm-v-*` snapshot tags. The Backup history now lists
+  every commit, newest first, with the device that made it, and any of them can be
+  restored. Syncing, resolving a conflict or restoring commits the current state
+  first, so it stays in the history. Existing snapshot tags are kept and still
+  restore. The CLI's `git versions` prints the same history, `git restore` accepts
+  a commit from it, and `git commit` reports the commit instead of a tag.
+
+- [#78](https://github.com/Yis-company/skills-manager/pull/78) [`1184a4b`](https://github.com/Yis-company/skills-manager/commit/1184a4b36caf4e72f62e628946a246dd65067139) Thanks [@ybtam](https://github.com/ybtam)! - Deployed instructions and MCP servers now follow library changes after a sync
+  and at startup. An update that applies cleanly happens on its own; one that
+  meets edits made on this device waits for review and is recorded in the
+  activity log. Which items are deployed still stays per device. Fixes updating an
+  MCP deployment that has no per-target override, which failed with "overrideConfig
+  may contain only server fields".
+
+- [#78](https://github.com/Yis-company/skills-manager/pull/78) [`52a9a5f`](https://github.com/Yis-company/skills-manager/commit/52a9a5f74d25d58a1755314be3eb4a1bbc1c89a6) Thanks [@ybtam](https://github.com/ybtam)! - Connecting to an existing backup now joins it instead of replacing your library.
+  Items match by name: where both sides have one, the shared version wins, and
+  items only this device has are added for everyone. A full copy of your library
+  and database from before joining is kept under `pre-sync-<date>`, and "Undo
+  join" restores it. The CLI gets `sync join <url>` (shows the review list and
+  asks first), `sync undo-join` and `sync leave`; leaving keeps your library and
+  the skills on your agents. "Fix Sync Setup" joins again instead of re-cloning.
+
+- [#72](https://github.com/Yis-company/skills-manager/pull/72) [`162b9af`](https://github.com/Yis-company/skills-manager/commit/162b9af1024779e98025ba7eb41f9b33fa190dfe) Thanks [@ybtam](https://github.com/ybtam)! - Automatic sync now also pulls every 5 minutes when nothing changed on this
+  device, so other devices' changes arrive without a local edit. Local changes
+  still go out 2 minutes after the last edit. The sync summary now says whether
+  each skill was added, changed or removed, covers presets, and is sent with the
+  automatic sync's event.
+
+- [#72](https://github.com/Yis-company/skills-manager/pull/72) [`c66052a`](https://github.com/Yis-company/skills-manager/commit/c66052ab029888ad8b54a3fc4cfae32f71ef4e5b) Thanks [@ybtam](https://github.com/ybtam)! - After a sync brings changes, and at startup, the active preset is applied to
+  your agents again. Skills another device added to the preset are deployed, and
+  skills that left the preset or the library are removed from your agents, links
+  and copies alike. Renamed skills move to their new folder name. Skills you added
+  directly to an agent stay. Each change is recorded in the activity log.
+
+- [#78](https://github.com/Yis-company/skills-manager/pull/78) [`8883703`](https://github.com/Yis-company/skills-manager/commit/88837035c862a5d378cf408b76e162496bb4d8f3) Thanks [@ybtam](https://github.com/ybtam)! - The Backup page becomes Sync. On the left: Overview, Needs review and every
+  host, with "Add host" at the bottom; on the right, the selection. Overview shows
+  each host's Sync state and the latest changes. Needs review lists skills changed
+  on two hosts, with choices named by host. Each host shows its agent log (with
+  "Use Sync version" and "Keep my edit" for copies edited there), its changes with
+  Restore, and its details: automatic sync, access, the copy from before joining
+  with Undo join and Delete backup, and Remove host. Adding a host runs as a live
+  log, with the key paste and the join review inline. A one-time notice explains
+  that Backup is now Sync. The Git settings move from Settings to This host's
+  details.
+
+- [#78](https://github.com/Yis-company/skills-manager/pull/78) [`e9586b5`](https://github.com/Yis-company/skills-manager/commit/e9586b56f9a4bc106887899a43447419b26f3032) Thanks [@ybtam](https://github.com/ybtam)! - SSH hosts can join Sync on their own access. The host creates its own deploy key
+  (the private key never leaves it); the app registers it with GitHub using your
+  sign-in, or shows it to paste under the repository's Deploy keys. The host
+  trusts only GitHub's published host keys and falls back to port 443 when port 22
+  is blocked. Joining installs a systemd timer that syncs the host every 5
+  minutes, warning when linger is off. Removing a host asks "Also remove from
+  Sync", checked by default, which deletes its key on GitHub at once. The app
+  checks every host's Sync at startup and on the Hosts screen and says when one is
+  stuck. Skill auto-update is now on by default in the desktop app.
+
+- [#82](https://github.com/Yis-company/skills-manager/pull/82) [`881ed11`](https://github.com/Yis-company/skills-manager/commit/881ed11551f80685c1d9eb7cc8922e8563240cf3) Thanks [@ybtam](https://github.com/ybtam)! - Use one set of words across the app. Putting a skill on an agent is now "Add to agent", and a
+  skill is "On agent" or "Not on agent". Settings asks "How skills are added to agents" with Link
+  or Copy. Project copies read Up to date, Update available, Edited here or Both changed on every
+  screen. A machine is a "Host": the Hosts screen, the host switcher and "This host".
+
+### Patch Changes
+
+- [#90](https://github.com/Yis-company/skills-manager/pull/90) [`5b166e3`](https://github.com/Yis-company/skills-manager/commit/5b166e3742ad4f29359c437ad4df74cdf20c3e1d) Thanks [@ybtam](https://github.com/ybtam)! - A skill conflict pulled by another host now offers that host's own version.
+  Before, if that host had unsynced work, the conflict offered the kept version
+  twice, and its choices were named after the wrong host.
+
+## 1.46.0
+
+### Minor Changes
+
+- [#71](https://github.com/Yis-company/skills-manager/pull/71) [`7afee90`](https://github.com/Yis-company/skills-manager/commit/7afee907fdfa0e9fd8a420d147f626c4e83b0f83) Thanks [@ybtam](https://github.com/ybtam)! - Install the generic, Claude or Codex copy of a skill instead of an arbitrary provider
+  variant such as Kiro. Queue several Market installs without blocking the tab or
+  losing them on navigation. The skill detail opens as a right-side drawer that
+  closes with Escape, a labelled Close button or a click outside, and lets you add
+  the skill to any preset.
+
+- Integrate upstream 1.40.2 and 1.40.3: startup rebuilds empty sync metadata from an
+  intact database, git backups avoid the reftable format, the CLI bridge retries a
+  brief Windows sharing violation, and the update check ignores installed
+  dependencies. Presets gain an editable description shown on hover, the CLI gains
+  `agents add-custom`, and the UI fixes dark-theme diffs, overflowed agent toggles,
+  and Windows path separators.
+
+### Patch Changes
+
+- [#68](https://github.com/Yis-company/skills-manager/pull/68) [`40a068f`](https://github.com/Yis-company/skills-manager/commit/40a068f60402e85ab045fd445747c9fab5982be2) Thanks [@ybtam](https://github.com/ybtam)! - Stop retrying a failed local skill scan in a loop, and open Install Skills directly on the tab in its link.
+
 ## 1.45.0
 
 ### Minor Changes

@@ -12,15 +12,15 @@ export function RemoteBanner() {
   if (!activeHost) return null;
 
   const lost = hostSession?.lostMessage != null;
+  // Retrying on its own: nothing to offer yet.
+  const reconnecting = hostSession?.reconnecting === true;
   const info = hostSession?.info;
 
   const detail = lost
     ? hostSession?.lostMessage || undefined
     : info && `Agents Manager ${info.version} · ${info.os}/${info.arch} · ${info.base_dir}`;
 
-  const reconnecting = connectingHostId === activeHost.id;
-  // Nothing else may start while a switch is connecting.
-  const busy = connectingHostId !== null;
+  const connecting = connectingHostId === activeHost.id;
 
   const buttonClass =
     "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium transition-colors disabled:opacity-60";
@@ -35,13 +35,17 @@ export function RemoteBanner() {
           : "border-accent-border bg-accent-bg text-secondary",
       )}
     >
-      {lost ? (
+      {reconnecting ? (
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+      ) : lost ? (
         <WifiOff className="h-3.5 w-3.5 shrink-0" />
       ) : (
         <Server className="h-3.5 w-3.5 shrink-0 text-accent" />
       )}
       <p className="min-w-0 flex-1 truncate" title={detail}>
-        {lost ? (
+        {reconnecting ? (
+          t("remoteSession.reconnecting", { name: activeHost.name })
+        ) : lost ? (
           t("remoteSession.lost", { name: activeHost.name })
         ) : (
           <>
@@ -52,14 +56,14 @@ export function RemoteBanner() {
           </>
         )}
       </p>
-      {lost && (
+      {lost && !reconnecting && (
         <button
           type="button"
           onClick={() => void switchHost(activeHost.id)}
-          disabled={busy}
+          disabled={connectingHostId !== null}
           className={cn(buttonClass, "bg-amber-500/15 hover:bg-amber-500/25")}
         >
-          {reconnecting ? (
+          {connecting ? (
             <Loader2 className="h-3 w-3 animate-spin" />
           ) : (
             <RefreshCw className="h-3 w-3" />
@@ -70,7 +74,6 @@ export function RemoteBanner() {
       <button
         type="button"
         onClick={() => void switchHost(null)}
-        disabled={busy}
         className={cn(buttonClass, "text-tertiary hover:bg-surface-hover hover:text-secondary")}
       >
         <Monitor className="h-3 w-3" />
