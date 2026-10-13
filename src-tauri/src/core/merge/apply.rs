@@ -83,9 +83,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
 
     // P1: project the DB to metadata files, then commit anything dirty.
     sync_metadata::write_all_from_db_unlocked(store)?;
-    if git_backup::has_uncommitted_changes(skills_dir)? {
-        git_backup::commit_all_unlocked(skills_dir, "backup")?;
-    }
+    git_backup::commit_changes_unlocked(skills_dir, "backup")?;
     // P2: the tree must now be clean (gitignored files aside — porcelain
     // does not list them).
     if git_backup::has_uncommitted_changes(skills_dir)? {

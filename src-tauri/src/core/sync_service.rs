@@ -338,11 +338,7 @@ pub(crate) fn run_sync_blocking(
     {
         log::warn!("backup size: exclusion scan failed (continuing): {e:#}");
     }
-    let mut committed = false;
-    if git_backup::has_uncommitted_changes(skills_dir)? {
-        git_backup::commit_all_unlocked(skills_dir, message)?;
-        committed = true;
-    }
+    let committed = git_backup::commit_changes_unlocked(skills_dir, message)?;
 
     // Best-effort initial fetch: a missing remote branch (fresh remote) or a
     // network failure must not block the local commit; push surfaces real
