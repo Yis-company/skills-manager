@@ -10,7 +10,9 @@
 //!   "error":{"kind":…,"message":…}}`. Each request runs on its own thread, so
 //!   replies can arrive out of order; a line that is not a request is answered
 //!   with `"id":null`;
-//! - an event is `{"event":"install-progress","payload":…}`.
+//! - an event is `{"event":"install-progress","payload":…}`;
+//! - every 10 s the server sends a `keepalive` event, so the client can tell
+//!   a command that runs long from a link that died.
 //!
 //! Nothing else may reach stdout. The server exits when stdin closes.
 
@@ -18,6 +20,7 @@ use std::io::{self, BufRead, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -31,6 +34,8 @@ use super::install_cancel::InstallCancelRegistry;
 use super::skill_store::SkillStore;
 
 pub const PROTOCOL: u32 = 1;
+
+const KEEPALIVE: Duration = Duration::from_secs(10);
 
 /// Who is answering: sent once, before anything else.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,12 +105,18 @@ fn hello() -> Hello {
 }
 
 /// Serve this process's stdin and stdout until stdin closes. Only the file
-/// watcher runs alongside, so the other side hears about edits made here;
-/// schedulers belong to this machine's own app.
+/// watcher and the keepalive run alongside, so the other side hears about
+/// edits made here and that the link is up; schedulers belong to this
+/// machine's own app.
 pub fn serve_stdio(store: Arc<SkillStore>) -> io::Result<()> {
     let wire = Wire::new(io::stdout());
     let events: Arc<dyn HostEvents> = Arc::new(wire.clone());
     file_watcher::start_file_watcher(events.clone(), store.clone());
+    let alive = events.clone();
+    thread::spawn(move || loop {
+        thread::sleep(KEEPALIVE);
+        alive.emit("keepalive", Value::Null);
+    });
     let ctx = HostCtx {
         store,
         cancel: Arc::new(InstallCancelRegistry::new()),

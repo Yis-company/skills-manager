@@ -30,6 +30,8 @@ export function RemoteCliUpdateDialog({
 }: Props) {
   const { t } = useTranslation();
   const [probe, setProbe] = useState<api.RemoteProbe | null>(null);
+  // Why the check failed, say a host with no CLI yet. Installing still works.
+  const [probeError, setProbeError] = useState<null | string>(null);
   const [stage, setStage] = useState<null | Stage>(null);
   const [error, setError] = useState<null | string>(null);
   const [installed, setInstalled] = useState(false);
@@ -46,6 +48,7 @@ export function RemoteCliUpdateDialog({
   if (hostId !== shownHostId) {
     setShownHostId(hostId);
     setProbe(null);
+    setProbeError(null);
     setInstalled(false);
     setProbeLoading(hostId !== null);
     setStage(null);
@@ -53,7 +56,7 @@ export function RemoteCliUpdateDialog({
   }
 
   const loadProbe = useCallback(
-    (id: string, generation: number, isCurrent: () => boolean = () => true) => {
+    (id: string, generation: number, isCurrent: () => boolean) => {
       const current = () => generationRef.current === generation && isCurrent();
 
       return api
@@ -63,7 +66,7 @@ export function RemoteCliUpdateDialog({
             if (current()) setProbe(result);
           },
           (e) => {
-            if (current()) setError(getErrorMessage(e, t("common.error")));
+            if (current()) setProbeError(getErrorMessage(e, t("common.error")));
           },
         )
         .finally(() => {
@@ -143,13 +146,14 @@ export function RemoteCliUpdateDialog({
   };
 
   const run = async () => {
-    if (!hostId || runRef.current || !probe || probe.compatible || probeLoading) return;
+    if (!hostId || runRef.current || probe?.compatible || probeLoading) return;
     const selectedHostId = getActiveHostId();
     const switchToken = getHostSwitchToken();
     selectedHostRef.current = selectedHostId;
     installSwitchTokenRef.current = switchToken;
     runRef.current = true;
     setError(null);
+    setProbeError(null);
     onBusyChange(hostId);
 
     try {
@@ -255,20 +259,11 @@ export function RemoteCliUpdateDialog({
       return;
     }
 
-    if (probe?.compatible) return;
-
-    if (probe) {
-      void run();
-
-      return;
-    }
-
-    const generation = generationRef.current;
-    setProbe(null);
-    setError(null);
-    setProbeLoading(true);
-    await loadProbe(hostId, generation);
+    void run();
   };
+
+  const alert =
+    installed && error ? `${t("remoteHosts.installedLabel")} ${error}` : (error ?? probeError);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center" role="presentation">
@@ -341,12 +336,12 @@ export function RemoteCliUpdateDialog({
             {t(`remoteHosts.stage.${stage ?? "checking"}`)}
           </p>
         )}
-        {error && (
+        {alert && (
           <p
             role="alert"
             className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-[12px] text-red-500"
           >
-            {installed ? `${t("remoteHosts.installedLabel")} ${error}` : error}
+            {alert}
           </p>
         )}
         <footer className="flex justify-end gap-2">
@@ -356,7 +351,7 @@ export function RemoteCliUpdateDialog({
           {!upToDate && (
             <button
               onClick={() => void retry()}
-              disabled={busy || probeLoading || (!probe && !error)}
+              disabled={busy || probeLoading}
               className="app-button-secondary gap-1.5 border-accent bg-accent text-white disabled:opacity-50"
             >
               {busy ? (

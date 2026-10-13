@@ -125,6 +125,22 @@ export const handlers = {
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
   remote_hosts_list: (_args, state) => state.remoteHosts,
+  remote_host_update: (
+    {
+      hostId,
+      name,
+      sshTarget,
+      cliPath,
+    }: { hostId: string; name: string; sshTarget: string; cliPath: null | string },
+    state,
+  ) => {
+    const host = state.remoteHosts.find((other) => other.id === hostId);
+
+    if (!host) throw new Error("Remote host not found");
+    Object.assign(host, { name, ssh_target: sshTarget, cli_path: cliPath });
+
+    return host;
+  },
   host_sync_status_all: (_args, state) =>
     state.hostsInSync.flatMap((hostId) => {
       const host = state.remoteHosts.find((h) => h.id === hostId);
@@ -200,14 +216,20 @@ export const handlers = {
   host_sync_leave: () => ({ delete_key_by_hand: null, host_reached: true }),
   remote_host_remove: ({ hostId }: { hostId: string }, state) => {
     state.remoteHosts = state.remoteHosts.filter((host) => host.id !== hostId);
+
+    return null;
   },
   remote_host_connect: ({ hostId }: { hostId: string }, state) => {
-    if (state.remoteCliNeedsUpdate) {
+    if (state.remoteHostNewer) {
       throw {
         kind: "remote_version_mismatch",
-        message: "Remote CLI version does not match",
+        message:
+          "Agents Manager on Build box is 1.41.0, newer than this app (1.40.0). Update this app to connect.",
       };
     }
+
+    // An older CLI is replaced while connecting, without asking.
+    state.remoteCliNeedsUpdate = false;
 
     return {
       host_id: hostId,
@@ -876,6 +898,8 @@ export const handlers = {
   git_backup_clone: ({ url }: { url: string }, state) => {
     state.gitStatus.is_repo = true;
     state.gitStatus.remote_url = url;
+
+    return null;
   },
   backup_device_name: () => "e2e-machine",
   github_device_flow_start: (_args, state) => state.deviceFlow.start,

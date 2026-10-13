@@ -1004,6 +1004,8 @@ export interface RemoteHost {
   /** Explicit CLI path on the remote; null resolves it like `manage-skills` does. */
   cli_path: null | string;
   created_at: number;
+  /** Hosts list only: the CLI this app installed there is behind it. */
+  update_pending?: boolean;
 }
 
 export interface RemoteProbe {
@@ -1205,7 +1207,10 @@ export interface HostSessionInfo {
   base_dir: string;
 }
 
-/** Rejects when the host is unreachable, has no CLI, or runs another version. */
+/**
+ * Installs this app's CLI first when the host runs an older one. Rejects when
+ * the host is unreachable, has no CLI, or cannot take this version.
+ */
 export const remoteHostConnect = (hostId: string) =>
   invoke<HostSessionInfo>("remote_host_connect", { hostId });
 

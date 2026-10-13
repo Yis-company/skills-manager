@@ -29,6 +29,9 @@ export function RemoveHostDialog({
     if (!host) return;
 
     try {
+      // Switch away first: a switch that fails or is declined leaves everything as it was.
+      if (activeHost?.id === host.id && !(await switchHost(null))) return;
+
       if (alsoLeave) {
         const left = await api.hostSyncLeave(host.id);
 
@@ -39,7 +42,6 @@ export function RemoveHostDialog({
         }
       }
 
-      if (activeHost?.id === host.id) await switchHost(null);
       await api.remoteHostRemove(host.id);
       await refreshRemoteHosts();
       toast.success(t("remoteHosts.removed"));

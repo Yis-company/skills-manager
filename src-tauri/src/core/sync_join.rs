@@ -81,9 +81,7 @@ pub fn join(ctx: &HostCtx, url: &str) -> Result<JoinPreview, AppError> {
                 git_backup::init_repo_unlocked(&skills_dir, &host)?;
             }
             git_backup::set_remote_unlocked(&skills_dir, url)?;
-            if git_backup::has_uncommitted_changes(&skills_dir)? {
-                git_backup::commit_all_unlocked(&skills_dir, &format!("Joined from {host}"))?;
-            }
+            git_backup::commit_changes_unlocked(&skills_dir, &format!("Joined from {host}"))?;
         } else {
             if !plan.preview.local_empty {
                 add_extras(&plan, &skills_dir, &clone.0)?;
