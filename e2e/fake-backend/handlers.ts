@@ -168,7 +168,19 @@ export const handlers = {
       state.syncConflicts = state.syncConflicts.filter((c) => c.skill_id !== args.skill);
     }
 
-    return syncCommand(command, syncStatus(state, "e2e-machine", state.syncConflicts));
+    if (command === "sync_resolve_resource") {
+      state.resourceConflicts = state.resourceConflicts.filter((r) => r.key !== args.key);
+    }
+
+    if (command === "sync_resolve_preset") {
+      state.sameNamePresets = state.sameNamePresets.filter((p) => p.preset_id !== args.preset);
+    }
+
+    return syncCommand(command, {
+      ...syncStatus(state, "e2e-machine", state.syncConflicts),
+      resource_conflicts: state.resourceConflicts,
+      same_name_presets: state.sameNamePresets,
+    });
   },
   host_sync_prepare: ({ pasted }: { pasted: boolean }, state) =>
     state.pasteKeyFirst && !pasted
@@ -936,6 +948,8 @@ function syncStatus(state: State, host: string, conflicts: SyncConflict[]): Sync
     remote: state.gitStatus.remote_url,
     last_sync: null,
     conflicts,
+    resource_conflicts: [],
+    same_name_presets: [],
     edited_here: [],
     version: "1.40.0",
     format: 2,

@@ -285,10 +285,14 @@ fn seeded_pair(env: &Env) -> (Device, Device) {
 }
 
 #[test]
-fn instruction_bundle_conflict_preserves_both_versions_and_converges_after_review() {
+fn an_instruction_conflict_is_recorded_in_sync_and_resolved_from_another_host() {
+    // SID-108: the conflict doesn't stop either host. It is recorded in Sync,
+    // so the other host sees it and resolves it there, and the first host
+    // applies that choice on its next pull.
     let env = setup();
     let a = env.device_a();
     let id = "00000000-0000-0000-0000-000000000001";
+    let key = format!("instructions/{id}");
     let relative = format!(".agents-manager/instructions/{id}");
     let write_bundle = |device: &Device, content: &str| {
         let root = device.skills.join(&relative);
@@ -310,6 +314,14 @@ fn instruction_bundle_conflict_preserves_both_versions_and_converges_after_revie
         // A bundled SKILL.md is a document, not a library skill.
         std::fs::write(root.join("files/docs/SKILL.md"), "Supporting document").unwrap();
     };
+    let agents_md = |device: &Device| {
+        std::fs::read_to_string(device.skills.join(&relative).join("files/AGENTS.md")).unwrap()
+    };
+    let open = |device: &Device| {
+        device.activate();
+        let repo = git2::Repository::open(&device.skills).unwrap();
+        crate::core::resource_sync::conflicts(&repo).unwrap()
+    };
     write_bundle(&a, "Base");
     a.commit("seed resources");
     a.push();
@@ -319,62 +331,38 @@ fn instruction_bundle_conflict_preserves_both_versions_and_converges_after_revie
     write_bundle(&b, "Device B edit");
     b.commit("edit resource B");
     b.push();
-    let resource_tree = format!("HEAD:{relative}");
-    let original_bundle = git(&a.skills, &["rev-parse", &resource_tree]);
-    assert!(a.pull_err().to_string().contains("need review"));
-    // Pull may first commit local metadata, but may not apply either side's
-    // merged resource payload until this conflict has been reviewed.
-    assert_eq!(
-        git(&a.skills, &["rev-parse", &resource_tree]),
-        original_bundle
-    );
-    assert_eq!(
-        std::fs::read_to_string(a.skills.join(&relative).join("files/AGENTS.md")).unwrap(),
-        "Device A edit"
-    );
-    let mut conflict = a
-        .store
-        .resource_state_list("resource_sync_conflict")
-        .unwrap()
-        .pop()
-        .unwrap();
-    let conflict_id = conflict["id"].as_str().unwrap().to_owned();
-    let repo = git2::Repository::open(&a.skills).unwrap();
-    for side in ["local", "remote"] {
-        assert!(repo
-            .find_reference(&format!(
-                "refs/skills-manager/resource-conflicts/{conflict_id}/{side}"
-            ))
-            .is_ok());
-    }
-    conflict["choice"] = serde_json::json!("remote");
-    a.store
-        .resource_state_put("resource_sync_conflict", &conflict_id, &conflict)
-        .unwrap();
+
     a.pull();
+    assert_eq!(agents_md(&a), "Device A edit");
+    let conflicts = open(&a);
+    assert_eq!(conflicts.len(), 1);
     assert_eq!(
-        std::fs::read_to_string(a.skills.join(&relative).join("files/AGENTS.md")).unwrap(),
-        "Device B edit"
+        (conflicts[0].key.as_str(), conflicts[0].name.as_str()),
+        (key.as_str(), "Team")
     );
-    assert!(a
-        .store
-        .resource_state_list("resource_sync_conflict")
-        .unwrap()
-        .is_empty());
-    // Simulate a crash after Git committed the decision but before SQLite
-    // cleanup. An otherwise up-to-date pull must reconcile that exact decision.
-    a.store
-        .resource_state_put("resource_sync_conflict", &conflict_id, &conflict)
-        .unwrap();
-    a.pull();
-    assert!(a
-        .store
-        .resource_state_list("resource_sync_conflict")
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        (
+            conflicts[0].this_host.as_str(),
+            conflicts[0].other_host.as_str()
+        ),
+        ("Device A", "Device B")
+    );
     a.push();
+
+    // B sees the conflict and puts its own version back.
     b.pull();
+    assert_eq!(agents_md(&b), "Device A edit");
+    assert_eq!(open(&b).len(), 1);
+    crate::core::resource_sync::resolve_unlocked(&b.store, &key, true).unwrap();
+    assert_eq!(agents_md(&b), "Device B edit");
+    assert!(open(&b).is_empty());
+    b.push();
+
+    a.pull();
+    assert_eq!(agents_md(&a), "Device B edit");
+    assert!(open(&a).is_empty());
     assert_eq!(a.tree_oid(), b.tree_oid());
+    let repo = git2::Repository::open(&a.skills).unwrap();
     let snapshot = crate::core::merge::snapshot::read_snapshot(
         &repo,
         &repo.head().unwrap().peel_to_tree().unwrap(),
@@ -1537,4 +1525,105 @@ fn ignored_file_in_the_way_blocks_with_guidance() {
         std::fs::read_to_string(a.skills.join("beta/debug.log")).unwrap(),
         "precious local data"
     );
+}
+
+#[test]
+fn presets_merge_per_field_and_same_names_wait_for_review() {
+    // SID-104: a rename on one host and an icon change on another both
+    // survive; two hosts adding a preset with the same name keep both, one
+    // renamed and marked for review. The merged files need no rewrite.
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    a.activate();
+    a.add_preset("web", "Web", &["skill-1"]);
+    a.commit("add Web");
+    a.push();
+    b.pull();
+
+    a.activate();
+    a.store
+        .update_scenario("web", "Frontend", None, None)
+        .unwrap();
+    sync_metadata::write_all_from_db_unlocked(&a.store).unwrap();
+    a.add_preset("docs-a", "Docs", &[]);
+    a.commit("rename Web, add Docs");
+    a.push();
+    b.activate();
+    b.reindex();
+    b.store
+        .update_scenario("web", "Web", None, Some("globe"))
+        .unwrap();
+    sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
+    b.add_preset("docs-b", "Docs", &[]);
+    b.commit("icon for Web, add Docs");
+    let summary = b.pull();
+    assert!(!summary.fast_forward);
+
+    let presets: Vec<_> = b
+        .store
+        .get_all_scenarios()
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.id, s.name, s.icon))
+        .collect();
+    assert!(presets.contains(&("web".into(), "Frontend".into(), Some("globe".into()))));
+    assert!(presets.contains(&("docs-a".into(), "Docs".into(), None)));
+    assert!(presets.contains(&("docs-b".into(), "Docs (2)".into(), None)));
+    assert_eq!(
+        sync_metadata::preset_reviews(&b.store).unwrap(),
+        [("docs-b".to_string(), "docs-a".to_string())].into()
+    );
+    sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
+    // Staging decides: `git status` can flag a CRLF checkout rewritten as LF.
+    assert!(!git_backup::commit_changes_unlocked(&b.skills, "rewrite").unwrap());
+}
+
+#[test]
+fn custom_agents_are_shared_and_a_hosts_own_agents_join_them() {
+    // SID-105: an agent defined on one host appears on the others. A host's
+    // agents from before Sync shared them join on its first pull, and agents
+    // added on two hosts at once both survive the merge.
+    use crate::core::tool_adapters::{custom_tools, CustomToolDef};
+    let env = setup();
+    let (a, b) = seeded_pair(&env);
+    let add_agent = |dev: &Device, key: &str| {
+        dev.activate();
+        let mut agents = custom_tools(&dev.store);
+        agents.push(CustomToolDef {
+            key: key.to_string(),
+            display_name: key.to_string(),
+            skills_dir: format!(".{key}/skills"),
+            project_relative_skills_dir: None,
+            category: Default::default(),
+        });
+        let json = serde_json::to_string(&agents).unwrap();
+        dev.store.set_setting("custom_tools", &json).unwrap();
+    };
+    let keys = |dev: &Device| {
+        let mut keys: Vec<_> = custom_tools(&dev.store)
+            .into_iter()
+            .map(|a| a.key)
+            .collect();
+        keys.sort();
+        keys
+    };
+
+    add_agent(&b, "b_agent");
+    add_agent(&a, "a_agent");
+    sync_metadata::write_all_from_db_unlocked(&a.store).unwrap();
+    a.commit("add an agent");
+    a.push();
+    b.pull();
+    assert_eq!(keys(&b), ["a_agent", "b_agent"]);
+
+    sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
+    add_agent(&b, "b_two");
+    sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
+    b.commit("agents on B");
+    add_agent(&a, "a_two");
+    sync_metadata::write_all_from_db_unlocked(&a.store).unwrap();
+    a.commit("another agent on A");
+    a.push();
+    assert!(!b.pull().fast_forward);
+    assert_eq!(keys(&b), ["a_agent", "a_two", "b_agent", "b_two"]);
 }

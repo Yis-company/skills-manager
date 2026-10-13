@@ -82,6 +82,8 @@ pub const COMMANDS: &[&str] = &[
     "sync_history",
     "sync_conflicts",
     "sync_resolve",
+    "sync_resolve_preset",
+    "sync_resolve_resource",
     "sync_restore",
     "sync_pause",
     "sync_resume",
@@ -132,6 +134,7 @@ pub const COMMANDS: &[&str] = &[
     "delete_preset",
     "switch_preset",
     "apply_preset_to_default",
+    "preview_preset_switch",
     "apply_preset_to_coding_agents",
     "add_skill_to_preset",
     "remove_skill_from_preset",
@@ -371,6 +374,22 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             )?;
             sync_service::resolve(ctx, &skill_id, action)
         })()),
+        "sync_resolve_preset" => reply((|| {
+            let choice = match (a.opt::<String>("keep")?, a.opt("combine")?.unwrap_or(false)) {
+                (Some(id), _) => sync_service::PresetChoice::Keep(id),
+                (None, true) => sync_service::PresetChoice::Combine,
+                (None, false) => sync_service::PresetChoice::KeepBoth,
+            };
+            sync_service::resolve_preset(&ctx.store, &a.req::<String>("preset")?, choice)
+        })()),
+        "sync_resolve_resource" => reply(
+            crate::core::resource_sync::resolve(
+                ctx,
+                &a.req::<String>("key")?,
+                a.opt("other")?.unwrap_or(false),
+            )
+            .map_err(|e| AppError::classify_git_error(format!("{e:#}"))),
+        ),
         "sync_restore" => reply(sync_service::restore(ctx, &a.req::<String>("point")?)),
         "sync_pause" => reply(sync_service::set_paused(&ctx.store, true)),
         "sync_resume" => reply(sync_service::set_paused(&ctx.store, false)),
@@ -554,6 +573,7 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.opt("icon")?,
         )),
         "delete_preset" => reply(presets::delete_preset_core(ctx, a.req("id")?)),
+        "preview_preset_switch" => reply(presets::preview_preset_switch_core(ctx, a.req("id")?)),
         "switch_preset" | "apply_preset_to_default" => {
             reply(presets::apply_preset_to_default_core(ctx, a.req("id")?))
         }

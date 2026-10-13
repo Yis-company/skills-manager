@@ -817,6 +817,10 @@ export const switchPreset = (id: string) => invoke<void>("switch_preset", { id }
 
 export const applyPresetToDefault = (id: string) => invoke<void>("apply_preset_to_default", { id });
 
+/** What switching to a preset takes off the agents, as [skill, agent] pairs. */
+export const previewPresetSwitch = (id: string) =>
+  invoke<[string, string][]>("preview_preset_switch", { id });
+
 export const addSkillToPreset = (skillId: string, presetId: string) =>
   invoke<void>("add_skill_to_preset", { skillId, presetId });
 
@@ -1082,6 +1086,25 @@ export interface SyncConflict {
   other_host: string;
 }
 
+/** An instruction or MCP changed on two hosts, recorded in Sync. */
+export interface ResourceConflict {
+  key: string;
+  kind: "instructions" | "mcps";
+  name: string;
+  /** The host whose version Sync kept, and the host with the other one. */
+  this_host: string;
+  other_host: string;
+}
+
+/** A preset renamed apart from another host's preset with the same name. */
+export interface SameNamePreset {
+  preset_id: string;
+  name: string;
+  /** The preset that kept the name. */
+  other_id: string;
+  other_name: string;
+}
+
 export interface EditedCopy {
   skill_id: string;
   name: string;
@@ -1097,6 +1120,8 @@ export interface SyncStatus {
   remote: null | string;
   last_sync: null | number;
   conflicts: SyncConflict[];
+  resource_conflicts: ResourceConflict[];
+  same_name_presets: SameNamePreset[];
   edited_here: EditedCopy[];
   version: string;
   format: number;
@@ -1115,7 +1140,7 @@ export interface AgentLogEntry {
 }
 
 export interface JoinItem {
-  kind: "instruction" | "mcp" | "preset" | "skill";
+  kind: "agent" | "instruction" | "mcp" | "preset" | "skill";
   name: string;
 }
 

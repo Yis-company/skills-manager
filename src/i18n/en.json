@@ -115,10 +115,16 @@
       "empty": "Nothing needs review.",
       "desc": "Choices are recorded in Sync. Each host applies them on its next pull, even when it isn't connected.",
       "skill": "Skill changed on two hosts",
+      "instructions": "Instructions changed on two hosts",
+      "mcps": "MCP changed on two hosts",
       "changedOnBoth": "Changed on {{one}} and on {{other}}.",
       "anotherHost": "another host",
       "keep": "Keep {{host}}'s version",
-      "keepBoth": "Keep both"
+      "keepBoth": "Keep both",
+      "preset": "Preset added on two hosts with one name",
+      "sameName": "Renamed to stay apart from {{other}}.",
+      "combine": "Combine into {{other}}",
+      "keepOnly": "Keep only {{name}}"
     },
     "log": {
       "empty": "Nothing has changed on this host's agents yet.",
@@ -176,7 +182,8 @@
       "skill": "skill",
       "preset": "preset",
       "instruction": "instruction",
-      "mcp": "MCP"
+      "mcp": "MCP",
+      "agent": "agent"
     },
     "preview": {
       "remoteEmpty": "Sync is empty: this host starts it.",
@@ -1293,6 +1300,9 @@
     }
   },
   "presetActions": {
+    "switch": "Switch",
+    "firstSwitchTitle": "Switch to {{name}}?",
+    "firstSwitchMessage": "A preset is now shared by every host: switching puts exactly its skills on your agents, everywhere. These come off, including skills you added directly:",
     "button": "Apply Preset",
     "applyToProject": "Apply Preset to This Project",
     "applyToGlobal": "Apply Preset to Global Workspace",

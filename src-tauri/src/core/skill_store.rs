@@ -1115,6 +1115,9 @@ impl SkillStore {
                 }
             }
         }
+        // Park names on ids first, so names moving between presets (a
+        // same-name pair renamed apart, SID-104) can't trip UNIQUE mid-loop.
+        tx.execute("UPDATE scenarios SET name = char(1) || id", [])?;
         let now = chrono::Utc::now().timestamp_millis();
         for scenario in scenarios {
             tx.execute(
@@ -1224,6 +1227,25 @@ impl SkillStore {
                 enabled: row.get(3)?,
                 updated_at: row.get(4)?,
             })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Agents a preset skill is explicitly turned off for. Every other agent
+    /// is on (SID-98).
+    pub fn get_disabled_tools_for_scenario_skill(
+        &self,
+        scenario_id: &str,
+        skill_id: &str,
+    ) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT tool
+             FROM scenario_skill_tools
+             WHERE scenario_id = ?1 AND skill_id = ?2 AND enabled = 0",
+        )?;
+        let rows = stmt.query_map(params![scenario_id, skill_id], |row| {
+            row.get::<_, String>(0)
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }

@@ -202,6 +202,15 @@ pub fn set_custom_tools(
         .map_err(AppError::db)
 }
 
+/// A custom agent's folder as (shared path relative to home, this host's own
+/// path): a folder outside home isn't shared (SID-105).
+pub fn split_skills_dir(absolute: &str) -> (String, Option<String>) {
+    match tool_adapters::home_relative(absolute) {
+        Some(relative) => (relative, None),
+        None => (String::new(), Some(absolute.to_string())),
+    }
+}
+
 pub fn normalize_skills_dir_input(path: &str) -> Result<String, AppError> {
     let raw = path.trim();
     if raw.is_empty() {
@@ -254,6 +263,7 @@ pub fn normalize_project_relative_skills_dir_input(path: &str) -> Result<Option<
 
 pub fn list_tool_info(store: &SkillStore) -> Vec<ToolInfo> {
     let disabled = disabled_tools_set(store);
+    let overrides = get_custom_tool_paths(store);
     let project_overrides = get_custom_tool_project_paths(store);
     let infos: Vec<ToolInfo> = tool_adapters::all_tool_adapters(store)
         .into_iter()
@@ -264,7 +274,12 @@ pub fn list_tool_info(store: &SkillStore) -> Vec<ToolInfo> {
             skills_dir: adapter.skills_dir().to_string_lossy().to_string(),
             enabled: !disabled.contains(&adapter.key),
             is_custom: adapter.is_custom,
-            has_path_override: adapter.has_path_override(),
+            // A custom agent's path is overridden when this host set its own.
+            has_path_override: if adapter.is_custom {
+                overrides.contains_key(&adapter.key)
+            } else {
+                adapter.has_path_override()
+            },
             project_relative_skills_dir: {
                 let project_dir = adapter.project_relative_skills_dir();
                 if project_dir.is_empty() {
@@ -387,13 +402,19 @@ pub fn migrate_legacy_tool_keys(store: &SkillStore) -> Result<(), AppError> {
         }
     }
 
+    // Custom agents are shared (SID-105): a folder in home is kept relative
+    // to it, and one outside home becomes this host's own path.
     for custom in &mut custom_tools {
-        if let Ok(normalized) = normalize_skills_dir_input(&custom.skills_dir) {
-            if custom.skills_dir != normalized {
-                custom.skills_dir = normalized;
-                custom_tools_changed = true;
-            }
+        let Ok(absolute) = normalize_skills_dir_input(&custom.skills_dir) else {
+            continue;
+        };
+        let (shared, own) = split_skills_dir(&absolute);
+        if let Some(own) = own {
+            custom_paths.entry(custom.key.clone()).or_insert(own);
+            custom_paths_changed = true;
         }
+        custom.skills_dir = shared;
+        custom_tools_changed = true;
     }
 
     if custom_paths_changed {

@@ -19,6 +19,10 @@ export interface PresetBarProps {
   onComplete: () => Promise<void>;
   /** Whether the status badge counts agent copies or logical skills. */
   statusMode?: PresetStatusMode;
+  /** Global workspace: a click switches the shared active preset (SID-98)
+   *  instead of adding its skills. */
+  onSwitch?: (preset: Preset) => Promise<void>;
+  activePresetId?: null | string;
 }
 
 export function PresetBar({
@@ -30,6 +34,8 @@ export function PresetBar({
   onRemoveSkill,
   onComplete,
   statusMode = "agent-pair",
+  onSwitch,
+  activePresetId,
 }: PresetBarProps) {
   const { t } = useTranslation();
   const [loadingKey, setLoadingKey] = useState<null | string>(null);
@@ -165,7 +171,10 @@ export function PresetBar({
       <span className="shrink-0 text-[12px] text-muted">{t("sidebar.presets")}</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {visiblePresets.map((preset) => {
-          const s = statuses.get(preset.id)!;
+          const coverage = statuses.get(preset.id)!;
+          // Switch mode: exactly one preset is active, whatever is on the agents.
+          const switchStatus = preset.id === activePresetId ? "active" : "inactive";
+          const s = onSwitch ? { ...coverage, status: switchStatus } : coverage;
           const presetIcon = getPresetIconOption(preset);
           const Icon = presetIcon.icon;
           const isLoading = loadingKey?.startsWith(preset.id) ?? false;
@@ -176,7 +185,13 @@ export function PresetBar({
               onClick={() => {
                 if (busy) return;
 
-                if (s.status === "active") handleDeactivate(preset);
+                if (onSwitch) {
+                  if (preset.id === activePresetId) return;
+                  setLoadingKey(`${preset.id}-switch`);
+                  onSwitch(preset)
+                    .catch((error) => toast.error(getErrorMessage(error, t("common.error"))))
+                    .finally(() => setLoadingKey(null));
+                } else if (s.status === "active") handleDeactivate(preset);
                 else handleActivate(preset);
               }}
               disabled={busy}

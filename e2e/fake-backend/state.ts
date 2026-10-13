@@ -14,6 +14,8 @@ import type {
   ProjectAgentTarget,
   ProjectSkill,
   RemoteHost,
+  ResourceConflict,
+  SameNamePreset,
   ScanResult,
   SkillsShSkill,
   SyncConflict,
@@ -75,6 +77,10 @@ export interface Seed {
   remoteHostNewer?: boolean;
   /** Skills changed on two hosts, as this computer's `sync status` lists them. */
   syncConflicts?: SyncConflict[];
+  /** Instructions and MCPs changed on two hosts, as `sync status` lists them. */
+  resourceConflicts?: ResourceConflict[];
+  /** Presets renamed apart from a same-name preset, waiting for review. */
+  sameNamePresets?: SameNamePreset[];
   /** Ids of hosts that joined Sync. */
   hostsInSync?: string[];
   /** GitHub refuses the host's deploy key until it is pasted by hand. */
@@ -197,6 +203,8 @@ export function createState({ settings, ...seed }: Seed): State {
     remoteCliNeedsUpdate: false,
     remoteHostNewer: false,
     syncConflicts: [],
+    resourceConflicts: [],
+    sameNamePresets: [],
     hostsInSync: [],
     pasteKeyFirst: false,
     rejectBatchDeleteAfterPartialWrite: false,

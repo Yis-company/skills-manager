@@ -46,8 +46,11 @@ pub struct ToolAdapter {
     pub category: ToolCategory,
 }
 
-/// Serializable custom tool definition stored in settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A custom agent, shared by every host in Sync (SID-105). `skills_dir` is
+/// relative to home, or empty when the folder is outside home and each host
+/// sets its own path (`custom_tool_paths`). Older definitions hold an
+/// absolute path until the startup migration splits it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CustomToolDef {
     pub key: String,
     pub display_name: String,
@@ -128,9 +131,17 @@ impl ToolAdapter {
     }
 
     pub fn is_installed(&self) -> bool {
-        // Product decision: when users explicitly provide a skills path (override/custom),
+        // A custom agent's definition comes from Sync (SID-105): it is here
+        // only when its skills folder's parent exists on this host.
+        if self.is_custom {
+            return self
+                .skills_dir()
+                .parent()
+                .is_some_and(|parent| !parent.as_os_str().is_empty() && parent.exists());
+        }
+        // Product decision: when users explicitly provide a skills path (override),
         // we treat the tool as available so sync can proceed without probing vendor install state.
-        if self.is_custom || self.override_skills_dir.is_some() {
+        if self.override_skills_dir.is_some() {
             return true;
         }
         Self::candidate_paths(&self.relative_detect_dir)
@@ -928,14 +939,39 @@ fn apply_builtin_path_overrides(
     }
 }
 
-fn custom_tool_adapter(ct: CustomToolDef) -> ToolAdapter {
+/// Where a shared custom agent's skills go on this host: this host's path
+/// for it, else its folder relative to home. Definitions saved before Sync
+/// shared them hold an absolute path.
+fn custom_skills_dir(ct: &CustomToolDef, overrides: &HashMap<String, String>) -> String {
+    if let Some(path) = overrides.get(&ct.key) {
+        return path.clone();
+    }
+    if ct.skills_dir.is_empty() || std::path::Path::new(&ct.skills_dir).is_absolute() {
+        return ct.skills_dir.clone();
+    }
+    ToolAdapter::home()
+        .join(&ct.skills_dir)
+        .to_string_lossy()
+        .to_string()
+}
+
+/// `path` relative to home, when it is inside home (SID-105).
+pub fn home_relative(path: &str) -> Option<String> {
+    let home = dirs::home_dir()?;
+    let relative = std::path::Path::new(path).strip_prefix(home).ok()?;
+    let relative = relative.to_string_lossy().to_string();
+    (!relative.is_empty()).then_some(relative)
+}
+
+fn custom_tool_adapter(ct: CustomToolDef, overrides: &HashMap<String, String>) -> ToolAdapter {
+    let skills_dir = custom_skills_dir(&ct, overrides);
     ToolAdapter {
         key: ct.key,
         display_name: ct.display_name,
         relative_skills_dir: ct.project_relative_skills_dir.unwrap_or_default(),
         relative_detect_dir: String::new(),
         additional_scan_dirs: vec![],
-        override_skills_dir: Some(ct.skills_dir),
+        override_skills_dir: Some(skills_dir),
         category: ct.category,
         is_custom: true,
         recursive_scan: false,
@@ -961,7 +997,7 @@ pub fn all_tool_adapters(store: &crate::core::skill_store::SkillStore) -> Vec<To
         if adapters.iter().any(|adapter| adapter.key == custom.key) {
             continue;
         }
-        adapters.push(custom_tool_adapter(custom));
+        adapters.push(custom_tool_adapter(custom, &overrides));
     }
 
     adapters
@@ -989,7 +1025,7 @@ pub fn find_adapter_with_store(
     customs
         .into_iter()
         .find(|ct| ct.key == key)
-        .map(custom_tool_adapter)
+        .map(|ct| custom_tool_adapter(ct, &overrides))
 }
 
 /// Returns adapters that are installed and not in the disabled list.
@@ -1017,6 +1053,51 @@ mod tests {
     use crate::core::skill_store::SkillStore;
 
     use tempfile::tempdir;
+
+    #[test]
+    fn a_shared_custom_agent_resolves_under_home_and_needs_its_folders_parent() {
+        // SID-105: the definition holds a folder relative to home, or none;
+        // a host's own path wins, and the agent is installed only when the
+        // folder's parent exists.
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        let agent = |key: &str, dir: &str| CustomToolDef {
+            key: key.to_string(),
+            display_name: key.to_string(),
+            skills_dir: dir.to_string(),
+            project_relative_skills_dir: None,
+            category: ToolCategory::Coding,
+        };
+        let agents = [agent("shared", ".agent-x/skills"), agent("elsewhere", "")];
+        store
+            .set_setting("custom_tools", &serde_json::to_string(&agents).unwrap())
+            .unwrap();
+        let home = dirs::home_dir().unwrap();
+        let shared = find_adapter_with_store(&store, "shared").unwrap();
+        assert_eq!(shared.skills_dir(), home.join(".agent-x/skills"));
+        let in_home = home.join(".agent-x/skills").to_string_lossy().to_string();
+        assert_eq!(
+            super::home_relative(&in_home).as_deref(),
+            Some(".agent-x/skills")
+        );
+
+        let installed = || {
+            find_adapter_with_store(&store, "elsewhere")
+                .unwrap()
+                .is_installed()
+        };
+        assert!(!installed());
+        let own_path = |dir: std::path::PathBuf| {
+            let paths = serde_json::json!({ "elsewhere": dir.join("skills") });
+            store
+                .set_setting("custom_tool_paths", &paths.to_string())
+                .unwrap();
+        };
+        own_path(tmp.path().join("missing"));
+        assert!(!installed());
+        own_path(tmp.path().to_path_buf());
+        assert!(installed());
+    }
 
     #[test]
     fn antigravity_deploys_where_every_variant_reads() {

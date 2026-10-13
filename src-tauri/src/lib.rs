@@ -480,32 +480,17 @@ fn apply_preset_from_tray<R: tauri::Runtime>(
                     return Ok(false);
                 }
             };
-            core::scenario_service::ensure_scenario_exists(&store_for_task, &preset_id_for_task)
-                .map_err(|e| e.to_string())?;
-            let skill_ids = store_for_task
-                .get_skill_ids_for_scenario(&preset_id_for_task)
-                .map_err(|e| e.to_string())?;
-            if skill_ids.is_empty() {
+            // A tray click switches the shared active preset (SID-98). There
+            // is always one active preset, so its own item does nothing.
+            if matches!(mode, core::scenario_service::BatchApplyMode::Remove) {
                 return Ok(false);
             }
-            let tool_keys: Vec<String> =
-                core::tool_adapters::enabled_installed_adapters(&store_for_task)
-                    .into_iter()
-                    .filter(|adapter| {
-                        matches!(adapter.category, core::tool_adapters::ToolCategory::Coding)
-                    })
-                    .map(|adapter| adapter.key)
-                    .collect();
-            if tool_keys.is_empty() {
-                return Ok(false);
+            let refusals =
+                core::scenario_service::apply_scenario_to_default(&store_for_task, &preset_id_for_task)
+                    .map_err(|e| e.to_string())?;
+            for refusal in refusals {
+                log::warn!("tray preset switch skipped a target: {refusal}");
             }
-            core::scenario_service::apply_skills_to_tools(
-                &store_for_task,
-                &skill_ids,
-                &tool_keys,
-                mode,
-            )
-            .map_err(|e| e.to_string())?;
             Ok(true)
         })
         .await;
@@ -1171,6 +1156,7 @@ pub fn run() {
             commands::presets::delete_preset,
             commands::presets::switch_preset,
             commands::presets::apply_preset_to_default,
+            commands::presets::preview_preset_switch,
             commands::presets::apply_preset_to_coding_agents,
             commands::presets::add_skill_to_preset,
             commands::presets::remove_skill_from_preset,

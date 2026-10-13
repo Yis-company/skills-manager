@@ -7,7 +7,7 @@ use git2::{Oid, Repository, Sort};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::decision::{self, DecisionInput, MergePlan, NewConflict, Side, Touch};
+use super::decision::{self, DecisionInput, MergePlan, NewConflict, PlannedFile, Side, Touch};
 use super::pending::{self, conflict_ref, TrailerState, REF_APPLYING, REF_PRE_MERGE};
 use super::protocol::{self, ProtocolFile};
 use super::snapshot::{self, skill_identical, FileEntry, Snapshot, METADATA_DIR};
@@ -103,7 +103,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         .refname_to_id(&format!("refs/remotes/origin/{branch}"))
         .with_context(|| format!("origin/{branch} not found after fetch"))?;
 
-    crate::core::resource_sync::reconcile_completed(&repo, store)?;
+    crate::core::resource_sync::drop_legacy_records(&repo, store)?;
 
     if theirs == ours {
         return Ok(up_to_date_summary(&repo, store));
@@ -158,15 +158,7 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         snapshot::read_snapshot(&repo, &ours_tree).context("failed to read local snapshot")?;
     let theirs_snap =
         snapshot::read_snapshot(&repo, &theirs_tree).context("failed to read remote snapshot")?;
-    let resources = crate::core::resource_sync::merge(
-        &repo,
-        store,
-        &base_snap,
-        &ours_snap,
-        &theirs_snap,
-        ours,
-        theirs,
-    )?;
+    let resources = crate::core::resource_sync::merge(&base_snap, &ours_snap, &theirs_snap);
 
     // §4/§11-4: declared-pending set from trailers.
     let pending::PendingPins { pinned, reflagged } =
@@ -217,7 +209,27 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         !path.starts_with(".agents-manager/instructions/")
             && !path.starts_with(".agents-manager/mcps/")
     });
-    plan.residual.extend(resources);
+    plan.residual.extend(resources.files);
+    // SID-104: presets renamed apart from a same-name preset wait for review.
+    if !plan.same_name.is_empty() {
+        let path = format!("{METADATA_DIR}/{}", sync_metadata::PRESET_REVIEW_FILE);
+        let mut review: sync_metadata::PresetReviewFile = plan
+            .residual
+            .get(&path)
+            .and_then(|entry| repo.find_blob(entry.oid).ok())
+            .and_then(|blob| serde_json::from_slice(blob.content()).ok())
+            .unwrap_or_default();
+        review.schema_version = 1;
+        review.same_name.extend(plan.same_name.clone());
+        let oid = repo.blob(&sync_metadata::canonical_json_bytes(&review)?)?;
+        plan.residual.insert(
+            path,
+            FileEntry {
+                oid,
+                mode: 0o100644,
+            },
+        );
+    }
     // SID-108: a skill both sides flagged with different versions keeps ours
     // and is flagged again against the newest remote version.
     for id in reflagged {
@@ -290,10 +302,21 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
         plan.kept_local.len(),
         plan.new_conflicts.len()
     );
+    // SID-104: what the newer side replaced, so the history shows it.
+    if !plan.replaced.is_empty() {
+        message.push_str(&format!(
+            " · newer change kept: {}",
+            plan.replaced.join(", ")
+        ));
+    }
     message = protocol::app_commit_message(&message);
     if let Some((line, _)) = &trailer {
         message.push('\n');
         message.push_str(line);
+    }
+    if let Some(line) = crate::core::resource_sync::conflicts_trailer(&resources.conflicts) {
+        message.push('\n');
+        message.push_str(&line);
     }
     let sig = repo
         .signature()
@@ -334,7 +357,6 @@ pub fn object_merge_pull_unlocked(store: &SkillStore, skills_dir: &Path) -> Resu
     }
 
     let pending_total = rebuild_pending_projection(&repo, store)?;
-    crate::core::resource_sync::clear_resolved(&repo, store)?;
     let summary = MergeSummary {
         engine: "object".to_string(),
         updated,
@@ -784,13 +806,20 @@ fn plan_to_edits(
         }
     }
 
-    diff_file_maps(&mut edits, &ours.scenarios, &plan.scenarios, |id| {
+    let scenarios = write_planned::<_, sync_metadata::ScenarioMetaFile>(repo, &plan.scenarios)?;
+    let memberships =
+        write_planned::<_, sync_metadata::ScenarioSkillMetaFile>(repo, &plan.memberships)?;
+    let agents = write_planned::<_, sync_metadata::AgentMetaFile>(repo, &plan.agents)?;
+    diff_file_maps(&mut edits, &ours.agents, &agents, |key| {
+        format!("{METADATA_DIR}/agents/{key}.json")
+    });
+    diff_file_maps(&mut edits, &ours.scenarios, &scenarios, |id| {
         format!("{METADATA_DIR}/scenarios/{id}.json")
     });
     diff_file_maps(
         &mut edits,
         &ours.memberships,
-        &plan.memberships,
+        &memberships,
         |(sid, skid)| format!("{METADATA_DIR}/scenario-skills/{sid}/{skid}.json"),
     );
     diff_file_maps(&mut edits, &ours.residual, &plan.residual, |p| p.clone());
@@ -848,6 +877,32 @@ fn plan_to_edits(
 
 fn skill_meta_path(id: &str) -> String {
     format!("{METADATA_DIR}/skills/{id}.json")
+}
+
+/// Blobs for the planned preset and membership files. Merged ones are written
+/// in the app's own format, so the next export leaves them as they are.
+fn write_planned<K: Ord + Clone, T: serde::Serialize + serde::de::DeserializeOwned>(
+    repo: &Repository,
+    planned: &BTreeMap<K, PlannedFile>,
+) -> Result<BTreeMap<K, FileEntry>> {
+    planned
+        .iter()
+        .map(|(key, file)| {
+            let entry = match file {
+                PlannedFile::Blob(entry) => *entry,
+                PlannedFile::Merged(value) => {
+                    let typed: T = serde_json::from_value(value.clone())
+                        .context("a merged preset file is not in the expected format")?;
+                    let bytes = sync_metadata::canonical_json_bytes(&typed)?;
+                    FileEntry {
+                        oid: repo.blob(&bytes)?,
+                        mode: 0o100644,
+                    }
+                }
+            };
+            Ok((key.clone(), entry))
+        })
+        .collect()
 }
 
 fn diff_file_maps<K: Ord>(

@@ -10,6 +10,7 @@ use crate::core::scenario_service;
 use crate::core::scenario_service::sync_scenario_skills;
 use crate::core::skill_store::SkillStore;
 use crate::core::sync_engine;
+use crate::core::sync_metadata;
 use crate::core::timing::should_log_first_or_slow;
 use crate::core::tool_adapters::{self, CustomToolDef, ToolCategory};
 use crate::core::tool_service::{
@@ -223,15 +224,6 @@ pub fn set_tool_order_cmd_core(ctx: &HostCtx, order: Vec<String>) -> Result<(), 
     set_tool_order(&store, &order)
 }
 
-/// Whether a built-in adapter claims this key. Resolution consults built-ins
-/// before custom tools, so a key that answers `true` here must have its
-/// overrides written to the side maps, never onto a custom tool definition.
-fn is_builtin_key(key: &str) -> bool {
-    tool_adapters::default_tool_adapters()
-        .iter()
-        .any(|a| a.key == key)
-}
-
 /// Store side of [`set_custom_tool_path`], separated so the write can be
 /// tested against a real store without a Tauri runtime.
 pub(crate) fn apply_tool_skills_dir(
@@ -249,23 +241,11 @@ pub(crate) fn apply_tool_skills_dir(
         .ok_or_else(|| AppError::not_found(format!("Unknown tool: {key}")))?;
     let old_skills_dir = old_adapter.skills_dir();
 
-    // Resolution prefers a built-in over a custom tool of the same key
-    // (`find_adapter_with_store`), so the write has to agree. A custom agent
-    // whose key later became a built-in one otherwise stores the new path on a
-    // definition nothing reads, and the save reports success while the
-    // displayed path never moves (#378).
-    let mut customs = get_custom_tools(store);
-    match customs.iter_mut().find(|c| c.key == key) {
-        Some(custom) if !is_builtin_key(&key) => {
-            custom.skills_dir = path;
-            set_custom_tools(store, &customs)?;
-        }
-        _ => {
-            let mut paths = get_custom_tool_paths(store);
-            paths.insert(key.clone(), path);
-            set_custom_tool_paths(store, &paths)?;
-        }
-    }
+    // A path set here is this host's own, for built-in and custom agents
+    // alike: custom agents' definitions are shared by Sync (SID-105).
+    let mut paths = get_custom_tool_paths(store);
+    paths.insert(key.clone(), path);
+    set_custom_tool_paths(store, &paths)?;
 
     let new_adapter = tool_adapters::find_adapter_with_store(store, &key)
         .ok_or_else(|| AppError::not_found(format!("Unknown tool: {key}")))?;
@@ -454,6 +434,11 @@ pub fn add_custom_tool_core(
             "Agent key, name and skills path are required",
         ));
     }
+    if !sync_metadata::valid_agent_key(&key) {
+        return Err(AppError::invalid_input(
+            "Agent key can use letters, digits, '-', '_' and '.'",
+        ));
+    }
 
     // Validate key uniqueness
     let all = tool_adapters::all_tool_adapters(store);
@@ -462,11 +447,17 @@ pub fn add_custom_tool_core(
             "Agent key \"{key}\" already exists"
         )));
     }
+    let (shared, own) = tool_service::split_skills_dir(&skills_dir);
+    if let Some(own) = own {
+        let mut paths = get_custom_tool_paths(store);
+        paths.insert(key.clone(), own);
+        set_custom_tool_paths(store, &paths)?;
+    }
     let mut customs = get_custom_tools(store);
     customs.push(CustomToolDef {
         key: key.clone(),
         display_name,
-        skills_dir,
+        skills_dir: shared,
         project_relative_skills_dir,
         category: Default::default(),
     });
@@ -560,12 +551,14 @@ mod tests {
         assert_eq!(adapter.project_relative_skills_dir(), ".mine/skills");
     }
 
-    /// A genuine custom agent — no built-in claims its key — still keeps both
-    /// paths on its own definition, which is where its adapter reads them.
+    /// A custom agent's definition is shared by Sync (SID-105): a skills path
+    /// set here is this host's own, and the project path stays on the
+    /// definition.
     #[test]
-    fn a_real_custom_tool_still_stores_its_paths_on_its_definition() {
+    fn a_custom_agents_skills_path_edit_is_this_hosts_own() {
         let tmp = tempdir().unwrap();
         let store = store_with_colliding_custom_tool(tmp.path(), "my_own_agent");
+        let shared = get_custom_tools(&store)[0].skills_dir.clone();
         let chosen = tmp.path().join("chosen");
 
         apply_tool_skills_dir(&store, "my_own_agent", &chosen.to_string_lossy()).unwrap();
@@ -573,7 +566,8 @@ mod tests {
 
         let customs = get_custom_tools(&store);
         let custom = customs.iter().find(|c| c.key == "my_own_agent").unwrap();
-        assert_eq!(std::path::Path::new(&custom.skills_dir), chosen);
+        assert_eq!(custom.skills_dir, shared);
+        assert!(get_custom_tool_paths(&store).contains_key("my_own_agent"));
         assert_eq!(
             custom.project_relative_skills_dir.as_deref(),
             Some(".mine/skills")

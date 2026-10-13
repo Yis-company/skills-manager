@@ -46,26 +46,22 @@ pub fn ensure_scenario_exists(store: &SkillStore, scenario_id: &str) -> Result<(
     Ok(())
 }
 
+/// The agents a preset skill goes on: every enabled, installed agent except
+/// those the user turned off for it. A missing toggle means on, and nothing
+/// writes default toggles (SID-98).
 pub fn enabled_installed_adapters_for_scenario_skill(
     store: &SkillStore,
     scenario_id: &str,
     skill_id: &str,
 ) -> Result<Vec<tool_adapters::ToolAdapter>, AppError> {
-    let adapters = tool_adapters::enabled_installed_adapters(store);
-    let adapter_keys: Vec<String> = adapters.iter().map(|a| a.key.clone()).collect();
-
-    store
-        .ensure_scenario_skill_tool_defaults(scenario_id, skill_id, &adapter_keys)
-        .map_err(AppError::db)?;
-
-    let enabled = store
-        .get_enabled_tools_for_scenario_skill(scenario_id, skill_id)
-        .map_err(AppError::db)?;
-    let enabled_set: HashSet<String> = enabled.into_iter().collect();
-
-    Ok(adapters
+    let off: HashSet<String> = store
+        .get_disabled_tools_for_scenario_skill(scenario_id, skill_id)
+        .map_err(AppError::db)?
         .into_iter()
-        .filter(|adapter| enabled_set.contains(&adapter.key))
+        .collect();
+    Ok(tool_adapters::enabled_installed_adapters(store)
+        .into_iter()
+        .filter(|adapter| !off.contains(&adapter.key))
         .collect())
 }
 
@@ -551,9 +547,11 @@ pub fn refusals_to_error(refusals: Vec<TargetConflict>) -> Result<(), AppError> 
     ))
 }
 
+/// A switch leaves exactly the new preset on the agents (SID-98): every
+/// managed skill outside it goes, skills added directly included. Edited
+/// copies stay, flagged.
 pub fn unsync_obsolete_scenario_targets(
     store: &SkillStore,
-    old_scenario_id: &str,
     desired_targets: &[ScenarioSyncTarget],
 ) -> Result<(), AppError> {
     let desired_paths: HashMap<(String, String), PathBuf> = desired_targets
@@ -566,31 +564,51 @@ pub fn unsync_obsolete_scenario_targets(
         })
         .collect();
 
-    let old_skill_ids = store
-        .get_skill_ids_for_scenario(old_scenario_id)
-        .map_err(AppError::db)?;
-    for skill_id in &old_skill_ids {
-        let targets = store.get_targets_for_skill(skill_id).unwrap_or_default();
-        for target in &targets {
-            let path = PathBuf::from(&target.target_path);
-            let key = (skill_id.clone(), target.tool.clone());
-            if desired_paths.get(&key) == Some(&path)
-                || keep_if_edited(store, target, STATUS_EDITED_LEFT)
-            {
-                continue;
-            }
+    for target in &store.get_all_targets().map_err(AppError::db)? {
+        let path = PathBuf::from(&target.target_path);
+        let key = (target.skill_id.clone(), target.tool.clone());
+        if desired_paths.get(&key) == Some(&path)
+            || keep_if_edited(store, target, STATUS_EDITED_LEFT)
+        {
+            continue;
+        }
 
-            remove_recorded_or_warn(&path, &target.mode);
-            if let Err(e) = store.delete_target(skill_id, &target.tool) {
-                log::warn!(
-                    "Failed to delete target record for skill {skill_id}, tool {}: {e}",
-                    target.tool
-                );
-            }
+        remove_recorded_or_warn(&path, &target.mode);
+        if let Err(e) = store.delete_target(&target.skill_id, &target.tool) {
+            log::warn!(
+                "Failed to delete target record for skill {}, tool {}: {e}",
+                target.skill_id,
+                target.tool
+            );
         }
     }
 
     Ok(())
+}
+
+/// What switching to `scenario_id` would take off the agents, as
+/// (skill name, agent) pairs, for the first switch's preview.
+pub fn preview_switch_removals(
+    store: &SkillStore,
+    scenario_id: &str,
+) -> Result<Vec<(String, String)>, AppError> {
+    let desired: HashSet<(String, String)> = collect_scenario_sync_targets(store, scenario_id)?
+        .into_iter()
+        .map(|t| (t.skill_id, t.tool))
+        .collect();
+    let mut removals = Vec::new();
+    for target in store.get_all_targets().map_err(AppError::db)? {
+        if desired.contains(&(target.skill_id.clone(), target.tool.clone())) {
+            continue;
+        }
+        let name = store
+            .get_skill_by_id(&target.skill_id)
+            .map_err(AppError::db)?
+            .map_or(target.skill_id.clone(), |s| s.name);
+        removals.push((name, target.tool));
+    }
+    removals.sort();
+    Ok(removals)
 }
 
 pub fn unsync_scenario_skills(store: &SkillStore, scenario_id: &str) -> Result<(), AppError> {
@@ -633,15 +651,14 @@ pub fn apply_scenario_to_default(
     ensure_scenario_exists(store, scenario_id)?;
     let desired_targets = collect_scenario_sync_targets(store, scenario_id)?;
 
-    if let Ok(Some(old_id)) = store.get_active_scenario_id() {
-        if old_id != scenario_id {
-            unsync_obsolete_scenario_targets(store, &old_id, &desired_targets)?;
-        }
-    }
+    unsync_obsolete_scenario_targets(store, &desired_targets)?;
 
-    store
-        .set_active_scenario(scenario_id)
-        .map_err(AppError::db)?;
+    // The active preset is shared (SID-98): its file goes out with the next sync.
+    super::sync_metadata::with_repo_lock("switch preset", || {
+        store.set_active_scenario(scenario_id)?;
+        super::sync_metadata::write_all_from_db_unlocked(store)
+    })
+    .map_err(AppError::db)?;
     sync_desired_targets(store, &desired_targets)
 }
 
@@ -727,12 +744,16 @@ pub fn sync_skill_to_active_scenario(
     Ok(())
 }
 
+/// "Default" has one id everywhere, so two hosts never create two of them
+/// (SID-98). It is made only when the library has no presets.
+pub const DEFAULT_PRESET_ID: &str = "default";
+
 pub fn ensure_default_startup_scenario(store: &SkillStore) -> Result<(), AppError> {
     let mut scenarios = store.get_all_scenarios().map_err(AppError::db)?;
     if scenarios.is_empty() {
         let now = chrono::Utc::now().timestamp_millis();
         let default_scenario = ScenarioRecord {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: DEFAULT_PRESET_ID.to_string(),
             name: "Default".to_string(),
             description: Some("Default startup scenario".to_string()),
             icon: None,
@@ -779,7 +800,7 @@ pub fn ensure_cli_scenario_state(store: &SkillStore) -> Result<(), AppError> {
     if scenarios.is_empty() {
         let now = chrono::Utc::now().timestamp_millis();
         let default_scenario = ScenarioRecord {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: DEFAULT_PRESET_ID.to_string(),
             name: "Default".to_string(),
             description: Some("Default startup scenario".to_string()),
             icon: None,

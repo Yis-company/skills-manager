@@ -44,6 +44,7 @@ pub const ACTION_REVIEW: &str = "agent_review";
 /// only record of what to clean up.
 #[derive(Default)]
 pub struct Baseline {
+    active: Option<String>,
     /// (skill id, agent) pairs the active preset deployed.
     preset_targets: HashSet<(String, String)>,
     targets: Vec<SkillTargetRecord>,
@@ -55,20 +56,20 @@ pub struct Baseline {
 /// partial baseline, which only skips removals.
 pub fn capture(store: &SkillStore) -> Baseline {
     let mut preset_targets = HashSet::new();
-    if let Ok(Some(active)) = store.get_active_scenario_id() {
-        for skill_id in store
-            .get_skill_ids_for_scenario(&active)
+    let active = store.get_active_scenario_id().ok().flatten();
+    if let Some(active) = &active {
+        for skill_id in store.get_skill_ids_for_scenario(active).unwrap_or_default() {
+            for adapter in scenario_service::enabled_installed_adapters_for_scenario_skill(
+                store, active, &skill_id,
+            )
             .unwrap_or_default()
-        {
-            for tool in store
-                .get_enabled_tools_for_scenario_skill(&active, &skill_id)
-                .unwrap_or_default()
             {
-                preset_targets.insert((skill_id.clone(), tool));
+                preset_targets.insert((skill_id.clone(), adapter.key));
             }
         }
     }
     Baseline {
+        active,
         preset_targets,
         targets: store.get_all_targets().unwrap_or_default(),
         skills: store
@@ -104,10 +105,14 @@ fn reapply(store: &SkillStore, before: &Baseline) -> Result<Vec<AuditDraft>, App
         .map(|t| (t.skill_id.clone(), t.tool.clone()))
         .collect();
 
+    // Another host switched the shared active preset: like a switch here,
+    // everything outside the new preset goes, direct deploys included (SID-98).
+    let switched = before.active.as_deref() != Some(active.as_str());
     let mut entries = Vec::new();
     for target in &before.targets {
         let key = (target.skill_id.clone(), target.tool.clone());
-        let left_preset = before.preset_targets.contains(&key) && !desired_keys.contains(&key);
+        let left_preset =
+            (switched || before.preset_targets.contains(&key)) && !desired_keys.contains(&key);
         let left_library = store
             .get_skill_by_id(&target.skill_id)
             .map_err(AppError::db)?
@@ -392,6 +397,7 @@ mod tests {
     use crate::core::skill_store::ScenarioRecord;
     use crate::core::test_support::{sample_skill, test_repo, write_skill_dir, TestRepo};
     use crate::core::tool_adapters::{self, CustomToolDef};
+    use crate::core::{sync_metadata, sync_service};
     use std::fs;
 
     /// A library whose only agent deploys into a temp folder, with preset
@@ -769,5 +775,129 @@ mod tests {
             summary(&reapply_resources(&ctx)),
             vec![(ACTION_REVIEW.to_string(), "Rules".to_string(), false)]
         );
+    }
+
+    #[test]
+    fn a_switch_removes_everything_outside_the_new_preset() {
+        // SID-98: a switch leaves exactly the new preset on the agents;
+        // skills added directly go too.
+        let (repo, agent_dir) = setup();
+        let store = &repo.store;
+        add_skill(store, "alpha", true);
+        add_skill(store, "beta", false);
+        add_skill(store, "gamma", false);
+        reapply_active_preset(store, &capture(store));
+        scenario_service::sync_single_skill_to_tool(
+            store,
+            "gamma",
+            "test_agent",
+            scenario_service::DeployIntent::Managed,
+        )
+        .unwrap();
+        store
+            .insert_scenario(&ScenarioRecord {
+                id: "ops".to_string(),
+                name: "Ops".to_string(),
+                description: None,
+                icon: None,
+                sort_order: 1,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        store.add_skill_to_scenario("ops", "beta").unwrap();
+
+        let removals = scenario_service::preview_switch_removals(store, "ops").unwrap();
+        assert_eq!(
+            removals,
+            [
+                ("alpha".to_string(), "test_agent".to_string()),
+                ("gamma".to_string(), "test_agent".to_string())
+            ]
+        );
+        scenario_service::apply_scenario_to_default(store, "ops").unwrap();
+        assert!(!agent_dir.join("alpha").is_symlink());
+        assert!(!agent_dir.join("gamma").is_symlink());
+        assert!(agent_dir.join("beta").is_symlink());
+    }
+
+    #[test]
+    fn a_switch_pulled_from_another_host_is_applied_here() {
+        let (repo, agent_dir) = setup();
+        let store = &repo.store;
+        add_skill(store, "alpha", true);
+        add_skill(store, "beta", false);
+        store
+            .insert_scenario(&ScenarioRecord {
+                id: "ops".to_string(),
+                name: "Ops".to_string(),
+                description: None,
+                icon: None,
+                sort_order: 1,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        store.add_skill_to_scenario("ops", "beta").unwrap();
+        reapply_active_preset(store, &capture(store));
+        assert!(agent_dir.join("alpha").is_symlink());
+        let before = capture(store);
+
+        // The pull brings another host's switch: the reindex makes Ops active.
+        store.set_active_scenario("ops").unwrap();
+        reapply_active_preset(store, &before);
+        assert!(!agent_dir.join("alpha").is_symlink());
+        assert!(agent_dir.join("beta").is_symlink());
+    }
+
+    #[test]
+    fn same_name_presets_combine_or_keep_one() {
+        // SID-104: the review choices for a preset renamed apart from another
+        // host's preset of the same name.
+        let (repo, agent_dir) = setup();
+        let store = &repo.store;
+        add_skill(store, "alpha", true);
+        add_skill(store, "beta", false);
+        reapply_active_preset(store, &capture(store));
+        for (id, name) in [("web-2", "Web (2)"), ("ops", "Ops"), ("ops-2", "Ops (2)")] {
+            store
+                .insert_scenario(&ScenarioRecord {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    description: None,
+                    icon: None,
+                    sort_order: 1,
+                    created_at: 1,
+                    updated_at: 1,
+                })
+                .unwrap();
+        }
+        store.add_skill_to_scenario("web-2", "beta").unwrap();
+        let reviews = [("web-2", "web"), ("ops-2", "ops")]
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .into();
+        sync_metadata::write_preset_reviews_unlocked(&reviews).unwrap();
+
+        // Combine: the renamed preset's skills join the active preset, and
+        // the agents follow.
+        sync_service::resolve_preset(store, "web-2", sync_service::PresetChoice::Combine).unwrap();
+        assert_eq!(
+            store.get_skill_ids_for_scenario("web").unwrap(),
+            ["alpha", "beta"]
+        );
+        assert!(agent_dir.join("beta").is_symlink());
+
+        // Keep one: the other preset goes, and nothing is left to review.
+        let keep = sync_service::PresetChoice::Keep("ops-2".to_string());
+        sync_service::resolve_preset(store, "ops-2", keep).unwrap();
+        let mut ids: Vec<_> = store
+            .get_all_scenarios()
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["ops-2", "web"]);
+        assert!(sync_metadata::preset_reviews(store).unwrap().is_empty());
     }
 }

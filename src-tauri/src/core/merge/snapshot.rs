@@ -7,7 +7,7 @@ use git2::{ObjectType, Oid, Repository, Tree};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::protocol::ProtocolFile;
-use crate::core::sync_metadata::SkillMetaFile;
+use crate::core::sync_metadata::{SkillMetaFile, ACTIVE_PRESET_FILE};
 
 pub const METADATA_DIR: &str = ".skills-manager";
 /// Marker files that make a directory a valid skill dir (mirrors
@@ -49,6 +49,8 @@ pub struct Snapshot {
     pub skills: BTreeMap<String, SkillObj>,
     /// scenario_id → scenarios/{id}.json blob
     pub scenarios: BTreeMap<String, FileEntry>,
+    /// custom agent key → agents/{key}.json blob (SID-105)
+    pub agents: BTreeMap<String, FileEntry>,
     /// (scenario_id, skill_id) → scenario-skills/{sid}/{skid}.json blob
     pub memberships: BTreeMap<(String, String), FileEntry>,
     /// Repo-relative path → blob, for every file outside claimed content
@@ -57,6 +59,9 @@ pub struct Snapshot {
     pub residual: BTreeMap<String, FileEntry>,
     pub schema: Option<(FileEntry, u64)>,
     pub protocol: Option<(FileEntry, ProtocolFile)>,
+    /// Parsed preset, membership and active-preset files by blob id, for the
+    /// per-field merge (SID-104).
+    pub json: BTreeMap<Oid, serde_json::Value>,
 }
 
 pub fn read_snapshot(repo: &Repository, tree: &Tree) -> Result<Snapshot> {
@@ -107,13 +112,19 @@ pub fn read_snapshot(repo: &Repository, tree: &Tree) -> Result<Snapshot> {
                         );
                     }
                 }
-                ("scenarios", Some(ObjectType::Tree)) => {
+                (dir @ ("scenarios" | "agents"), Some(ObjectType::Tree)) => {
                     let t = repo.find_tree(entry.id())?;
                     for e in t.iter() {
                         let file = e.name().unwrap_or_default().to_string();
                         match file.strip_suffix(".json") {
                             Some(stem) if e.kind() == Some(ObjectType::Blob) => {
-                                snap.scenarios.insert(
+                                parse_json(repo, &mut snap, e.id());
+                                let files = if dir == "agents" {
+                                    &mut snap.agents
+                                } else {
+                                    &mut snap.scenarios
+                                };
+                                files.insert(
                                     stem.to_string(),
                                     FileEntry {
                                         oid: e.id(),
@@ -123,7 +134,7 @@ pub fn read_snapshot(repo: &Repository, tree: &Tree) -> Result<Snapshot> {
                             }
                             _ => record_residual(
                                 &mut snap,
-                                format!("{METADATA_DIR}/scenarios/{file}"),
+                                format!("{METADATA_DIR}/{dir}/{file}"),
                                 &e,
                             ),
                         }
@@ -146,6 +157,7 @@ pub fn read_snapshot(repo: &Repository, tree: &Tree) -> Result<Snapshot> {
                             let file = e.name().unwrap_or_default().to_string();
                             match file.strip_suffix(".json") {
                                 Some(stem) if e.kind() == Some(ObjectType::Blob) => {
+                                    parse_json(repo, &mut snap, e.id());
                                     snap.memberships.insert(
                                         (sid.clone(), stem.to_string()),
                                         FileEntry {
@@ -190,6 +202,9 @@ pub fn read_snapshot(repo: &Repository, tree: &Tree) -> Result<Snapshot> {
                     ));
                 }
                 _ => {
+                    if name == ACTIVE_PRESET_FILE {
+                        parse_json(repo, &mut snap, entry.id());
+                    }
                     record_residual(&mut snap, format!("{METADATA_DIR}/{name}"), &entry);
                 }
             }
@@ -201,6 +216,17 @@ pub fn read_snapshot(repo: &Repository, tree: &Tree) -> Result<Snapshot> {
     collect_residual(repo, tree, "", &claimed, &mut snap.residual)?;
 
     Ok(snap)
+}
+
+/// Parse a JSON blob into `snap.json`; a file that isn't JSON merges whole.
+fn parse_json(repo: &Repository, snap: &mut Snapshot, oid: Oid) {
+    let value = repo
+        .find_blob(oid)
+        .ok()
+        .and_then(|blob| serde_json::from_slice(blob.content()).ok());
+    if let Some(value) = value {
+        snap.json.insert(oid, value);
+    }
 }
 
 /// Record a metadata-namespace entry we don't own as residual so it still
