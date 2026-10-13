@@ -298,17 +298,10 @@ fn round(store: &SkillStore, summary: &mut Option<merge::MergeSummary>) -> Outco
         log::debug!("auto backup: exclusion scan failed (continuing): {e:#}");
     }
 
-    let mut committed = false;
-    match git_backup::has_uncommitted_changes(&skills_dir) {
-        Ok(true) => {
-            if let Err(e) = git_backup::commit_all_unlocked(&skills_dir, AUTO_COMMIT_MESSAGE) {
-                return Outcome::Failed(format!("{e:#}"));
-            }
-            committed = true;
-        }
-        Ok(false) => {}
+    let committed = match git_backup::commit_changes_unlocked(&skills_dir, AUTO_COMMIT_MESSAGE) {
+        Ok(committed) => committed,
         Err(e) => return Outcome::Failed(format!("{e:#}")),
-    }
+    };
 
     if status.behind > 0 {
         // SID-108: conflicts never pause the round. A pending skill keeps its
@@ -384,16 +377,10 @@ pub fn commit_on_exit(store: &SkillStore) {
     if let Err(e) = sync_metadata::write_all_from_db_unlocked(store) {
         log::warn!("auto backup on exit: metadata write failed: {e:#}");
     }
-    match git_backup::has_uncommitted_changes(&skills_dir) {
-        Ok(true) => {
-            if let Err(e) = git_backup::commit_all_unlocked(&skills_dir, AUTO_COMMIT_MESSAGE) {
-                log::warn!("auto backup on exit: commit failed: {e:#}");
-            } else {
-                log::info!("auto backup on exit: committed pending changes");
-            }
-        }
+    match git_backup::commit_changes_unlocked(&skills_dir, AUTO_COMMIT_MESSAGE) {
+        Ok(true) => log::info!("auto backup on exit: committed pending changes"),
         Ok(false) => {}
-        Err(e) => log::warn!("auto backup on exit: status check failed: {e:#}"),
+        Err(e) => log::warn!("auto backup on exit: commit failed: {e:#}"),
     }
 }
 
