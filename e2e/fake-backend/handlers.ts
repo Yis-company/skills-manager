@@ -188,6 +188,8 @@ export const handlers = {
   host_sync_leave: () => ({ delete_key_by_hand: null, host_reached: true }),
   remote_host_remove: ({ hostId }: { hostId: string }, state) => {
     state.remoteHosts = state.remoteHosts.filter((host) => host.id !== hostId);
+
+    return null;
   },
   remote_host_connect: ({ hostId }: { hostId: string }, state) => {
     if (state.remoteHostNewer) {
@@ -868,6 +870,8 @@ export const handlers = {
   git_backup_clone: ({ url }: { url: string }, state) => {
     state.gitStatus.is_repo = true;
     state.gitStatus.remote_url = url;
+
+    return null;
   },
   backup_device_name: () => "e2e-machine",
   github_device_flow_start: (_args, state) => state.deviceFlow.start,
