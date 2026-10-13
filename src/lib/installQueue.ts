@@ -169,6 +169,15 @@ export function createInstallQueue(queryClient: QueryClient) {
     void pump();
   };
 
+  const cancel = (key: string) => {
+    const item = items.find((other) => other.key === key && other.status === "running");
+
+    if (!item) return;
+    invokeHost<boolean>(item.hostId, "cancel_install", { key }).catch(() => {
+      // Ignore race: the install may finish before the cancel arrives.
+    });
+  };
+
   return {
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -180,19 +189,26 @@ export function createInstallQueue(queryClient: QueryClient) {
     /** Drops a queued item before it starts. */
     remove: (key: string) =>
       set(items.filter((item) => item.key !== key || item.status !== "queued")),
-    cancel: (key: string) => {
-      const item = items.find((other) => other.key === key && other.status === "running");
+    cancel,
+    /** Installs queued or running. */
+    activeCount: () => items.filter(isActive).length,
+    /** Drops what is queued and cancels what runs; resolves once nothing does. */
+    cancelAll: () => {
+      const running = items.find((item) => item.status === "running");
+      set(items.filter((item) => item.status !== "queued"));
 
-      if (!item) return;
-      invokeHost<boolean>(item.hostId, "cancel_install", { key }).catch(() => {
-        // Ignore race: the install may finish before the cancel arrives.
+      if (running) cancel(running.key);
+
+      return new Promise<void>((resolve) => {
+        const settled = () => {
+          if (items.some(isActive)) return;
+          listeners.delete(settled);
+          resolve();
+        };
+
+        listeners.add(settled);
+        settled();
       });
-    },
-    /** A host switch drops what is still queued for other hosts; a running install finishes. */
-    keepHost: (hostId: null | string) => {
-      if (items.some((item) => item.status === "queued" && item.hostId !== hostId)) {
-        set(items.filter((item) => item.status !== "queued" || item.hostId === hostId));
-      }
     },
   };
 }

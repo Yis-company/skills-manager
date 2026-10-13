@@ -48,9 +48,7 @@ pub fn resolve_conflict_unlocked(
     // Protect the current state: flush the DB projection and commit anything
     // dirty, so the state before the choice stays in the Sync history.
     sync_metadata::write_all_from_db_unlocked(store)?;
-    if git_backup::has_uncommitted_changes(skills_dir)? {
-        git_backup::commit_all_unlocked(skills_dir, "backup")?;
-    }
+    git_backup::commit_changes_unlocked(skills_dir, "backup")?;
 
     let repo = Repository::open(skills_dir).context("failed to open skills repository")?;
     let theirs_commit = pending::ref_target(&repo, &conflict_ref(skill_id)).or_else(|| {

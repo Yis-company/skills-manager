@@ -462,6 +462,26 @@ pub fn commit_all(skills_dir: &Path, message: &str) -> Result<()> {
 }
 
 pub(crate) fn commit_all_unlocked(skills_dir: &Path, message: &str) -> Result<()> {
+    if !stage_and_commit(skills_dir, message)? {
+        log::info!("git commit: working tree clean, nothing to commit");
+        anyhow::bail!("Nothing to commit");
+    }
+    Ok(())
+}
+
+/// Commit anything uncommitted and say whether there was a commit. With
+/// `core.autocrlf` (the Git for Windows default), `git status` reports a file
+/// whose line endings were rewritten as changed even though staging finds
+/// nothing new, so an empty commit here is not an error.
+pub(crate) fn commit_changes_unlocked(skills_dir: &Path, message: &str) -> Result<bool> {
+    if !has_uncommitted_changes(skills_dir)? {
+        return Ok(false);
+    }
+    stage_and_commit(skills_dir, message)
+}
+
+/// Stage everything and commit it. False when staging left nothing to commit.
+fn stage_and_commit(skills_dir: &Path, message: &str) -> Result<bool> {
     crate::core::resource_store::check_library_transactions()?;
     ensure_repo(skills_dir)?;
     crate::core::resource_sync::check_current_writer(&git2::Repository::open(skills_dir)?)?;
@@ -493,10 +513,8 @@ pub(crate) fn commit_all_unlocked(skills_dir: &Path, message: &str) -> Result<()
     crate::core::resource_sync::validate_tree(&repo, &repo.find_tree(tree_id)?)?;
 
     // Check if there's anything to commit
-    let status = run_git(skills_dir, &["status", "--porcelain"])?;
-    if status.is_empty() {
-        log::info!("git commit: working tree clean, nothing to commit");
-        anyhow::bail!("Nothing to commit");
+    if run_git(skills_dir, &["status", "--porcelain"])?.is_empty() {
+        return Ok(false);
     }
 
     run_git_checked(
@@ -504,7 +522,7 @@ pub(crate) fn commit_all_unlocked(skills_dir: &Path, message: &str) -> Result<()
         &["commit", "-m", &protocol::app_commit_message(message)],
     )?;
     log::info!("git commit: committed staged changes");
-    Ok(())
+    Ok(true)
 }
 
 /// Delete `refs/skills-manager/*` copies that a mirror / push-all style
@@ -837,10 +855,7 @@ pub(crate) fn restore_snapshot_version_unlocked(skills_dir: &Path, point: &str) 
     // Safety point first (§3.5): the pre-restore state — including any
     // uncommitted edits — is committed, so it stays in the Sync history and
     // the restore can be undone from there.
-    let status = run_git(skills_dir, &["status", "--porcelain"])?;
-    if !status.is_empty() {
-        commit_all_unlocked(skills_dir, "backup before restore")?;
-    }
+    commit_changes_unlocked(skills_dir, "backup before restore")?;
     let safety_point = run_git(skills_dir, &["rev-parse", "HEAD"])?;
     let target = target.to_string();
 
