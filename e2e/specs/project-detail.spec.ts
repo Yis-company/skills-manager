@@ -73,7 +73,7 @@ test("opens a skill's detail panel with its SKILL.md", async ({ page }) => {
   await expect(page.getByText("Project copy.")).toBeVisible();
 });
 
-test("offers only the update the sync status allows", async ({ page }) => {
+test("offers only the update the project status allows", async ({ page }) => {
   await expect(skillItem(page, "lint-rules")).toContainText("Project only");
   await expect(
     skillItem(page, "lint-rules").getByRole("button", { name: "Update Center" }),
@@ -82,7 +82,7 @@ test("offers only the update the sync status allows", async ({ page }) => {
     skillItem(page, "lint-rules").getByRole("button", { name: "Update Project" }),
   ).toHaveCount(0);
 
-  await expect(skillItem(page, "deploy")).toContainText("Center newer");
+  await expect(skillItem(page, "deploy")).toContainText("Update available");
   await expect(
     skillItem(page, "deploy").getByRole("button", { name: "Update Project" }),
   ).toBeVisible();
@@ -90,31 +90,31 @@ test("offers only the update the sync status allows", async ({ page }) => {
     skillItem(page, "deploy").getByRole("button", { name: "Update Center" }),
   ).toHaveCount(0);
 
-  await expect(skillItem(page, "format")).toContainText("In sync");
+  await expect(skillItem(page, "format")).toContainText("Up to date");
   await expect(skillItem(page, "format").getByRole("button", { name: /^Update/ })).toHaveCount(0);
 });
 
-test("updating the center brings the skill in sync", async ({ page, backend }) => {
+test("updating the center brings the skill up to date", async ({ page, backend }) => {
   await skillItem(page, "lint-rules").getByRole("button", { name: "Update Center" }).click();
 
   await expect(page.getByText('"lint-rules" updated to Skills Center')).toBeVisible();
   expect(await backend.calls("update_project_skill_to_center")).toEqual([
     { projectId: "p1", skillRelativePath: "lint-rules", agent: "claude_code" },
   ]);
-  await expect(skillItem(page, "lint-rules")).toContainText("In sync");
+  await expect(skillItem(page, "lint-rules")).toContainText("Up to date");
   await expect(skillItem(page, "lint-rules").getByRole("button", { name: /^Update/ })).toHaveCount(
     0,
   );
 });
 
-test("updating the project brings the skill in sync", async ({ page, backend }) => {
+test("updating the project brings the skill up to date", async ({ page, backend }) => {
   await skillItem(page, "deploy").getByRole("button", { name: "Update Project" }).click();
 
   await expect(page.getByText('"deploy" updated to project')).toBeVisible();
   expect(await backend.calls("update_project_skill_from_center")).toEqual([
     { projectId: "p1", skillRelativePath: "deploy", agent: "claude_code" },
   ]);
-  await expect(skillItem(page, "deploy")).toContainText("In sync");
+  await expect(skillItem(page, "deploy")).toContainText("Up to date");
   await expect(skillItem(page, "deploy").getByRole("button", { name: /^Update/ })).toHaveCount(0);
 });
 

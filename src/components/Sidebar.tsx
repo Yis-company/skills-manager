@@ -62,14 +62,14 @@ function getSyncHealthIndicator(
 ): { color: string; title: string } | null {
   if (skillCount === 0) return null;
 
-  if (health.diverged > 0) return { color: "bg-red-400", title: `${health.diverged} diverged` };
+  if (health.diverged > 0) return { color: "bg-red-400", title: `${health.diverged} both changed` };
 
   if (health.project_newer > 0 || health.center_newer > 0) {
     const parts: string[] = [];
 
-    if (health.project_newer > 0) parts.push(`${health.project_newer} project newer`);
+    if (health.project_newer > 0) parts.push(`${health.project_newer} edited here`);
 
-    if (health.center_newer > 0) parts.push(`${health.center_newer} center newer`);
+    if (health.center_newer > 0) parts.push(`${health.center_newer} update(s) available`);
 
     return { color: "bg-amber-400", title: parts.join(", ") };
   }
@@ -77,7 +77,7 @@ function getSyncHealthIndicator(
   if (health.project_only > 0)
     return { color: "bg-blue-400", title: `${health.project_only} project only` };
 
-  if (health.in_sync === skillCount) return { color: "bg-emerald-400", title: "All in sync" };
+  if (health.in_sync === skillCount) return { color: "bg-emerald-400", title: "All up to date" };
 
   return null;
 }

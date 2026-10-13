@@ -1,5 +1,5 @@
 import { AlertTriangle, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 interface Props {
@@ -7,6 +7,8 @@ interface Props {
   title?: string;
   message: string;
   details?: string[];
+  /** Extra choices shown under the message, such as a checkbox. */
+  children?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: "danger" | "warning";
@@ -20,6 +22,7 @@ export function ConfirmDialog({
   title,
   message,
   details,
+  children,
   confirmLabel,
   cancelLabel,
   tone = "danger",
@@ -94,6 +97,7 @@ export function ConfirmDialog({
             ))}
           </div>
         ) : null}
+        {children ? <div className="mb-5">{children}</div> : null}
 
         <div className="flex justify-end gap-2">
           <button

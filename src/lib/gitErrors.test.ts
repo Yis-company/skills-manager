@@ -5,6 +5,7 @@ import {
   isAuthFailureMessage,
   isRecoverableSetupError,
   isSyncConflictError,
+  mapGitErrorMessage,
   mapGithubErrorMessage,
 } from "./gitErrors";
 
@@ -23,6 +24,16 @@ describe("isSyncConflictError", () => {
 
   it("ignores other errors", () => {
     expect(isSyncConflictError(new Error("Could not resolve host"))).toBe(false);
+  });
+});
+
+describe("mapGitErrorMessage", () => {
+  it("asks for an update when the remote uses a newer Sync format", () => {
+    const error = new Error("SYNC_UPDATE_REQUIRED: the Sync remote uses format 3");
+
+    expect(mapGitErrorMessage(error, t)).toBe("settings.gitErrorUpdateRequired");
+    expect(isSyncConflictError(error)).toBe(false);
+    expect(isRecoverableSetupError(error)).toBe(false);
   });
 });
 

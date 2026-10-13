@@ -16,6 +16,7 @@ import type {
   RemoteHost,
   ScanResult,
   SkillsShSkill,
+  SyncConflict,
   ToolInfo,
 } from "../../src/lib/tauri";
 
@@ -68,7 +69,16 @@ export interface Seed {
   /** Remote hosts and their isolated fake backend data, keyed by host id. */
   remoteHosts?: RemoteHost[];
   remoteStates?: Record<string, RemoteSeed>;
+  /** The host's CLI is older than the app; connecting installs the app's. */
   remoteCliNeedsUpdate?: boolean;
+  /** The host is newer than the app, so connecting is refused. */
+  remoteHostNewer?: boolean;
+  /** Skills changed on two hosts, as this computer's `sync status` lists them. */
+  syncConflicts?: SyncConflict[];
+  /** Ids of hosts that joined Sync. */
+  hostsInSync?: string[];
+  /** GitHub refuses the host's deploy key until it is pasted by hand. */
+  pasteKeyFirst?: boolean;
   /** Simulate a batch command that writes some rows before returning an error. */
   rejectBatchDeleteAfterPartialWrite?: boolean;
   /** IDs a fulfilled batch delete reports as failed. */
@@ -185,6 +195,10 @@ export function createState({ settings, ...seed }: Seed): State {
     remoteHosts: [],
     remoteStates: {},
     remoteCliNeedsUpdate: false,
+    remoteHostNewer: false,
+    syncConflicts: [],
+    hostsInSync: [],
+    pasteKeyFirst: false,
     rejectBatchDeleteAfterPartialWrite: false,
     deleteFailedIds: [],
     instructionBundles: [],

@@ -320,9 +320,13 @@ pub fn preview(
         let effective_override = if op.kind == "undeploy" {
             None
         } else {
-            op.override_config
-                .clone()
-                .or_else(|| prior.and_then(|p| p.get("overrideConfig").cloned()))
+            // A deployment without an override stores `null`, which is no override.
+            op.override_config.clone().or_else(|| {
+                prior
+                    .and_then(|p| p.get("overrideConfig"))
+                    .filter(|o| !o.is_null())
+                    .cloned()
+            })
         };
         let mut desired = if op.kind == "undeploy" {
             None

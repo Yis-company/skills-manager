@@ -194,6 +194,39 @@ fn remove_recorded_or_warn(path: &Path, recorded_mode: &str) -> bool {
     }
 }
 
+/// Target statuses of a copy edited in its agent folder (SID-99). It is
+/// never overwritten or removed automatically, not even by a switch; the
+/// user picks "Use Sync version" or "Keep my edit". `edited`: Sync changed
+/// the skill. `edited_left`: the skill left this agent.
+pub const STATUS_EDITED: &str = "edited";
+pub const STATUS_EDITED_LEFT: &str = "edited_left";
+
+/// Whether a recorded copy was edited in its agent folder after its deploy.
+/// Links edit the library itself, so they never count.
+pub fn edited_here(target: &SkillTargetRecord) -> bool {
+    target.mode == "copy"
+        && target.synced_at.is_some_and(|deployed_at| {
+            sync_engine::copy_edited_since(Path::new(&target.target_path), deployed_at)
+        })
+}
+
+/// Flag an edited copy with `status` instead of replacing, moving or
+/// removing it. Returns whether the copy was edited (and so left alone).
+pub(crate) fn keep_if_edited(store: &SkillStore, target: &SkillTargetRecord, status: &str) -> bool {
+    if !edited_here(target) {
+        return false;
+    }
+    log::info!("Keeping {}: edited here", target.target_path);
+    if let Err(e) = store.set_target_status(&target.skill_id, &target.tool, status, None) {
+        log::warn!(
+            "Failed to flag edited copy of skill {} for {}: {e}",
+            target.skill_id,
+            target.tool
+        );
+    }
+    true
+}
+
 /// A key identifying the *directory entry* a target path names, used to spot
 /// two rows that claim one object under different spellings.
 ///
@@ -308,6 +341,10 @@ pub fn sync_desired_targets(
                         target_path.display(),
                         desired.tool
                     );
+                } else if keep_if_edited(store, existing, STATUS_EDITED) {
+                    // A move would delete the edit: stay at the old path.
+                    skipped_count += 1;
+                    continue;
                 } else {
                     match sync_engine::remove_recorded_target(&target_path, &existing.mode) {
                         Ok(true) => {}
@@ -358,6 +395,11 @@ pub fn sync_desired_targets(
                         continue;
                     }
                 }
+            }
+            // Same path, out of date: an edited copy is flagged, not replaced.
+            if target_path == desired.target && keep_if_edited(store, existing, STATUS_EDITED) {
+                skipped_count += 1;
+                continue;
             }
         }
 
@@ -532,7 +574,9 @@ pub fn unsync_obsolete_scenario_targets(
         for target in &targets {
             let path = PathBuf::from(&target.target_path);
             let key = (skill_id.clone(), target.tool.clone());
-            if desired_paths.get(&key) == Some(&path) {
+            if desired_paths.get(&key) == Some(&path)
+                || keep_if_edited(store, target, STATUS_EDITED_LEFT)
+            {
                 continue;
             }
 
@@ -557,6 +601,9 @@ pub fn unsync_scenario_skills(store: &SkillStore, scenario_id: &str) -> Result<(
     for skill_id in &skill_ids {
         let targets = store.get_targets_for_skill(skill_id).unwrap_or_default();
         for target in &targets {
+            if keep_if_edited(store, target, STATUS_EDITED_LEFT) {
+                continue;
+            }
             let path = PathBuf::from(&target.target_path);
             remove_recorded_or_warn(&path, &target.mode);
             if let Err(e) = store.delete_target(skill_id, &target.tool) {
@@ -618,6 +665,9 @@ pub fn sync_skill_to_active_scenario(
                 let target = deployment_target(adapter, &target_name, skill_id, &old_targets);
                 let mut recorded_mode: Option<String> = None;
                 if let Some(old) = old_targets.iter().find(|t| t.tool == adapter.key) {
+                    if keep_if_edited(store, old, STATUS_EDITED) {
+                        continue;
+                    }
                     let old_path = PathBuf::from(&old.target_path);
                     if old_path != target {
                         match sync_engine::remove_recorded_target(&old_path, &old.mode) {

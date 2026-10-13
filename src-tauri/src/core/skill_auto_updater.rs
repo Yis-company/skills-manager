@@ -81,9 +81,13 @@ pub fn record_round_completion<R: Runtime>(app: &AppHandle<R>, store: &SkillStor
     }
 }
 
+/// SID-105: this computer's app checks daily until the user picks
+/// otherwise. (An SSH host never runs this updater.)
 fn read_interval(store: &SkillStore) -> Option<Duration> {
-    let raw = store.get_setting(SETTING_INTERVAL).ok().flatten()?;
-    parse_interval(raw.trim())
+    match store.get_setting(SETTING_INTERVAL).ok().flatten() {
+        None => parse_interval("24h"),
+        Some(raw) => parse_interval(raw.trim()),
+    }
 }
 
 fn parse_interval(raw: &str) -> Option<Duration> {
@@ -135,12 +139,12 @@ async fn run_round<R: Runtime>(_app: &AppHandle<R>, store: &Arc<SkillStore>) -> 
     Ok(())
 }
 
-/// Whether the user has opted in to applying updates automatically (vs. only
-/// checking and surfacing the badge).
+/// Whether updates are applied automatically (vs. only checking and
+/// surfacing the badge): on unless the user turned it off (SID-105).
 fn apply_enabled(store: &SkillStore) -> bool {
     matches!(
         store.get_setting(SETTING_APPLY).ok().flatten().as_deref(),
-        Some("on")
+        None | Some("on")
     )
 }
 
@@ -228,6 +232,19 @@ fn run_round_blocking(store: &SkillStore) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_apps_update_daily_unless_turned_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        assert_eq!(read_interval(&store), Some(Duration::from_secs(86_400)));
+        assert!(apply_enabled(&store));
+
+        store.set_setting(SETTING_INTERVAL, "off").unwrap();
+        store.set_setting(SETTING_APPLY, "off").unwrap();
+        assert_eq!(read_interval(&store), None);
+        assert!(!apply_enabled(&store));
+    }
 
     #[test]
     fn parse_interval_known_values() {

@@ -155,6 +155,103 @@ pub fn connect_backup_repo(
     })
 }
 
+// ── Host deploy keys (SID-103, SID-111) ──
+
+/// `owner/name` of a GitHub remote, from its HTTPS or SSH URL.
+pub fn repo_full_name(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("git@github.com:"))
+        .or_else(|| url.strip_prefix("ssh://git@ssh.github.com:443/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
+    let name = rest.trim_end_matches('/').trim_end_matches(".git");
+    let mut parts = name.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(owner), Some(repo), None) if !owner.is_empty() && is_valid_repo_name(repo) => {
+            Some(name.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Register a host's public key as a read/write deploy key of the Sync
+/// repository. Returns the key id, which leaving needs to delete it.
+pub fn create_deploy_key(
+    token: &str,
+    repo_full_name: &str,
+    title: &str,
+    public_key: &str,
+    proxy_url: Option<&str>,
+) -> Result<u64> {
+    #[derive(Deserialize)]
+    struct KeyResp {
+        id: u64,
+    }
+    let client = build_http_client(proxy_url, 20);
+    let resp = request(
+        &client,
+        reqwest::Method::POST,
+        &format!("{API_BASE}/repos/{repo_full_name}/keys"),
+        token,
+    )
+    .json(&serde_json::json!({ "title": title, "key": public_key, "read_only": false }))
+    .send()
+    .context("GITHUB_NETWORK: could not reach api.github.com")?;
+    match resp.status().as_u16() {
+        201 => Ok(resp
+            .json::<KeyResp>()
+            .context("Unexpected deploy-key response")?
+            .id),
+        401 => bail!("GITHUB_TOKEN_INVALID: GitHub rejected the token (401)"),
+        s => bail!("GITHUB_SCOPE: GitHub refused to add the deploy key (HTTP {s})"),
+    }
+}
+
+/// Delete a host's deploy key. A key that is already gone counts as deleted.
+pub fn delete_deploy_key(
+    token: &str,
+    repo_full_name: &str,
+    key_id: u64,
+    proxy_url: Option<&str>,
+) -> Result<()> {
+    let client = build_http_client(proxy_url, 20);
+    let resp = request(
+        &client,
+        reqwest::Method::DELETE,
+        &format!("{API_BASE}/repos/{repo_full_name}/keys/{key_id}"),
+        token,
+    )
+    .send()
+    .context("GITHUB_NETWORK: could not reach api.github.com")?;
+    match resp.status().as_u16() {
+        204 | 404 => Ok(()),
+        401 => bail!("GITHUB_TOKEN_INVALID: GitHub rejected the token (401)"),
+        s => bail!("GITHUB_SCOPE: GitHub refused to delete the deploy key (HTTP {s})"),
+    }
+}
+
+/// GitHub's published SSH host keys (`/meta`), so a host trusts exactly
+/// these instead of the first key it sees.
+pub fn ssh_host_keys(proxy_url: Option<&str>) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Meta {
+        ssh_keys: Vec<String>,
+    }
+    let client = build_http_client(proxy_url, 20);
+    let resp = client
+        .get(format!("{API_BASE}/meta"))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .context("GITHUB_NETWORK: could not reach api.github.com")?;
+    if !resp.status().is_success() {
+        bail!("GitHub /meta returned HTTP {}", resp.status());
+    }
+    Ok(resp
+        .json::<Meta>()
+        .context("Unexpected /meta response")?
+        .ssh_keys)
+}
+
 // ── Device Flow (§3.2) ──
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -246,6 +343,20 @@ pub fn device_flow_poll(device_code: &str, proxy_url: Option<&str>) -> Result<De
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_full_name_reads_https_and_ssh_remotes() {
+        for url in [
+            "https://github.com/acme/skills.git",
+            "https://github.com/acme/skills",
+            "git@github.com:acme/skills.git",
+            "ssh://git@ssh.github.com:443/acme/skills.git",
+        ] {
+            assert_eq!(repo_full_name(url).as_deref(), Some("acme/skills"), "{url}");
+        }
+        assert_eq!(repo_full_name("https://gitlab.com/acme/skills.git"), None);
+        assert_eq!(repo_full_name("https://github.com/acme"), None);
+    }
 
     #[test]
     fn repo_name_validation() {

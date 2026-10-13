@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use chrono::Utc;
 use std::path::Path;
 use std::process::Command;
 
@@ -51,19 +50,18 @@ pub struct GitBackupStatus {
     pub upstream_health: String,
 }
 
+/// One commit in the Sync history (SID-99, SID-109). Any of them can be
+/// restored.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct GitBackupVersion {
-    /// Snapshot tag name (e.g. sm-v-20260318-153012-abc1234)
-    pub tag: String,
-    /// Commit SHA this snapshot points to (short)
+pub struct SyncHistoryEntry {
+    /// Full commit id; restore takes it.
     pub commit: String,
-    /// Commit message at this snapshot
     pub message: String,
     /// Commit timestamp (ISO 8601)
     pub committed_at: String,
-    /// Commit author name — the device name of the machine that made this
-    /// backup (§4.3). Empty for commits from before device naming existed.
-    pub author: String,
+    /// The host that made the commit: its author name (§4.3). Empty for
+    /// commits from before device naming existed.
+    pub host: String,
 }
 
 /// Default device name derived from the machine's hostname (macOS appends
@@ -754,8 +752,8 @@ pub(crate) fn fetch_branch(skills_dir: &Path, branch: &str) -> Result<()> {
 }
 
 /// Line-level merge of the already-fetched remote branch via system git —
-/// used by the `merge_engine=system` escape hatch and as the legacy fallback
-/// of the object engine (merge-engine design §6).
+/// the legacy fallback of the object engine for a remote written only by
+/// pre-protocol clients (merge-engine design §6).
 ///
 /// The merge commit carries the protocol trailer (`app_commit`): without it,
 /// this app's own line merge would read as an old-client double-parent
@@ -782,142 +780,74 @@ pub(crate) fn merge_branch_system(skills_dir: &Path, branch: &str) -> Result<()>
     Ok(())
 }
 
-/// Create an annotated snapshot tag on current HEAD.
-pub fn create_snapshot_tag(skills_dir: &Path) -> Result<String> {
-    let _lock = RepoLock::acquire_foreground("git snapshot")?;
-    create_snapshot_tag_unlocked(skills_dir)
-}
-
-pub(crate) fn create_snapshot_tag_unlocked(skills_dir: &Path) -> Result<String> {
+/// The Sync history, newest first: every commit in this library's history,
+/// with the host that made it. New snapshot tags stopped (SID-109); the git
+/// log is the history.
+pub fn sync_history(skills_dir: &Path, limit: Option<usize>) -> Result<Vec<SyncHistoryEntry>> {
     ensure_repo(skills_dir)?;
-
-    // Reuse an existing snapshot tag on HEAD to avoid duplicate history entries
-    // when a previous sync created a tag but push failed.
-    let existing_on_head = run_git(
-        skills_dir,
-        &[
-            "tag",
-            "--points-at",
-            "HEAD",
-            "--list",
-            "sm-v-*",
-            "--sort=-creatordate",
-        ],
-    )?;
-    if let Some(tag) = existing_on_head
-        .lines()
-        .find(|line| !line.trim().is_empty())
-    {
-        let tag = tag.trim().to_string();
-        log::info!("git snapshot: reusing existing tag {tag} on HEAD");
-        return Ok(tag);
-    }
-
-    let short_sha = run_git(skills_dir, &["rev-parse", "--short", "HEAD"])?;
-    let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
-    let mut tag = format!("sm-v-{}-{}", timestamp, short_sha);
-
-    // Avoid collision when multiple snapshots happen within the same second.
-    if run_git(
-        skills_dir,
-        &["rev-parse", "-q", "--verify", &format!("refs/tags/{tag}")],
-    )
-    .is_ok()
-    {
-        let millis = Utc::now().timestamp_subsec_millis();
-        tag = format!("sm-v-{}-{:03}-{}", timestamp, millis, short_sha);
-    }
-
-    // Use lightweight tag to avoid requiring git user.name/user.email on client machines.
-    run_git_checked(skills_dir, &["tag", &tag])?;
-    log::info!("git snapshot: created tag {tag}");
-    Ok(tag)
-}
-
-/// List snapshot versions, newest first.
-pub fn list_snapshot_versions(
-    skills_dir: &Path,
-    limit: Option<usize>,
-) -> Result<Vec<GitBackupVersion>> {
-    ensure_repo(skills_dir)?;
-    let tags = run_git(
-        skills_dir,
-        &["tag", "--list", "sm-v-*", "--sort=-creatordate"],
-    )?;
-    if tags.trim().is_empty() {
+    let max = limit.unwrap_or(50).to_string();
+    // An unborn branch has no history yet.
+    if run_git(skills_dir, &["rev-parse", "--verify", "-q", "HEAD"]).is_err() {
         return Ok(Vec::new());
     }
-
-    let max = limit.unwrap_or(30);
-    let mut versions = Vec::new();
-    for tag in tags.lines().take(max) {
-        let commit = run_git(skills_dir, &["rev-list", "-n", "1", tag]).unwrap_or_default();
-        let short_commit = if commit.len() > 8 {
-            commit[..8].to_string()
-        } else {
-            commit.clone()
-        };
-        // Author, date and message in one call; message last because it is
-        // the only field that could contain the separator.
-        let line = run_git(skills_dir, &["log", "-1", "--format=%an%x1f%cI%x1f%s", tag])
-            .unwrap_or_default();
-        let mut parts = line.splitn(3, '\u{1f}');
-        let author = parts.next().unwrap_or_default().to_string();
-        let committed_at = parts.next().unwrap_or_default().to_string();
-        let message = parts.next().unwrap_or_default().to_string();
-
-        versions.push(GitBackupVersion {
-            tag: tag.to_string(),
-            commit: short_commit,
-            message,
-            committed_at,
-            author,
-        });
-    }
-
-    Ok(versions)
+    let log = run_git(
+        skills_dir,
+        &["log", "-n", &max, "--format=%H%x1f%an%x1f%cI%x1f%s"],
+    )?;
+    Ok(log
+        .lines()
+        .filter_map(|line| {
+            // Message last: it is the only field that could hold the separator.
+            let mut parts = line.splitn(4, '\u{1f}');
+            Some(SyncHistoryEntry {
+                commit: parts.next()?.to_string(),
+                host: parts.next()?.to_string(),
+                committed_at: parts.next()?.to_string(),
+                message: parts.next().unwrap_or_default().to_string(),
+            })
+        })
+        .collect())
 }
 
-/// Restore skills files to a snapshot tag by creating a new restore commit.
-/// Returns the safety-point tag capturing the pre-restore state.
+/// Restore the library to a point in its history by creating a new restore
+/// commit. `point` is a commit from the Sync history or a legacy `sm-v-*`
+/// snapshot tag.
 #[allow(dead_code)]
-pub fn restore_snapshot_version(skills_dir: &Path, tag: &str) -> Result<String> {
+pub fn restore_snapshot_version(skills_dir: &Path, point: &str) -> Result<()> {
     let _lock = RepoLock::acquire_foreground("git restore snapshot")?;
-    restore_snapshot_version_unlocked(skills_dir, tag)
+    restore_snapshot_version_unlocked(skills_dir, point)
 }
 
-pub(crate) fn restore_snapshot_version_unlocked(skills_dir: &Path, tag: &str) -> Result<String> {
+pub(crate) fn restore_snapshot_version_unlocked(skills_dir: &Path, point: &str) -> Result<()> {
     crate::core::resource_store::check_library_transactions()?;
     ensure_repo(skills_dir)?;
 
-    if !tag.starts_with("sm-v-") {
-        anyhow::bail!("Invalid snapshot tag");
-    }
-    run_git_checked(
-        skills_dir,
-        &["rev-parse", "-q", "--verify", &format!("refs/tags/{tag}")],
-    )?;
-
-    log::info!("git restore: switching skills library to {tag}");
     let repo = git2::Repository::open(skills_dir)?;
-    let snapshot = repo
-        .revparse_single(&format!("refs/tags/{tag}"))?
-        .peel_to_tree()?;
+    let target = restore_point(&repo, point)?;
+    // The commit message names the point; a commit by its short id.
+    let label = if point.starts_with("sm-v-") {
+        point.to_string()
+    } else {
+        target.to_string()[..7].to_string()
+    };
+    log::info!("git restore: switching skills library to {label}");
+    let snapshot = repo.find_commit(target)?.tree()?;
     crate::core::resource_sync::validate_tree(&repo, &snapshot)?;
 
     // Safety point first (§3.5): the pre-restore state — including any
-    // uncommitted edits — becomes a user-visible snapshot the user can return
-    // to from the backup history. This is what makes restore always undoable.
+    // uncommitted edits — is committed, so it stays in the Sync history and
+    // the restore can be undone from there.
     let status = run_git(skills_dir, &["status", "--porcelain"])?;
     if !status.is_empty() {
         commit_all_unlocked(skills_dir, "backup before restore")?;
     }
-    let safety_tag = create_snapshot_tag_unlocked(skills_dir)?;
+    let safety_point = run_git(skills_dir, &["rev-parse", "HEAD"])?;
+    let target = target.to_string();
 
     let restore_result: Result<()> = (|| {
         // Align working tree + index to snapshot tree exactly (including deletions),
         // then commit as a forward change.
-        run_git_checked(skills_dir, &["read-tree", "--reset", "-u", tag])?;
+        run_git_checked(skills_dir, &["read-tree", "--reset", "-u", &target])?;
 
         // Sticky protocol marker (§6): a pre-protocol snapshot self-heals on
         // the restore commit instead of resurrecting a marker-less tree.
@@ -938,8 +868,7 @@ pub(crate) fn restore_snapshot_version_unlocked(skills_dir: &Path, tag: &str) ->
                     "commit",
                     "-m",
                     &protocol::app_commit_message(&format!(
-                        "restore: switch skills library to {}",
-                        tag
+                        "restore: switch skills library to {label}"
                     )),
                 ],
             )?;
@@ -949,128 +878,14 @@ pub(crate) fn restore_snapshot_version_unlocked(skills_dir: &Path, tag: &str) ->
 
     match restore_result {
         Ok(()) => {
-            log::info!("git restore: completed restore to {tag} (safety point {safety_tag})");
-            Ok(safety_tag)
+            log::info!("git restore: completed restore to {label} (safety point {safety_point})");
+            Ok(())
         }
         Err(err) => {
             // Best-effort rollback to the safety point (pre-restore HEAD).
-            let _ = run_git_checked(skills_dir, &["read-tree", "--reset", "-u", &safety_tag]);
+            let _ = run_git_checked(skills_dir, &["read-tree", "--reset", "-u", &safety_point]);
             Err(err)
                 .context("Restore failed after mutating working tree; attempted automatic rollback")
-        }
-    }
-}
-
-/// Clone a remote repository into the skills directory.
-/// The skills directory must be empty or non-existent.
-#[allow(dead_code)]
-pub fn clone_into(skills_dir: &Path, url: &str) -> Result<()> {
-    let _lock = RepoLock::acquire_foreground("git clone")?;
-    clone_into_unlocked(skills_dir, url)
-}
-
-/// Clone variant that refuses to merge a populated non-git directory into the
-/// cloned repo. Used by agent-facing entry points (e.g. CLI `--skills-root`)
-/// where an accidental pointing at an unrelated populated directory would
-/// otherwise silently absorb its contents.
-///
-/// The check runs inside the same `RepoLock` as the clone, so any other
-/// skills-manager process attempting to populate the target between check
-/// and clone is serialized.
-pub fn clone_into_strict(skills_dir: &Path, url: &str) -> Result<()> {
-    let _lock = RepoLock::acquire_foreground("git clone")?;
-    ensure_clean_clone_target(skills_dir)?;
-    clone_into_unlocked(skills_dir, url)
-}
-
-/// Refuse a clone target that is a file, or a non-empty directory that is not
-/// already a git repo. An empty or non-existent target is fine, and an
-/// existing `.git` is left to `clone_into_unlocked` to reject with its own
-/// message. Pure logic — no locking — so callers must hold their own lock if
-/// they need atomicity with a subsequent operation.
-fn ensure_clean_clone_target(skills_dir: &Path) -> Result<()> {
-    if !skills_dir.exists() {
-        return Ok(());
-    }
-    if skills_dir.join(".git").exists() {
-        return Ok(());
-    }
-    if skills_dir.is_file() {
-        anyhow::bail!(
-            "refusing to clone into {}: path exists and is a file, not a directory",
-            skills_dir.display()
-        );
-    }
-    let mut entries = std::fs::read_dir(skills_dir)
-        .with_context(|| format!("Failed to read clone target {}", skills_dir.display()))?;
-    if entries.next().is_some() {
-        anyhow::bail!(
-            "refusing to clone into {}: directory is non-empty and not a git repo. \
-             Files in the target would be silently merged into the cloned repo. \
-             Point the target at an empty or non-existent directory.",
-            skills_dir.display()
-        );
-    }
-    Ok(())
-}
-
-/// Reset a local repo by clearing its `.git` then cloning from the remote.
-/// The existing skill files are preserved through the same backup-then-merge flow
-/// used by `clone_into_unlocked`. The previous `.git` is moved to a sibling
-/// directory and only deleted after a successful clone, so a failed re-clone
-/// (e.g., network/auth error) restores the original repository state instead
-/// of permanently losing history, snapshots, and remotes.
-pub(crate) fn reclone_from_remote_unlocked(skills_dir: &Path, url: &str) -> Result<()> {
-    let git_dir = skills_dir.join(".git");
-    if !git_dir.exists() {
-        return clone_into_unlocked(skills_dir, url);
-    }
-
-    log::info!("git reclone: re-cloning from remote, preserving local skills");
-    let ts = Utc::now().format("%Y%m%d-%H%M%S");
-    let git_backup = skills_dir.with_file_name(format!("skills-git-recovery-{ts}"));
-    if git_backup.exists() {
-        std::fs::remove_dir_all(&git_backup)?;
-    }
-    std::fs::rename(&git_dir, &git_backup)
-        .context("Failed to move existing .git aside before re-clone")?;
-
-    match clone_into_unlocked(skills_dir, url) {
-        Ok(()) => {
-            let _ = std::fs::remove_dir_all(&git_backup);
-            Ok(())
-        }
-        Err(e) => {
-            // Two failure shapes are possible inside clone_into_unlocked:
-            //   1. `git clone` itself failed: clone_into_unlocked already
-            //      restored skill files from skills-backup-before-clone, and
-            //      no `.git` exists in skills_dir.
-            //   2. `git clone` succeeded but the subsequent merge_backup
-            //      step failed: skills_dir now contains a fresh `.git` plus
-            //      partially-merged files, and the user's original files are
-            //      still parked at skills-backup-before-clone.
-            // In case 2 we must tear down the partial clone and restore the
-            // pre-clone user files before renaming our saved .git back, or
-            // the rename collides with the new .git and silently leaves the
-            // user inside the wrong repository.
-            let new_git_dir = skills_dir.join(".git");
-            if new_git_dir.exists() {
-                let pre_clone_backup = skills_dir.with_file_name("skills-backup-before-clone");
-                let _ = std::fs::remove_dir_all(skills_dir);
-                if pre_clone_backup.exists() {
-                    let _ = std::fs::rename(&pre_clone_backup, skills_dir);
-                }
-            }
-            if !skills_dir.exists() {
-                let _ = std::fs::create_dir_all(skills_dir);
-            }
-            if let Err(restore_err) = std::fs::rename(&git_backup, skills_dir.join(".git")) {
-                anyhow::bail!(
-                    "Re-clone failed: {e}. Could not restore previous .git directory ({restore_err}); a backup is kept at {}",
-                    git_backup.display()
-                );
-            }
-            Err(e)
         }
     }
 }
@@ -1729,6 +1544,27 @@ fn redact_url(url: &str) -> String {
     }
 }
 
+/// The commit a restore point names: a legacy `sm-v-*` tag, or a commit id
+/// (full or abbreviated) in the current history. Anything else is refused,
+/// so a restore can't reach outside the library's own history.
+fn restore_point(repo: &git2::Repository, point: &str) -> Result<git2::Oid> {
+    let commit = if point.starts_with("sm-v-") {
+        repo.revparse_single(&format!("refs/tags/{point}"))
+    } else if point.len() >= 4 && point.chars().all(|c| c.is_ascii_hexdigit()) {
+        repo.revparse_single(point)
+    } else {
+        anyhow::bail!("Invalid restore point");
+    }
+    .and_then(|object| object.peel_to_commit())
+    .context("Unknown restore point")?
+    .id();
+    let head = repo.head()?.peel_to_commit()?.id();
+    if commit != head && !repo.graph_descendant_of(head, commit)? {
+        anyhow::bail!("Restore point is not in this library's history");
+    }
+    Ok(commit)
+}
+
 fn parse_restored_from_tag_message(message: &str) -> Option<String> {
     let prefix = "restore: switch skills library to ";
     let tag = message.strip_prefix(prefix)?.trim();
@@ -1936,13 +1772,15 @@ mod tests {
             "公司 Windows"
         );
 
-        // And the snapshot history exposes the author per entry.
-        let tag = create_snapshot_tag_unlocked(dir).unwrap();
-        let versions = list_snapshot_versions(dir, None).unwrap();
-        let entry = versions.iter().find(|v| v.tag == tag).unwrap();
-        assert_eq!(entry.author, "公司 Windows");
-        assert_eq!(entry.message, "backup");
-        assert!(!entry.committed_at.is_empty());
+        // And the Sync history names the host per entry, newest first.
+        let history = sync_history(dir, None).unwrap();
+        assert_eq!(history[0].host, "公司 Windows");
+        assert_eq!(history[0].message, "backup");
+        assert_eq!(
+            history[0].commit,
+            run_git(dir, &["rev-parse", "HEAD"]).unwrap()
+        );
+        assert!(!history[0].committed_at.is_empty());
     }
 
     #[test]
@@ -2072,9 +1910,8 @@ mod tests {
         )
         .unwrap();
 
-        // A pre-protocol snapshot: simulate by committing a tree with the
-        // marker removed, tagging it, then restoring it.
-        let snapshot_tag = create_snapshot_tag_unlocked(dir).unwrap();
+        // Restore the init commit later.
+        let init_commit = run_git(dir, &["rev-parse", "HEAD"]).unwrap();
         std::fs::write(dir.join("note.md"), "x").unwrap();
         commit_all_unlocked(dir, "backup").unwrap();
         let body = run_git(dir, &["log", "-1", "--format=%B"]).unwrap();
@@ -2082,8 +1919,7 @@ mod tests {
 
         // Restore an old snapshot (which does carry protocol.json since init
         // wrote it) — restore commit must carry the trailer too.
-        let safety = restore_snapshot_version_unlocked(dir, &snapshot_tag).unwrap();
-        assert!(safety.starts_with("sm-v-"));
+        restore_snapshot_version_unlocked(dir, &init_commit).unwrap();
         let body = run_git(dir, &["log", "-1", "--format=%B"]).unwrap();
         assert!(protocol::has_protocol_trailer(&body), "restore: {body}");
         run_git(
@@ -2123,7 +1959,9 @@ mod tests {
         std::fs::write(dir.join("skill-a/SKILL.md"), "v1").unwrap();
         git(&["add", "-A"]);
         git(&["commit", "-m", "pre-protocol"]);
-        let old_tag = create_snapshot_tag_unlocked(dir).unwrap();
+        // Snapshot tags from before Sync still restore.
+        let old_tag = "sm-v-20260101-000000-abc1234";
+        git(&["tag", old_tag]);
 
         // A protocol-era commit follows.
         std::fs::write(dir.join("skill-a/SKILL.md"), "v2").unwrap();
@@ -2136,7 +1974,7 @@ mod tests {
 
         // Restoring the pre-protocol snapshot must not resurrect a
         // marker-less tree: the restore commit re-adds protocol.json (sticky).
-        restore_snapshot_version_unlocked(dir, &old_tag).unwrap();
+        restore_snapshot_version_unlocked(dir, old_tag).unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.join("skill-a/SKILL.md")).unwrap(),
             "v1"
@@ -2286,7 +2124,6 @@ mod tests {
         std::fs::write(work.join("skill-a/SKILL.md"), "content").unwrap();
         commit_all_unlocked(&work, "backup").unwrap();
         set_remote_unlocked(&work, remote.to_str().unwrap()).unwrap();
-        let tag = create_snapshot_tag_unlocked(&work).unwrap();
         push_unlocked(&work).unwrap();
 
         // Simulated restart: a fresh fetch + status read (what the app does
@@ -2298,7 +2135,6 @@ mod tests {
         assert!(!status.has_changes, "no pending changes after clean sync");
         assert_eq!(status.changed_skill_count, 0);
         assert_eq!((status.ahead, status.behind), (0, 0));
-        assert_eq!(status.current_snapshot_tag.as_deref(), Some(tag.as_str()));
     }
 
     // ── restore safety point ──
@@ -2357,7 +2193,7 @@ mod tests {
         std::fs::write(dir.join("skill-a/SKILL.md"), "v1").unwrap();
         git(&["add", "-A"]);
         git(&["commit", "-m", "v1"]);
-        let old_tag = create_snapshot_tag_unlocked(dir).unwrap();
+        let v1 = run_git(dir, &["rev-parse", "HEAD"]).unwrap();
 
         std::fs::write(dir.join("skill-a/SKILL.md"), "v2").unwrap();
         git(&["add", "-A"]);
@@ -2365,67 +2201,48 @@ mod tests {
         // Uncommitted edit on top — must survive inside the safety point.
         std::fs::write(dir.join("skill-a/SKILL.md"), "v3-dirty").unwrap();
 
-        let safety_tag = restore_snapshot_version_unlocked(dir, &old_tag).unwrap();
+        // An abbreviated id from the history works too.
+        restore_snapshot_version_unlocked(dir, &v1[..8]).unwrap();
 
         // Working tree is back at v1.
         assert_eq!(
             std::fs::read_to_string(dir.join("skill-a/SKILL.md")).unwrap(),
             "v1"
         );
-        // The safety point is a persistent user-visible snapshot of the
-        // pre-restore state, including the dirty edit.
-        assert!(safety_tag.starts_with("sm-v-"));
-        let captured = run_git(dir, &["show", &format!("{safety_tag}:skill-a/SKILL.md")]).unwrap();
+        // The pre-restore state, dirty edit included, is the commit before
+        // the restore: in the Sync history for one-click undo, with no tag.
+        let history = sync_history(dir, None).unwrap();
+        assert!(history[0]
+            .message
+            .starts_with("restore: switch skills library to "));
+        assert_eq!(history[1].message, "backup before restore");
+        let captured = run_git(
+            dir,
+            &["show", &format!("{}:skill-a/SKILL.md", history[1].commit)],
+        )
+        .unwrap();
         assert_eq!(captured, "v3-dirty");
-        // And it shows up in the snapshot history for one-click undo.
-        let versions = list_snapshot_versions(dir, None).unwrap();
-        assert!(versions.iter().any(|v| v.tag == safety_tag));
-    }
-
-    // ── ensure_clean_clone_target ──
-    // Tested directly (without RepoLock) so cases run in parallel without
-    // serializing on the process-wide clone lock.
-
-    #[test]
-    fn ensure_clean_clone_target_allows_nonexistent_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("not-yet");
-        ensure_clean_clone_target(&target).unwrap();
+        assert_eq!(run_git(dir, &["tag", "--list", "sm-v-*"]).unwrap(), "");
     }
 
     #[test]
-    fn ensure_clean_clone_target_allows_empty_directory() {
+    fn restore_refuses_points_outside_the_library_history() {
         let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("empty");
-        std::fs::create_dir_all(&target).unwrap();
-        ensure_clean_clone_target(&target).unwrap();
-    }
+        let dir = tmp.path();
+        init_repo_unlocked(dir, "Device A").unwrap();
+        run_git_checked(dir, &["checkout", "-b", "side"]).unwrap();
+        std::fs::write(dir.join("side.md"), "x").unwrap();
+        commit_all_unlocked(dir, "side").unwrap();
+        let side = run_git(dir, &["rev-parse", "HEAD"]).unwrap();
+        run_git_checked(dir, &["checkout", "main"]).unwrap();
 
-    #[test]
-    fn ensure_clean_clone_target_allows_existing_git_repo() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("existing-repo");
-        std::fs::create_dir_all(target.join(".git")).unwrap();
-        std::fs::write(target.join("README"), b"x").unwrap();
-        // Existing .git is delegated to clone_into_unlocked's own rejection.
-        ensure_clean_clone_target(&target).unwrap();
-    }
-
-    #[test]
-    fn ensure_clean_clone_target_refuses_non_empty_non_git() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("populated");
-        std::fs::create_dir_all(&target).unwrap();
-        std::fs::write(target.join("user-file.txt"), b"important").unwrap();
-
-        let err = ensure_clean_clone_target(&target).unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("non-empty") && msg.contains("not a git repo"),
-            "unexpected message: {msg}"
-        );
-        // Crucial: the user file must still be there.
-        assert!(target.join("user-file.txt").exists());
+        for point in [side.as_str(), "HEAD~1", "main", "sm-v-missing", "deadbeef"] {
+            assert!(
+                restore_snapshot_version_unlocked(dir, point).is_err(),
+                "{point} must be refused"
+            );
+        }
+        assert!(!dir.join("side.md").exists());
     }
 
     // ── first push to an empty remote (the no_upstream scenario) ──
@@ -2685,19 +2502,5 @@ mod tests {
         );
         // And a follow-up sync is no longer blocked by an interrupted operation.
         ensure_no_interrupted_git_operation(&b).unwrap();
-    }
-
-    #[test]
-    fn ensure_clean_clone_target_refuses_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("a-file");
-        std::fs::write(&target, b"x").unwrap();
-
-        let err = ensure_clean_clone_target(&target).unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("file, not a directory"),
-            "unexpected message: {msg}"
-        );
     }
 }

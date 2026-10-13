@@ -7,13 +7,13 @@ import { Layout } from "./components/Layout";
 import { RemotePickerHost } from "./components/RemoteDirectoryPicker";
 import { AppProvider } from "./context/AppContext";
 import { InstallQueueProvider } from "./context/InstallQueueContext";
-import { Backup } from "./views/Backup";
 import { Dashboard } from "./views/Dashboard";
 import { parseInstallSearch } from "./views/installSearch";
 import { InstallSkills } from "./views/InstallSkills";
 import { MySkills } from "./views/MySkills";
 import { ProjectDetail } from "./views/ProjectDetail";
 import { Settings } from "./views/Settings";
+import { Sync } from "./views/Sync";
 import { CODING_WORKSPACE_CONFIG, LOBSTER_WORKSPACE_CONFIG } from "./views/workspaceConfigs";
 import { WorkspaceView } from "./views/WorkspaceView";
 
@@ -79,7 +79,7 @@ const installRoute = createRoute({
 const backupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/backup",
-  component: Backup,
+  component: Sync,
 });
 
 const projectRoute = createRoute({

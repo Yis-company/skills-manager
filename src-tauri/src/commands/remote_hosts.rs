@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tauri::{Emitter, State};
 
 use crate::core::error::AppError;
+use crate::core::host_sync;
 use crate::core::remote_host;
 use crate::core::remote_install;
 use crate::core::remote_session::{HostSessionInfo, RemoteSession, RemoteSessions};
@@ -45,12 +46,32 @@ fn validated_fields(
     ))
 }
 
+/// A saved host as the Hosts list shows it.
+#[derive(Serialize)]
+pub struct RemoteHostListItem {
+    #[serde(flatten)]
+    host: RemoteHostRecord,
+    /// The CLI this app installed there is behind; the next start or connect
+    /// installs this version.
+    update_pending: bool,
+}
+
 #[tauri::command]
 pub async fn remote_hosts_list(
     store: State<'_, Arc<SkillStore>>,
-) -> Result<Vec<RemoteHostRecord>, AppError> {
+) -> Result<Vec<RemoteHostListItem>, AppError> {
     let store = store.inner().clone();
-    tokio::task::spawn_blocking(move || store.get_all_remote_hosts().map_err(AppError::db)).await?
+    tokio::task::spawn_blocking(move || {
+        let hosts = store.get_all_remote_hosts().map_err(AppError::db)?;
+        Ok(hosts
+            .into_iter()
+            .map(|host| RemoteHostListItem {
+                update_pending: remote_install::update_pending(&host),
+                host,
+            })
+            .collect())
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -104,6 +125,77 @@ pub async fn remote_host_remove(
     let store = store.inner().clone();
     tokio::task::spawn_blocking(move || store.delete_remote_host(&host_id).map_err(AppError::db))
         .await?
+}
+
+/// Give a host its own access to Sync: its deploy key (registered with
+/// GitHub, or returned to paste), GitHub's host keys and port 22 or 443.
+#[tauri::command]
+pub async fn host_sync_prepare(
+    host_id: String,
+    pasted: bool,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<host_sync::Prepared, AppError> {
+    host_sync::prepare(store.inner(), &host_id, pasted).await
+}
+
+/// The host's review list before it joins Sync.
+#[tauri::command]
+pub async fn host_sync_preview(
+    host_id: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Value, AppError> {
+    host_sync::preview(store.inner(), &host_id).await
+}
+
+#[tauri::command]
+pub async fn host_sync_join(
+    host_id: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Value, AppError> {
+    host_sync::join(store.inner(), &host_id).await
+}
+
+/// Take a host out of Sync: its deploy key goes at once, its timer the
+/// next time it answers. Its library and agents stay.
+#[tauri::command]
+pub async fn host_sync_leave(
+    host_id: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<host_sync::Left, AppError> {
+    host_sync::leave(store.inner(), &host_id).await
+}
+
+/// Run a Sync screen command on a host, over a session of its own.
+#[tauri::command]
+pub async fn host_sync_call(
+    host_id: String,
+    command: String,
+    args: Value,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Value, AppError> {
+    host_sync::call_screen(store.inner(), &host_id, &command, args).await
+}
+
+/// Run a Sync screen command on this computer, through the same dispatcher
+/// a host answers with.
+#[tauri::command]
+pub async fn sync_screen_call(
+    command: String,
+    args: Value,
+    ctx: State<'_, crate::core::host::HostCtx>,
+) -> Result<Value, AppError> {
+    host_sync::check_screen_command(&command)?;
+    let ctx = ctx.inner().clone();
+    tokio::task::spawn_blocking(move || crate::core::host_dispatch::dispatch(&ctx, &command, &args))
+        .await?
+}
+
+/// The Sync status of every host in Sync, one call each.
+#[tauri::command]
+pub async fn host_sync_status_all(
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Vec<host_sync::HostSyncState>, AppError> {
+    host_sync::status_all(store.inner()).await
 }
 
 /// Connect, read the host's hello and close again. A failure is the reason

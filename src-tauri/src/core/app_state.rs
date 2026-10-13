@@ -5,8 +5,8 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 
 use super::{
-    central_repo, scenario_service, skill_metadata, skill_store::SkillStore, sync_engine,
-    sync_metadata, tool_adapters, tool_service,
+    central_repo, scenario_service, skill_metadata, skill_store::SkillStore, sync_apply,
+    sync_engine, sync_metadata, tool_adapters, tool_service,
 };
 
 /// Per-stage timings collected during `initialize_store`. The struct is
@@ -174,6 +174,9 @@ fn initialize_store_inner(
 
     timings.skill_count = store.get_all_skills().map(|s| s.len()).unwrap_or(0);
 
+    // The app applies the active preset again after the startup reindex
+    // (SID-99); the CLI does so on `git pull` only, so reads stay read-only.
+    let before = apply_startup_default.then(|| sync_apply::capture(&store));
     if sync_metadata::metadata_exists() {
         let step = Instant::now();
         reindex_or_rebuild_metadata(&store)?;
@@ -198,6 +201,9 @@ fn initialize_store_inner(
         scenario_service::ensure_default_startup_scenario(&store)
             .map_err(|e| anyhow::anyhow!(e.to_string()))
             .context("Failed to initialize startup scenario")?;
+        if let Some(before) = &before {
+            sync_apply::reapply_active_preset(&store, before);
+        }
         timings.apply_scenario_kind = "default_startup";
     } else {
         scenario_service::ensure_cli_scenario_state(&store)

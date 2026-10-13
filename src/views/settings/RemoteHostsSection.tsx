@@ -1,4 +1,3 @@
-import { confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
 import {
   Check,
   Loader2,
@@ -11,10 +10,11 @@ import {
   Unplug,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { RemoveHostDialog } from "../../components/RemoveHostDialog";
 import { useApp } from "../../context/AppContext";
 import { getErrorMessage } from "../../lib/error";
 import * as api from "../../lib/tauri";
@@ -81,20 +81,34 @@ export function RemoteHostsSection() {
     }
   };
 
-  const handleRemove = async (host: api.RemoteHost) => {
-    const confirmed = await dialogConfirm(t("remoteHosts.removeConfirm", { name: host.name }));
+  // SID-108: each host in Sync reports its state when this screen opens.
+  const [syncStates, setSyncStates] = useState<Record<string, api.HostSyncState>>({});
 
-    if (!confirmed) return;
+  useEffect(() => {
+    api
+      .hostSyncStatusAll()
+      .then((hosts) => setSyncStates(Object.fromEntries(hosts.map((h) => [h.host_id, h]))))
+      .catch(() => setSyncStates({}));
+  }, []);
 
-    try {
-      if (activeHost?.id === host.id && !(await switchHost(null))) return;
-      await api.remoteHostRemove(host.id);
-      await refreshRemoteHosts();
-      toast.success(t("remoteHosts.removed"));
-    } catch (e) {
-      toast.error(getErrorMessage(e, t("common.error")));
-    }
+  const renderSyncState = (state: api.HostSyncState | undefined) => {
+    if (!state) return null;
+    const key = state.error ? "offline" : (state.status?.state ?? "offline");
+    const problem = state.error ?? api.hostSyncProblem(state.status);
+
+    return (
+      <span
+        className={
+          problem ? "text-[11px] text-amber-600 dark:text-amber-300" : "text-[11px] text-muted"
+        }
+        title={problem ?? undefined}
+      >
+        {t("remoteHosts.syncState", { state: t(`remoteHosts.syncStates.${key}`) })}
+      </span>
+    );
   };
+
+  const [removing, setRemoving] = useState<api.RemoteHost | null>(null);
 
   const handleProbe = async (host: api.RemoteHost) => {
     setProbes((prev) => ({ ...prev, [host.id]: { state: "checking" } }));
@@ -250,6 +264,14 @@ export function RemoteHostsSection() {
                   <span className="truncate font-mono text-[12px] text-muted">
                     {host.ssh_target}
                   </span>
+                  {host.update_pending && (
+                    <span
+                      title={t("remoteHosts.updatePendingHint")}
+                      className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+                    >
+                      {t("remoteHosts.updatePending")}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-0.5 flex min-h-[16px] items-center gap-2">
                   {host.cli_path && (
@@ -258,6 +280,7 @@ export function RemoteHostsSection() {
                     </span>
                   )}
                   {renderProbe(probes[host.id])}
+                  {renderSyncState(syncStates[host.id])}
                 </div>
               </div>
               {activeHost?.id === host.id ? (
@@ -312,7 +335,7 @@ export function RemoteHostsSection() {
                 <Pencil className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={() => handleRemove(host)}
+                onClick={() => setRemoving(host)}
                 disabled={updatingRemoteCliHostId !== null}
                 className="shrink-0 p-1 text-muted outline-none hover:text-red-400"
                 title={t("remoteHosts.remove")}
@@ -323,6 +346,7 @@ export function RemoteHostsSection() {
           ))
         )}
       </div>
+      <RemoveHostDialog host={removing} onClose={() => setRemoving(null)} />
     </section>
   );
 }
