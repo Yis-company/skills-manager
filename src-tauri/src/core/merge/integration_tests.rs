@@ -1586,5 +1586,6 @@ fn presets_merge_per_field_and_same_names_wait_for_review() {
         [("docs-b".to_string(), "docs-a".to_string())].into()
     );
     sync_metadata::write_all_from_db_unlocked(&b.store).unwrap();
-    assert!(!git_backup::has_uncommitted_changes(&b.skills).unwrap());
+    // Staging decides: `git status` can flag a CRLF checkout rewritten as LF.
+    assert!(!git_backup::commit_changes_unlocked(&b.skills, "rewrite").unwrap());
 }
