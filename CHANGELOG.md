@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.46.0
+
+### Minor Changes
+
+- [#71](https://github.com/Yis-company/skills-manager/pull/71) [`7afee90`](https://github.com/Yis-company/skills-manager/commit/7afee907fdfa0e9fd8a420d147f626c4e83b0f83) Thanks [@ybtam](https://github.com/ybtam)! - Install the generic, Claude or Codex copy of a skill instead of an arbitrary provider
+  variant such as Kiro. Queue several Market installs without blocking the tab or
+  losing them on navigation. The skill detail opens as a right-side drawer that
+  closes with Escape, a labelled Close button or a click outside, and lets you add
+  the skill to any preset.
+
+- Integrate upstream 1.40.2 and 1.40.3: startup rebuilds empty sync metadata from an
+  intact database, git backups avoid the reftable format, the CLI bridge retries a
+  brief Windows sharing violation, and the update check ignores installed
+  dependencies. Presets gain an editable description shown on hover, the CLI gains
+  `agents add-custom`, and the UI fixes dark-theme diffs, overflowed agent toggles,
+  and Windows path separators.
+
+### Patch Changes
+
+- [#68](https://github.com/Yis-company/skills-manager/pull/68) [`40a068f`](https://github.com/Yis-company/skills-manager/commit/40a068f60402e85ab045fd445747c9fab5982be2) Thanks [@ybtam](https://github.com/ybtam)! - Stop retrying a failed local skill scan in a loop, and open Install Skills directly on the tab in its link.
+
 ## 1.45.0
 
 ### Minor Changes
