@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.48.0
+
+### Minor Changes
+
+- [#86](https://github.com/Yis-company/skills-manager/pull/86) [`8353be3`](https://github.com/Yis-company/skills-manager/commit/8353be3c0258318ad4f9cb367386bc834ea93201) Thanks [@ybtam](https://github.com/ybtam)! - Presets and their per-agent toggles merge field by field (release 2). A rename
+  on one host and an icon change on another both survive. When two hosts change
+  the same field, the newer change wins and the Sync history names what it
+  replaced. Deleting a preset loses to another host editing it or switching to
+  it, and taking a skill out of a preset loses to another host changing its
+  toggles. Two hosts adding a preset with the same name keep both: one becomes
+  "Name (2)" and waits in Needs review, where you can keep both, combine them or
+  keep one. Pulling such a pair no longer fails on the duplicate name.
+
+- [#86](https://github.com/Yis-company/skills-manager/pull/86) [`9db8c3b`](https://github.com/Yis-company/skills-manager/commit/9db8c3b3751ab1297b78ed5c372b37f06fdfd91e) Thanks [@ybtam](https://github.com/ybtam)! - Instruction and MCP conflicts no longer stop a sync (release 2). When two hosts
+  change the same instruction bundle or MCP, Sync keeps this host's version and
+  records the conflict in its history, so every host lists it in Needs review
+  and in the Library, named by host. Any desktop app can resolve it, and every
+  host applies the choice on its next sync. A choice no longer expires when
+  another host syncs in the meantime.
+
+- [#86](https://github.com/Yis-company/skills-manager/pull/86) [`83d7a0a`](https://github.com/Yis-company/skills-manager/commit/83d7a0a4ced43ca44ed59b0597a7ab2e89321226) Thanks [@ybtam](https://github.com/ybtam)! - Sync format 3 (release 2; every device needs this release before any of them
+  writes it). The active preset is shared: a click on a preset in the global
+  workspace or the tray switches it on every host, and each host puts exactly that
+  preset's skills on its own agents, removing the rest, including skills added
+  directly. The first switch shows what it removes. Toggles store only the
+  choices you set (a missing toggle means on), and adding or removing a skill
+  directly no longer changes them. Creating a preset doesn't activate it, the
+  active preset can't be deleted, and "Default" has one fixed id everywhere. A
+  host that joins takes Sync's active preset.
+
+- [#86](https://github.com/Yis-company/skills-manager/pull/86) [`037ab52`](https://github.com/Yis-company/skills-manager/commit/037ab52c5b52b06a70f0185124abc3ad882c3d85) Thanks [@ybtam](https://github.com/ybtam)! - Custom agents are shared by Sync (release 2). An agent added on one host
+  appears on every host, with its folder kept relative to home. It counts as
+  installed only where that folder's parent exists. A folder outside home stays
+  this host's own path, and editing an agent's path sets it for this host only,
+  with Reset going back to the shared one. A host's custom agents from before
+  join Sync on its first pull, and Join matches agents by key, with Sync's
+  definition winning.
+
+### Patch Changes
+
+- [#95](https://github.com/Yis-company/skills-manager/pull/95) [`e53c2ff`](https://github.com/Yis-company/skills-manager/commit/e53c2ff202b54a9092f447871e624f1db9fb09c2) Thanks [@ybtam](https://github.com/ybtam)! - Sync on Windows no longer stops with "Nothing to commit". Git there converts line
+  endings, so a file rewritten with the same content looked changed until it was
+  staged.
+
 ## 1.47.0
 
 ### Minor Changes
