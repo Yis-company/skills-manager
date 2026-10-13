@@ -1465,12 +1465,19 @@
     "manage": "Manage hosts…",
     "connect": "Connect",
     "disconnect": "Disconnect",
-    "connectFailed": "Couldn’t connect to {{name}}"
+    "connectFailed": "Couldn’t connect to {{name}}",
+    "cancelConnect": "Cancel",
+    "installsTitle": "Installs not finished",
+    "installsRunning_one": "1 skill install hasn’t finished. Switching hosts stops it.",
+    "installsRunning_other": "{{count}} skill installs haven’t finished. Switching hosts stops them.",
+    "waitForInstalls": "Wait for them",
+    "cancelInstalls": "Cancel them"
   },
   "remoteSession": {
     "operatingOn": "Operating on",
     "switchToLocal": "Switch to Local",
     "lost": "Connection to {{name}} was lost.",
+    "reconnecting": "Reconnecting to {{name}}…",
     "reconnect": "Reconnect",
     "backupLocalTitle": "Backup runs per machine.",
     "backupLocalBody": "This page manages this computer’s backup. {{name}} backs up from its own Agents Manager to the same repository."

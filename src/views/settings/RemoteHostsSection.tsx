@@ -44,6 +44,7 @@ export function RemoteHostsSection() {
     updatingRemoteCliHostId,
     openRemoteCliUpdate,
     switchHost,
+    reconnectHost,
   } = useApp();
 
   const [form, setForm] = useState<null | RemoteHostForm>(null);
@@ -58,15 +59,21 @@ export function RemoteHostsSection() {
     setSaving(true);
 
     try {
-      if (form.id) {
-        await api.remoteHostUpdate(form.id, form.name, form.sshTarget, form.cliPath);
-      } else {
-        await api.remoteHostAdd(form.name, form.sshTarget, form.cliPath);
-      }
+      const saved = form.id
+        ? await api.remoteHostUpdate(form.id, form.name, form.sshTarget, form.cliPath)
+        : await api.remoteHostAdd(form.name, form.sshTarget, form.cliPath);
 
       await refreshRemoteHosts();
       setForm(null);
       toast.success(t("remoteHosts.saved"));
+
+      // The active host reconnects with its new details.
+      if (
+        saved.id === activeHost?.id &&
+        (saved.ssh_target !== activeHost.ssh_target || saved.cli_path !== activeHost.cli_path)
+      ) {
+        void reconnectHost();
+      }
     } catch (e) {
       toast.error(getErrorMessage(e, t("common.error")));
     } finally {

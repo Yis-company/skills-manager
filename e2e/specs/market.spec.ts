@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 
 import type { SkillsShSkill } from "../../src/lib/tauri";
-import { expect, test } from "../fixtures";
+import { expect, type FakeBackend, test } from "../fixtures";
 
 // F2 + F5: the skills.sh market: debounced search, paging and the source
 // filter's overflow menu.
@@ -182,20 +182,22 @@ test("search prunes selected skills that are no longer visible", async ({ page }
   await expect(page.getByText("Click skills to select")).toBeVisible();
 });
 
-test("a host switch during a delayed batch keeps the install on its original host", async ({
-  page,
-  backend,
-}) => {
-  const host = {
-    id: "host-1",
-    name: "Remote machine",
-    ssh_target: "e2e@remote",
-    cli_path: null,
-    created_at: 1_700_000_000,
-  };
+const remoteHost = {
+  id: "host-1",
+  name: "Remote machine",
+  ssh_target: "e2e@remote",
+  cli_path: null,
+  created_at: 1_700_000_000,
+};
 
+const remoteCalls = async (backend: FakeBackend, command: string) =>
+  (await backend.calls("remote_invoke")).filter((call) => call.command === command);
+
+/** On the remote host, starts two installs (the first runs and is held, the second
+ *  waits), then picks Local, which asks about them. */
+async function installTwoOnTheHost(page: Page, backend: FakeBackend) {
   await page.goto("/install");
-  await backend.patch({ remoteHosts: [host], remoteStates: { [host.id]: {} } });
+  await backend.patch({ remoteHosts: [remoteHost], remoteStates: { [remoteHost.id]: {} } });
   await page.reload();
   await page.getByRole("button", { name: "Local", exact: true }).click();
   await page.getByRole("menuitemradio", { name: /Remote machine/ }).click();
@@ -215,25 +217,40 @@ test("a host switch during a delayed batch keeps the install on its original hos
 
   await page.getByRole("button", { name: "Install selected (2)" }).click();
   await expect
-    .poll(
-      async () =>
-        (await backend.calls("remote_invoke")).filter(
-          (call) => call.command === "install_from_skillssh",
-        ).length,
-    )
+    .poll(async () => (await remoteCalls(backend, "install_from_skillssh")).length)
     .toBe(1);
 
   await page.getByRole("button", { name: "Remote machine", exact: true }).click();
   await page.getByRole("menuitemradio", { name: /Local/ }).click();
+  await expect(page.getByText("2 skill installs haven’t finished.")).toBeVisible();
+}
+
+test("switching hosts with installs not finished cancels them first, when asked to", async ({
+  page,
+  backend,
+}) => {
+  await installTwoOnTheHost(page, backend);
+  await page.getByRole("button", { name: "Cancel them" }).click();
   await backend.release("remote_invoke");
   await expect(page.getByRole("button", { name: "Local", exact: true })).toBeVisible();
 
-  const remoteInstallCalls = (await backend.calls("remote_invoke")).filter(
-    (call) => call.command === "install_from_skillssh",
-  );
+  const installs = await remoteCalls(backend, "install_from_skillssh");
+  expect(installs).toHaveLength(1);
+  expect(installs[0]).toMatchObject({ hostId: remoteHost.id });
+  expect(await remoteCalls(backend, "cancel_install")).toHaveLength(1);
+  expect(await backend.calls("install_from_skillssh")).toEqual([]);
+});
 
-  expect(remoteInstallCalls).toHaveLength(1);
-  expect(remoteInstallCalls[0]).toMatchObject({ hostId: host.id });
+test("waiting for unfinished installs keeps the app on their host", async ({ page, backend }) => {
+  await installTwoOnTheHost(page, backend);
+  await page.getByRole("button", { name: "Wait for them" }).click();
+  await backend.release("remote_invoke");
+
+  await expect
+    .poll(async () => (await remoteCalls(backend, "install_from_skillssh")).length)
+    .toBe(2);
+  await expect(page.getByRole("button", { name: "Remote machine", exact: true })).toBeVisible();
+  expect(await remoteCalls(backend, "cancel_install")).toEqual([]);
   expect(await backend.calls("install_from_skillssh")).toEqual([]);
 });
 
