@@ -5,7 +5,7 @@
   "ignorePatterns": [
     "**/*.md",
     "**/*.toml",
-    "pnpm-lock.yaml",
+    "bun.lock",
     "public/**",
     "reference/**",
     "src-tauri/target/**",

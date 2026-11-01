@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
-  // The Playwright specs in e2e/ run with `pnpm e2e`, not with vitest.
+  // The Playwright specs in e2e/ run with `bun run e2e`, not with vitest.
   test: {
     include: ["src/**/*.test.ts"],
   },

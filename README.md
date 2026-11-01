@@ -150,15 +150,15 @@ Instruction and MCP support varies by agent and scope; see the [capability bound
 ### Prerequisites
 
 - Node.js 20.19+ or 22.12+ (required by Vite 7)
-- pnpm (run `corepack enable` to use the version pinned in `package.json`)
+- [Bun](https://bun.sh) 1.4.4 (the version pinned in `package.json`) for installing packages and running scripts
 - Rust 1.77.2 or newer
 - [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS
 
 ### Development
 
 ```bash
-pnpm install
-pnpm tauri:dev
+bun install
+bun run tauri:dev
 ```
 
 ### CLI
@@ -167,22 +167,22 @@ The repository includes an agent-friendly CLI built on the same Rust shared core
 
 ```bash
 # Look around
-pnpm cli skills list
-pnpm cli skills show db
+bun run cli skills list
+bun run cli skills show db
 
 # Install into the library (does NOT deploy to any agent by itself)
-pnpm cli skills install ./my-skill
-pnpm cli skills install https://github.com/foo/bar/tree/main/skills/baz
-pnpm cli skills install vercel-labs/agent-skills@react-best-practices
+bun run cli skills install ./my-skill
+bun run cli skills install https://github.com/foo/bar/tree/main/skills/baz
+bun run cli skills install vercel-labs/agent-skills@react-best-practices
 
 # Put it into the agents that should have it, then check
-pnpm cli skills deploy react-best-practices --agent claude_code --agent codex
-pnpm cli skills status react-best-practices
+bun run cli skills deploy react-best-practices --agent claude_code --agent codex
+bun run cli skills status react-best-practices
 
 # Pull upstream changes, and adopt what an agent already has
-pnpm cli skills check --all
-pnpm cli skills update --all
-pnpm cli skills adopt ~/.claude/skills --dry-run
+bun run cli skills check --all
+bun run cli skills update --all
+bun run cli skills adopt ~/.claude/skills --dry-run
 ```
 
 `--help` on any group or subcommand prints the full surface — the groups below
@@ -205,7 +205,7 @@ Extra flags:
 - `--json` — machine-readable output for scripts/agents. Failures print `{"ok": false, "code": …, "message": …}` on stderr with a non-zero exit. A deployment refused because the target is not ours carries the paths as data (`code: "TARGET_CONFLICT"`, `details.conflicts[].path`) so a caller can name the directory in the way instead of quoting a sentence.
 
 ```bash
-pnpm --silent cli --skills-root /path/to/my-skills --json skills list
+bun run --silent cli --skills-root /path/to/my-skills --json skills list
 ```
 
 #### Agents inside WSL
@@ -229,7 +229,7 @@ At startup the app publishes a copy of its own CLI to `~/.skills-manager/bin/ski
 Putting the CLI on your *own* PATH, for typing commands yourself, is separate:
 
 ```bash
-pnpm cli:install
+bun run cli:install
 # equivalent to:
 # cargo install --path src-tauri --bin skills-manager-cli --locked --force
 ```
@@ -253,8 +253,8 @@ Desktop update checks and installation also use `Yis-company/skills-manager`. Ed
 ### Build
 
 ```bash
-pnpm tauri:build
-pnpm cli:build
+bun run tauri:build
+bun run cli:build
 ```
 
 ### Changesets and releases
@@ -262,8 +262,8 @@ pnpm cli:build
 Every PR that changes the app (`src/`, `src-tauri/`, `skills/` and similar) needs a changeset, which the **Changeset** check enforces:
 
 ```bash
-pnpm changeset          # pick patch/minor/major and describe the change
-pnpm changeset --empty  # an app change that doesn't need a changelog entry
+bun run changeset          # pick patch/minor/major and describe the change
+bun run changeset --empty  # an app change that doesn't need a changelog entry
 ```
 
 Changes to docs and CI don't need one.
