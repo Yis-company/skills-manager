@@ -18,15 +18,15 @@
   "help": {
     "eyebrow": "Guide",
     "title": "Quick Start for Agents Manager",
-    "description": "Fastest path: install skills → open Global Workspace → click a Preset pill to activate. Press ⌘K anytime for the command palette. Use Project Workspaces, Git backup, and Settings as needed.",
+    "description": "Install resources into the Library, choose a preset to edit, then use Global or Project Workspaces to manage what agents load. Open Sync for shared host state. Press ⌘K for navigation and this guide.",
     "items": {
       "workflows": {
         "title": "Recommended Workflows",
-        "description": "Single-agent: install skills → open Global Workspace → click a Preset pill to activate, or hit + Add Skills to pick from your library and toggle target agents inline. Multi-project: open a Project Workspace and use the same Preset pills or + Add Skills picker for that project's agents. Multi-host: turn on Git Backup in Settings to sync your library across hosts."
+        "description": "Library: choose a viewed preset and edit its membership. Global Workspace: switch the shared active preset or add a skill to an agent. Project Workspace: add or remove preset skills for that project. Sync: join hosts to a shared library; each follows the shared active preset on its next successful sync."
       },
       "presets": {
         "title": "Presets",
-        "description": "Group skills into named presets. In any workspace, click a Preset pill to instantly activate or deactivate all its skills for the current agent scope. Active presets show ✓; partially added ones show a count. Applying a preset is a one-time copy — later preset changes don't follow."
+        "description": "The viewed preset is the one you inspect and edit in Library; selecting it does not switch agents. The shared active preset determines what agents load on hosts in Sync. Switching can remove skills added directly; review the affected host and agent changes first. Project preset actions only add or remove skills in that project. Edited copies are preserved for review."
       },
       "install": {
         "title": "Install Skills",
@@ -34,7 +34,7 @@
       },
       "sync": {
         "title": "Library",
-        "description": "Browse all installed skills with bulk tag editing and per-agent toggles. Filter by source or tag — including an Untagged pill to surface skills missing labels. Click an agent icon on any skill card to add that skill to the agent or remove it in one click; the always-visible delete button removes a skill from the central library. Click the card itself to view docs, version history, and which agents it's on."
+        "description": "Browse Skills, Instructions and MCP definitions. In preset indicates membership in the viewed preset; On agents shows actual skill presence. Open a skill to inspect its source and content. Adding a skill to the library does not by itself add it to an agent."
       },
       "global": {
         "title": "Global Workspace",
@@ -45,8 +45,8 @@
         "description": "Link a project to browse per-agent local skill folders, compare with the central library, and import or export changes. Use Preset pills to activate skill groups, or open + Add Skills to pick from your library with a multi-agent target picker."
       },
       "backup": {
-        "title": "Backup & Sync",
-        "description": "Sign in with GitHub once on the Backup page — backups then run automatically, and hosts connected to the same repository stay in sync with each other. If the same skill is edited on two hosts, it shows up under \"Needs attention\" with three choices (keep mine / use remote / keep both); a safety snapshot precedes every choice. Secrets and host-specific settings are never backed up."
+        "title": "Sync",
+        "description": "Open Sync to connect the shared library and inspect participating hosts. Needs review lets you compare conflicting versions before choosing what to keep. History provides recovery points. Credentials and host-specific operational data stay local."
       },
       "settings": {
         "title": "Settings",
@@ -137,7 +137,9 @@
       "agent_remove": "Removed {{item}} from {{agent}}",
       "agent_flag": "{{item}} on {{agent}}: Edited here",
       "agent_review_failed": "{{item}} on {{agent}} needs review: {{detail}}",
-      "agent_resolve_edit": "{{item}} on {{agent}}: {{detail}}"
+      "agent_resolve_edit": "{{item}} on {{agent}}: {{detail}}",
+      "loadFailed": "Could not load this host’s agent log.",
+      "retry": "Retry log"
     },
     "details": {
       "runner": "Automatic sync",
@@ -356,16 +358,16 @@
     "synced": "Synced",
     "sync": "Sync",
     "unsync": "Unsync",
-    "enable": "Enable",
-    "enabledButton": "Enabled",
+    "enable": "Add to preset",
+    "enabledButton": "In preset",
     "disable": "Disable",
     "enableForPreset": "Enable for current preset",
     "disableForPreset": "Disable for current preset",
     "enabledInPreset": "{{name}} added to {{preset}}",
     "disabledInPreset": "{{name}} removed from {{preset}}",
     "presetsTitle": "Presets",
-    "inPreset": "Enabled in current preset",
-    "notInPreset": "Not enabled in current preset",
+    "inPreset": "In preset",
+    "notInPreset": "Not in preset",
     "remove": "Remove from preset",
     "moreActions": "More actions",
     "dragToReorder": "Drag to reorder",
@@ -501,8 +503,8 @@
     "gitConfigEntry": "Sync Config",
     "filters": {
       "all": "All",
-      "enabled": "Enabled",
-      "available": "Available"
+      "enabled": "In preset",
+      "available": "Not in preset"
     },
     "sourceFilter": {
       "all": "All Sources",
@@ -571,7 +573,8 @@
       "manageHint": "Right-click to rename or delete",
       "tagRenamed": "Tag renamed",
       "tagDeleted": "Tag deleted",
-      "deleteConfirm": "Remove the tag \"{{tag}}\" from all skills?"
+      "deleteConfirm": "Remove the tag \"{{tag}}\" from all skills?",
+      "removeTag": "Remove tag {{tag}}"
     },
     "selectMode": "Select",
     "selectedCount": "{{count}} selected",
@@ -618,7 +621,16 @@
       "noAgents": "No installed and enabled agents.",
       "allSynced": "Every selected skill is already on this agent",
       "onAgent": "{{synced}} / {{total}} on agent"
-    }
+    },
+    "viewingPreset": "Viewing preset: {{name}}",
+    "sharedPreset": "Shared active preset: {{name}}",
+    "selectSkill": "Select {{name}}",
+    "view": {
+      "grid": "Grid view",
+      "list": "List view"
+    },
+    "displayOptions": "Display options",
+    "libraryActions": "Library actions"
   },
   "install": {
     "title": "Install Skills",
@@ -997,7 +1009,8 @@
     "goToSettings": "Settings",
     "expandAll": "Show all",
     "collapse": "Collapse",
-    "close": "Close"
+    "close": "Close",
+    "none": "None"
   },
   "addFromLibrary": {
     "title": "Add from Library",
@@ -1309,7 +1322,7 @@
   "presetActions": {
     "switch": "Switch",
     "firstSwitchTitle": "Switch to {{name}}?",
-    "firstSwitchMessage": "A preset is now shared by every host: switching puts exactly its skills on your agents, everywhere. These come off, including skills you added directly:",
+    "firstSwitchMessage": "This changes the shared active preset. Hosts in Sync follow it on their next successful sync. Exact changes below apply to the selected host; unavailable hosts have not been inspected.",
     "button": "Apply Preset",
     "applyToProject": "Apply Preset to This Project",
     "applyToGlobal": "Apply Preset to Global Workspace",
@@ -1340,7 +1353,20 @@
     "statusPartial": "{{installed}} / {{total}}",
     "statusInactive": "Not added",
     "activate": "Activate",
-    "deactivate": "Deactivate"
+    "deactivate": "Deactivate",
+    "sharedScope": "Switch shared preset",
+    "projectScope": "Preset skills in this project",
+    "switchNamed": "Switch shared preset to {{name}}",
+    "addProjectNamed": "Add {{name}} skills to this project",
+    "removeProjectNamed": "Remove {{name}} skills from this project",
+    "changed": "The affected resources changed. Review the updated changes before switching.",
+    "additions": "Add to agents",
+    "removals": "Remove from agents (including direct additions)",
+    "preserved": "Preserve edited copies",
+    "host": "Changes on {{name}}",
+    "current": "Current shared preset: {{name}}",
+    "hosts": "Known SSH hosts (their exact changes are not inspected): {{names}}",
+    "noHosts": "This computer is the only registered host."
   },
   "presetBar": {
     "shiftClickHint": "{{name}} · Shift+click to toggle",
@@ -1511,5 +1537,21 @@
     "emptyFile": "No folders or matching files here.",
     "chooseFileHint": "Choose a file.",
     "select": "Select"
+  },
+  "review": {
+    "title": "Compare {{name}}",
+    "compare": "Compare changes",
+    "compareNamed": "Compare changes for {{name}}",
+    "refresh": "Refresh comparison",
+    "unavailable": "Comparison is unavailable. The host may need a matching CLI version, or the resource may have changed. Refresh to try again.",
+    "explanation": "Inspect both versions before choosing. Missing files are shown as additions or removals; binary and large files show a summary.",
+    "original": "Current: {{name}}",
+    "alternative": "Alternative: {{name}}",
+    "outcome": "Apply this choice to the shared library? Other hosts follow it on their next successful sync. The current state remains in Sync history for recovery.",
+    "editedOutcome": "Apply this choice to the selected agent copy? “Use Sync version” moves the edit to edited-backups before replacing it or removing it from this agent. “Keep my edit” leaves its files in place.",
+    "apply": "Apply reviewed choice",
+    "applied": "{{name}}: {{choice}} applied. Review Sync history for shared-library recovery.",
+    "editedApplied": "{{name}}: {{choice}} applied to this agent copy. Replaced edits remain in edited-backups.",
+    "fileVersions": "Versions"
   }
 }

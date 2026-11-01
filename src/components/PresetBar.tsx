@@ -178,7 +178,9 @@ export function PresetBar({
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <span className="shrink-0 text-[12px] text-muted">{t("sidebar.presets")}</span>
+      <span className="shrink-0 text-[12px] text-muted">
+        {t(onSwitch ? "presetActions.sharedScope" : "presetActions.projectScope")}
+      </span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {visiblePresets.map((preset) => {
           const coverage = statuses.get(preset.id)!;
@@ -205,13 +207,21 @@ export function PresetBar({
                 else handleActivate(preset);
               }}
               disabled={busy}
-              title={preset.description ? `${preset.name} — ${preset.description}` : preset.name}
+              aria-label={t(
+                onSwitch
+                  ? "presetActions.switchNamed"
+                  : s.status === "active"
+                    ? "presetActions.removeProjectNamed"
+                    : "presetActions.addProjectNamed",
+                { name: preset.name },
+              )}
+              title={preset.description || undefined}
               className={cn(
                 "inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-0.5 text-[12px] font-medium transition-colors disabled:opacity-50",
                 s.status === "active"
                   ? `${presetIcon.activeClass} ${presetIcon.colorClass}`
                   : s.status === "partial"
-                    ? "border-amber-400/50 bg-amber-500/8 text-amber-600 dark:text-amber-400 hover:bg-amber-500/12"
+                    ? "border-amber-400/50 bg-amber-500/8 text-amber-700 dark:text-amber-400 hover:bg-amber-500/12"
                     : "border-border-subtle text-faint hover:border-border hover:text-muted",
               )}
             >

@@ -218,13 +218,22 @@ test("needs review offers choices named by host", async ({ page, backend }) => {
   await page.goto("/backup");
   await page.getByRole("button", { name: /Needs review/ }).click();
   await expect(page.getByText("Changed on e2e-machine and on Remote-agent.")).toBeVisible();
+  await page.getByRole("button", { name: /Compare changes for/ }).click();
   await page.getByRole("button", { name: "Keep Remote-agent's version" }).click();
+  await page.getByRole("button", { name: "Apply reviewed choice" }).click();
 
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
-  expect(await backend.calls("sync_screen_call")).toContainEqual({
-    command: "sync_resolve",
-    args: { skill: "s-1", keep: "Remote-agent", both: false },
-  });
+  expect(await backend.calls("sync_screen_call")).toContainEqual(
+    expect.objectContaining({
+      command: "sync_resolve",
+      args: expect.objectContaining({
+        skill: "s-1",
+        keep: "Remote-agent",
+        both: false,
+        review: expect.any(String),
+      }),
+    }),
+  );
 });
 
 test("an MCP changed on two hosts is resolved from Needs review", async ({ page, backend }) => {
@@ -244,13 +253,17 @@ test("an MCP changed on two hosts is resolved from Needs review", async ({ page,
   await page.goto("/backup");
   await page.getByRole("button", { name: /Needs review/ }).click();
   await expect(page.getByText("MCP changed on two hosts")).toBeVisible();
+  await page.getByRole("button", { name: /Compare changes for/ }).click();
   await page.getByRole("button", { name: "Keep Remote-agent's version" }).click();
+  await page.getByRole("button", { name: "Apply reviewed choice" }).click();
 
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
-  expect(await backend.calls("sync_screen_call")).toContainEqual({
-    command: "sync_resolve_resource",
-    args: { key: "mcps/m-1", other: true },
-  });
+  expect(await backend.calls("sync_screen_call")).toContainEqual(
+    expect.objectContaining({
+      command: "sync_resolve_resource",
+      args: expect.objectContaining({ key: "mcps/m-1", other: true, review: expect.any(String) }),
+    }),
+  );
 });
 
 test("a preset added on two hosts with one name can be combined", async ({ page, backend }) => {
@@ -262,13 +275,17 @@ test("a preset added on two hosts with one name can be combined", async ({ page,
   await page.goto("/backup");
   await page.getByRole("button", { name: /Needs review/ }).click();
   await expect(page.getByText("Renamed to stay apart from Web.")).toBeVisible();
+  await page.getByRole("button", { name: /Compare changes for/ }).click();
   await page.getByRole("button", { name: "Combine into Web" }).click();
+  await page.getByRole("button", { name: "Apply reviewed choice" }).click();
 
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
-  expect(await backend.calls("sync_screen_call")).toContainEqual({
-    command: "sync_resolve_preset",
-    args: { preset: "web-2", combine: true },
-  });
+  expect(await backend.calls("sync_screen_call")).toContainEqual(
+    expect.objectContaining({
+      command: "sync_resolve_preset",
+      args: expect.objectContaining({ preset: "web-2", combine: true, review: expect.any(String) }),
+    }),
+  );
 });
 
 test("adding a host runs the setup log, with the key paste and join inline", async ({

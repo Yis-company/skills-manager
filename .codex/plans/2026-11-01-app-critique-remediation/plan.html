@@ -1,0 +1,132 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agents Manager critique remediation plan</title><style>
+:root { color-scheme: light dark; --ink: var(--foreground, #202322); --paper: var(--card, #f3f5f3); --line: var(--border, #d3d9d4); --quiet: var(--muted-foreground, #626c65); --action: var(--primary, #087443); }
+* { box-sizing: border-box; }
+html, body { background: transparent; margin: 0; padding: 0; }
+body { color: var(--ink); font: 16px/1.65 var(--font-sans, ui-sans-serif, system-ui, sans-serif); }
+main { max-width: 920px; margin: 0 auto; min-width: 0; overflow-wrap: anywhere; }
+h1 { font-size: clamp(29px, 5vw, 44px); line-height: 1.14; letter-spacing: -.035em; margin: 22px 0 20px; font-weight: 650; max-width: 18ch; }
+h2 { margin: 46px 0 14px; font-size: 24px; line-height: 1.25; letter-spacing: -.02em; border-top: 1px solid var(--line); padding-top: 22px; }
+h3 { margin: 30px 0 10px; font-size: 19px; line-height: 1.35; }
+p, li { max-width: 78ch; }
+p { margin: 12px 0; }
+ul, ol { padding-left: 24px; }
+li { margin: 12px 0; padding-left: 4px; }
+a { color: var(--action); text-underline-offset: .2em; }
+code { font: .86em/1.5 var(--font-mono, ui-monospace, SFMono-Regular, monospace); background: var(--paper); padding: .12em .25em; border-radius: 3px; overflow-wrap: anywhere; }
+table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 22px 0; font-size: 14px; line-height: 1.55; }
+th, td { padding: 14px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+th { font-size: 12px; letter-spacing: .025em; color: var(--quiet); font-weight: 650; }
+th:first-child, td:first-child { width: 22%; font-weight: 600; }
+details { margin: 26px 0; border-radius: var(--radius, 10px); background: var(--paper); padding: 16px; }
+summary { cursor: pointer; font-weight: 650; font-size: 17px; }
+details > p, details > ul { font-size: 14px; }
+:focus-visible { outline: 3px solid var(--ring, #19a165); outline-offset: 4px; }
+@media (prefers-color-scheme: dark) { :root { --ink: var(--foreground, #e6ece8); --paper: var(--card, #1b211d); --line: var(--border, #39433c); --quiet: var(--muted-foreground, #b0bbb3); --action: var(--primary, #79d8a6); } }
+@media (max-width: 620px) { body { font-size: 15px; } h2 { font-size: 22px; } table, tbody, tr, td { display: block; width: 100%; } thead { display: none; } tr { border-top: 1px solid var(--line); padding: 8px 0; } td, td:first-child { width: 100%; border: 0; padding: 8px 0; font-weight: 400; } td::before { content: attr(data-label); display: block; color: var(--quiet); font-size: 12px; font-weight: 650; margin-bottom: 4px; } td:first-child { font-weight: 650; } details { padding: 14px; } }
+@media print { details { background: transparent; } summary { display: none; } h2, h3 { break-after: avoid; } tr { break-inside: avoid; } }
+</style></head><body><main><h1>Make every agent change clear</h1>
+<p>Implementation proposal for all findings in the Agents Manager critique of 1 November 2026.</p>
+<p><strong>Decision requested:</strong> approve the scope, interaction changes, and verification below. Approval authorizes implementation and local fixture checks. Publishing, merging, releasing, or changing live libraries and hosts remains a separate action.</p>
+<h2>Outcome and scope</h2>
+<p>A developer can tell what is in a preset, what an agent actually loads, which hosts a change reaches, and what will be replaced before confirming. All five priority findings and the smaller observations are covered below.</p>
+<p>Preserve the established desktop interface, product vocabulary in <code>CONTEXT.md</code>, and the existing agent, project, and Sync behavior. This is an Operate surface: use explicit language, reliable keyboard behavior, and clearer information hierarchy. App screens use code-first; the saved comp-first setting applies to landing pages and showcases.</p>
+<p>The current init-only PR #99 remains limited to the three committed context/configuration files. Keep the remediation separately reviewable; do not push application changes into that PR as a side effect. This plan does not authorize a rebrand, new sync topology, new credential storage, a migration, or a hashing scheme.</p>
+<h2>Interaction decisions proposed for approval</h2>
+<ol>
+<li><strong>Name the action and scope.</strong> Library shows “Viewing preset: [name]” separately from “Shared active preset: [name]”. Membership filters and switches say “In preset” / “Not in preset”; actual deployment says “On agents”. A workspace preset control names either “Switch shared preset” or “Add preset skills to this project”. Keep the current project add/remove semantics and shared-switch semantics.</li>
+<li><strong>Review every consequential preset switch.</strong> Remove the one-time bypass. Before a switch that removes resources, show the current and next preset, owning host, verified agent additions/removals, preserved local edits, and direct additions affected. Explain that hosts participating in Sync follow the shared choice on their next successful sync. List known participating hosts and identify unavailable hosts; do not invent exact downstream file counts. A switch with no removals still names its shared scope, without an unnecessary second confirmation.</li>
+<li><strong>Compare before choosing a conflict outcome.</strong> “Compare changes” opens a read-only sheet with named versions, host provenance, resource-relative paths, additions/deletions, and a bounded text comparison. The selected keep/keep-both outcome gets a concise confirmation before resolution. The same pattern supports edited agent copies and same-name preset reviews where choices alter content or membership. Preserve existing resolution and safety-history behavior.</li>
+<li><strong>Make inspection work from the keyboard.</strong> Skill titles use native buttons or links; selection uses checkbox semantics. Nested switches, agent actions, and drag handles remain separate controls. Confirmation dialogs have an accessible name, initial focus, contained Tab navigation, Escape handling, and focus restoration. Keep existing pending-operation behavior while preventing duplicate submissions.</li>
+<li><strong>Reduce ambiguity without removing useful information.</strong> Separate browsing/view preferences from operational actions, name agent-state groups, remove redundant creator text only when the creator group already supplies it, and keep description/provenance discoverable. Make long preset navigation searchable or locally scrollable so workspaces remain reachable. Keep desktop density and the current light/dark identity.</li>
+</ol>
+<h2>Sequence, ownership, and dependencies</h2>
+<p><strong>Owner:</strong> Codex implements and verifies each phase. <strong>Reviewer:</strong> Yi approves this proposal and the final application changes. No schedule or additional owners are assumed.</p>
+<h3>1. Shared accessible controls</h3>
+<p>Harden the existing shared confirmation path and reuse proven focus behavior from the project Git dialog instead of adding a modal framework. Correct card/list activation, view-button labels, focus-visible treatments, keyboard access to tag actions, expansion semantics, and non-color status names.</p>
+<p><strong>Dependency:</strong> none after plan approval. <strong>Done when:</strong> inspection, selection, confirmation, cancellation, and focus return work in a keyboard-only fixture without unintended mutations or broken dragging. Existing confirmation consumers retain their pending and error behavior.</p>
+<h3>2. Scope, preset review, Library hierarchy, and help</h3>
+<p>Update preset controls and the switch hook together. Extend the preview contract only as needed for accurate additions/removals, target identity, direct additions, and preserved edits. Revalidate the preview on confirmation; changed state requires a refreshed review. Keep selected/viewed preset distinct from the shared active preset.</p>
+<p>Update in-app help and directly affected product-guide passages to explain the current Library → preset → actual agent-copy model and Sync terminology. Make relevant help reachable from the shell or command palette. Keep installation into the library distinct from adding to an agent.</p>
+<p><strong>Dependency:</strong> phase 1 for reliable review dialogs. <strong>Done when:</strong> project and global actions visibly name their different scopes; every removal-producing switch is reviewed even after a previous switch; cancel performs no mutation; Library labels and help agree with actual behavior. A long preset list does not displace all workspace navigation.</p>
+<h3>3. Conflict comparison and reviewed resolution</h3>
+<p>Add a small read-only comparison contract through the existing local/SSH Sync dispatch. Reuse stored skill conflict refs, retained resource versions, existing preset membership data, and agent-copy paths. Reuse the existing diff components for bounded text; show explicit summaries for binary, oversized, deleted, or unavailable content. Cap both file size and text-line complexity because the current line diff uses a quadratic matrix.</p>
+<p>Bind requests to captured host/resource identity. Ignore late responses after the selection or host changes. Do not resolve credentials or read beyond the selected resource root; portable MCP comparisons retain credential references. Use existing Git revision IDs and direct comparison where needed rather than introducing a hashing system. Preview must not commit, resolve, fetch, rewrite metadata, or reapply resources.</p>
+<p>Before mutation, validate that the reviewed versions still match under the existing repository lock. If not, refresh the comparison and ask the user to review again. Keep existing safety snapshots and resolution choices. An unavailable host or older CLI gets a clear compatibility/error state; no automatic installation or update.</p>
+<p><strong>Dependency:</strong> phase 1; typed backend data before the complete frontend comparison flow. <strong>Done when:</strong> skill, instruction, MCP, preset, and edited-copy decisions expose the relevant versions or an explicit unavailable state; outcome confirmation names what is retained/replaced; stale reviews cannot silently apply a different version. Existing recovery remains discoverable.</p>
+<h3>4. Error states and layout edges</h3>
+<p>Distinguish loading, empty, failed, stale, and successful agent-log states. Retain the selected host, offer Retry, and prevent a late response from appearing under another host. Add text/accessible names for host-state dots and expansion state for sidebar sections.</p>
+<p>Check the minimum desktop window and largest text setting, long resource/host names, many presets, empty results, offline hosts, and large comparisons. Reflow toolbars and Sync navigation where needed; contain wide diffs within their own region. Keep actions, modal footers, and workspace navigation reachable.</p>
+<p><strong>Dependency:</strong> phases 1–3 for final integrated verification. <strong>Done when:</strong> failure cannot masquerade as empty success; keyboard and pointer paths reach the same actions; the supported desktop sizes and text settings do not clip primary controls.</p>
+<h3>5. Verification, polish, and delivery evidence</h3>
+<p>Run focused behavior tests first, then the existing frontend checks and affected Rust checks. Add a changeset for application changes. Batch light/dark visual checks at normal and minimum supported desktop sizes and at the largest text setting, fix what the pass reveals, then run the mechanical detector once on changed markup. Finish with an Impeccable polish pass and re-critique the addressed surfaces.</p>
+<p>Report source, automated fixture, native-runtime, remote-host, and CI evidence separately. No score increase is an acceptance substitute. Do not claim a remote host worked from mocked IPC alone. Publishing remediation requires an explicit next instruction.</p>
+<h2>Finding-to-acceptance map</h2>
+<table>
+<thead>
+<tr>
+<th>Finding</th>
+<th>Repair and acceptance</th>
+<th>Proof and dependency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-label="Finding">F1 · P1 · Hidden preset scope</td>
+<td data-label="Repair and acceptance">Explicit shared/project action labels; repeat removal review; accurate targets, direct additions, and preserved edits; cancel writes nothing; stale review refreshes.</td>
+<td data-label="Proof and dependency">Browser scenarios cover first and later switches, no-removal switches, project-local actions, unavailable hosts, and changed state. Rust fixtures assert preview/apply agreement and local-edit protection. Phase 2 depends on phase 1.</td>
+</tr>
+<tr>
+<td data-label="Finding">F2 · P1 · Conflict choices without evidence</td>
+<td data-label="Repair and acceptance">Compare both versions, file lists, provenance, and proposed outcome for skills, instructions/MCPs, edited copies, and same-name presets. Fail visibly when a comparison is unavailable.</td>
+<td data-label="Proof and dependency">Temporary repositories cover modified/deleted/renamed/binary/large content, missing refs, stale review, no preview writes, and existing recovery. Browser fixtures cover inspect → choose → confirm/cancel and late responses. Phase 3 depends on phase 1 and backend contract.</td>
+</tr>
+<tr>
+<td data-label="Finding">F3 · P1 · Keyboard and semantic gaps</td>
+<td data-label="Repair and acceptance">Native detail activation and selection; named view/close buttons; focus-visible and focus-accessible actions; accessible confirmation semantics and focus restoration.</td>
+<td data-label="Proof and dependency">Keyboard-only browser flow opens details, toggles selection separately, keeps drag handles usable, contains modal focus, blocks duplicate apply, and restores focus after close. Native VoiceOver spot-check is separate runtime evidence. Phase 1.</td>
+</tr>
+<tr>
+<td data-label="Finding">F4 · P1 · Stale help</td>
+<td data-label="Repair and acceptance">Guide and contextual help teach viewed vs shared active preset, actual agent copies, project scope, and current Sync labels. Help is reachable without About navigation.</td>
+<td data-label="Proof and dependency">Browser walkthrough checks discoverability and follows the documented flow against current behavior; review affected prose instead of writing brittle copy-snapshot tests. Phase 2.</td>
+</tr>
+<tr>
+<td data-label="Finding">F5 · P2 · Library scope/hierarchy</td>
+<td data-label="Repair and acceptance">Name viewed and shared active presets; distinguish membership from actual presence; group view preferences and operational actions; suppress only redundant grouped metadata.</td>
+<td data-label="Proof and dependency">Fixture has different viewed/active presets and different membership/agent states; changing filters/views does not mutate resources. Check long names and both card/list views. Phase 2.</td>
+</tr>
+<tr>
+<td data-label="Finding">M1 · Failed log looks empty</td>
+<td data-label="Repair and acceptance">Distinct error and Retry; show empty only after a successful empty response; keep stale data clearly identified if retained.</td>
+<td data-label="Proof and dependency">Inject failure, then retry success; delay host A and switch to B; verify A cannot overwrite B. Phase 4.</td>
+</tr>
+<tr>
+<td data-label="Finding">M2 · Color-only host state</td>
+<td data-label="Repair and acceptance">State name is available without color or selecting the host; loading/offline states retain identity.</td>
+<td data-label="Proof and dependency">Accessible-name assertions and visual check for needs-review, offline, paused, and up-to-date. Phases 1 and 4.</td>
+</tr>
+<tr>
+<td data-label="Finding">M3 · Sidebar expansion semantics</td>
+<td data-label="Repair and acceptance">Collapsers announce expanded/collapsed state and expose a stable controlled region; focus remains usable.</td>
+<td data-label="Proof and dependency">Keyboard toggle and accessible-state assertions. Phase 1.</td>
+</tr>
+<tr>
+<td data-label="Finding">M4 · Many presets and narrow/large-text layouts</td>
+<td data-label="Repair and acceptance">Keep workspace navigation reachable; make overflow localized; keep long names inspectable; preserve useful descriptions without excessive repeated metadata.</td>
+<td data-label="Proof and dependency">Seed 25+ presets, long names and descriptions; verify 1440×860 and minimum 1100×640, default/largest text settings, light/dark, Sync review and dialogs. Phase 4.</td>
+</tr>
+</tbody>
+</table><details><summary>Evidence and source locations</summary><p>The critique scored 23/40. The deterministic source scan returned zero findings; it does not test scope comprehension or accessibility behavior. Historical screenshots are useful identity evidence; the installed app was observed without mutation, but its build is not matched to this checkout.</p>
+<ul>
+<li><code>src/hooks/usePresetSwitch.tsx:23</code> skips the removal preview after a stored first-switch flag. <code>src/components/PresetBar.tsx:185</code> branches between shared switching and project activation/removal.</li>
+<li><code>src-tauri/src/core/scenario_service.rs:591</code> currently previews removal pairs only. The apply path already protects edited copies; the preview must describe that protection accurately.</li>
+<li><code>src/views/sync/Review.tsx:60</code> renders choices from host/name metadata. <code>src/lib/tauri.ts:1079</code> defines that metadata-only conflict contract.</li>
+<li><code>src-tauri/src/core/sync_service.rs:196</code> describes skill conflicts; <code>core/merge/resolve.rs:40</code> uses retained refs and existing history protection. <code>core/resource_sync.rs:329</code> can describe retained resource content internally. <code>core/host_sync.rs:22</code> controls allowed Sync screen commands.</li>
+<li><code>src/components/DocumentDiffViewer.tsx:39</code> uses an O(n²) line-diff matrix; <code>SkillSourceDiffViewer.tsx</code> already supplies text/binary/large-file presentation. Reuse with explicit limits.</li>
+<li><code>src/components/ConfirmDialog.tsx:62</code>, <code>LibrarySkillCard.tsx:97</code>, <code>LibrarySkillRow.tsx:70</code>, and <code>src/views/MySkills.tsx:1321</code> contain the inspected accessibility gaps. <code>ProjectGitDialog.tsx</code> and <code>e2e/specs/project-git.spec.ts</code> provide existing focus/viewport patterns.</li>
+<li><code>src/views/sync/HostPane.tsx:137</code> converts a rejected log load into an empty list. <code>src/views/sync/parts.tsx</code>, <code>src/views/Sync.tsx</code>, and <code>src/components/Sidebar.tsx</code> own status and expansion presentation.</li>
+<li><code>src/i18n/en.json:25</code> contains obsolete help. <code>CONTEXT.md</code> is the vocabulary authority; update relevant passages in <code>README.md</code> and <code>AGENTS-MANAGER.md</code> only where this work changes the described flow.</li>
+<li>Existing tests include <code>e2e/specs/sync.spec.ts</code>, <code>preset-skill-order.spec.ts</code>, <code>sidebar-order.spec.ts</code>, <code>resource-workspace.spec.ts</code>, and <code>src/lib/librarySkillQuery.test.ts</code>. Extend behavior coverage rather than replacing stable tests with markup checks.</li>
+</ul></details><details><summary>Commands and verification limits</summary><p>Planned implementation checks: <code>pnpm test</code>, <code>pnpm build</code>, <code>pnpm lint</code>, formatting checks for changed files, focused <code>pnpm e2e</code> specifications, and focused Rust tests in <code>src-tauri</code> for touched Sync/preview behavior. Use temporary repositories and fake IPC for destructive outcomes. Keep real user libraries and connected SSH hosts untouched.</p>
+<p>Dependencies are not installed in this checkout and ports 1420/1421 had no development server during critique. Install from the frozen lockfile only when implementation begins, use the fixture harness for browser evidence, and report any toolchain/platform blockers. Run native checks against a build from this worktree when available; do not reuse the installed app as acceptance evidence.</p>
+<p>Approval gate: <code>plannotator annotate plan.html --gate --json --require-approval --result-file review.json</code>. Only an explicit approved decision authorizes implementation; annotations require revision and another review, and dismissal does not approve the work.</p></details></main></body></html>

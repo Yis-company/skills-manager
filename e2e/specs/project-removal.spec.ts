@@ -79,7 +79,12 @@ test("preset removal asks when a fresh scan fails and cancels on project navigat
     .getByRole("button", { name: "webapp", exact: true })
     .and(page.locator("button"))
     .click();
-  const writing = page.getByRole("button", { name: "Writing", exact: true });
+
+  const writing = page.getByRole("button", {
+    name: "Remove Writing skills from this project",
+    exact: true,
+  });
+
   await expect(writing).toBeEnabled();
   await backend.failNext("get_project_skills", "scan failed");
   await writing.click();

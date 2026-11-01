@@ -115,6 +115,7 @@ export function MySkills() {
 
   const {
     viewedPreset,
+    activePreset,
     presets,
     tools,
     managedSkills: skills,
@@ -1203,8 +1204,20 @@ export function MySkills() {
             </h1>
           </div>
 
-          <div className="app-toolbar">
-            <div className="flex flex-1 items-center gap-3">
+          <p
+            className="flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-secondary"
+            aria-live="polite"
+          >
+            <span>
+              {t("mySkills.viewingPreset", { name: viewedPreset?.name ?? t("common.none") })}
+            </span>
+            <span>
+              {t("mySkills.sharedPreset", { name: activePreset?.name ?? t("common.none") })}
+            </span>
+          </p>
+          <div className="space-y-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              {" "}
               <div className="relative w-full min-w-[200px] max-w-[280px]">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
                 <input
@@ -1212,13 +1225,13 @@ export function MySkills() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={t("mySkills.searchPlaceholder")}
+                  aria-label={t("mySkills.searchPlaceholder")}
                   className="app-input w-full pl-9 font-medium"
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
                 />
               </div>
-
               <div className="app-segmented app-toolbar-segmented shrink-0">
                 {(["all", "enabled", "available"] as const).map((mode) => (
                   <button
@@ -1233,47 +1246,105 @@ export function MySkills() {
                   </button>
                 ))}
               </div>
-
               <LibraryFilterPopover
                 categories={filterCategories}
                 onClearAll={clearFilterCategories}
                 holdOpen={tagMenu !== null || tagToRename !== null || tagToDelete !== null}
               />
-
-              <select
-                value={groupBy}
-                onChange={(e) => {
-                  if (isLibraryGroupBy(e.target.value)) chooseGroupBy(e.target.value);
-                }}
-                className="app-input shrink-0 py-2 font-medium"
-                title={t("mySkills.groupBy.label")}
-              >
-                {LIBRARY_GROUP_BY_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {t(`mySkills.groupBy.${option}`)}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={sortBy}
-                onChange={(e) => {
-                  if (isLibrarySortBy(e.target.value)) chooseSortBy(e.target.value);
-                }}
-                className="app-input shrink-0 py-2 font-medium"
-                title={t("mySkills.sortBy.label")}
-              >
-                {LIBRARY_SORT_BY_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {t(`mySkills.sortBy.${option}`)}
-                  </option>
-                ))}
-              </select>
             </div>
-
-            {/* Keep all library actions in one toolbar so they wrap together. */}
-            <div className="flex items-center gap-3">
-              <div className="app-segmented app-toolbar-segmented shrink-0">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div
+                role="group"
+                aria-label={t("mySkills.displayOptions")}
+                className="flex min-w-0 flex-wrap items-center gap-2"
+              >
+                {" "}
+                <select
+                  value={groupBy}
+                  onChange={(e) => {
+                    if (isLibraryGroupBy(e.target.value)) chooseGroupBy(e.target.value);
+                  }}
+                  className="app-input shrink-0 py-2 font-medium"
+                  title={t("mySkills.groupBy.label")}
+                  aria-label={t("mySkills.groupBy.label")}
+                >
+                  {LIBRARY_GROUP_BY_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {t(`mySkills.groupBy.${option}`)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={sortBy}
+                  onChange={(e) => {
+                    if (isLibrarySortBy(e.target.value)) chooseSortBy(e.target.value);
+                  }}
+                  className="app-input shrink-0 py-2 font-medium"
+                  title={t("mySkills.sortBy.label")}
+                  aria-label={t("mySkills.sortBy.label")}
+                >
+                  {LIBRARY_SORT_BY_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {t(`mySkills.sortBy.${option}`)}
+                    </option>
+                  ))}
+                </select>
+                <div className="app-segmented flex-wrap">
+                  {" "}
+                  <button
+                    onClick={() => setViewMode("grid")}
+                    data-testid="view-grid"
+                    aria-label={t("mySkills.view.grid")}
+                    aria-pressed={viewMode === "grid"}
+                    className={cn(
+                      "rounded-md p-2 transition-colors outline-none",
+                      viewMode === "grid"
+                        ? "bg-surface-active text-secondary"
+                        : "text-muted hover:text-tertiary",
+                    )}
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode("list")}
+                    data-testid="view-list"
+                    aria-label={t("mySkills.view.list")}
+                    aria-pressed={viewMode === "list"}
+                    className={cn(
+                      "rounded-md p-2 transition-colors outline-none",
+                      viewMode === "list"
+                        ? "bg-surface-active text-secondary"
+                        : "text-muted hover:text-tertiary",
+                    )}
+                  >
+                    <List className="h-4 w-4" />
+                  </button>
+                  {/* Selection can stay active in either view. */}
+                  <span
+                    aria-hidden="true"
+                    className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle"
+                  />
+                  <button
+                    type="button"
+                    aria-pressed={isMultiSelect}
+                    onClick={() => (isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true))}
+                    className={cn(
+                      "app-segmented-button inline-flex items-center gap-1.5 hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-border",
+                      isMultiSelect &&
+                        "app-segmented-button-active hover:bg-surface-active hover:text-secondary",
+                    )}
+                  >
+                    <SquareCheck className="h-4 w-4" />
+                    {isMultiSelect ? t("mySkills.cancelSelect") : t("mySkills.selectMode")}
+                  </button>
+                </div>
+              </div>
+              <div
+                role="group"
+                aria-label={t("mySkills.libraryActions")}
+                className="app-segmented flex-wrap"
+              >
+                {" "}
                 {!onRemote &&
                   (() => {
                     const mode = gitBackupMode(gitStatus, gitRemoteConfig);
@@ -1313,53 +1384,6 @@ export function MySkills() {
                 >
                   <RotateCcw className={cn("h-3.5 w-3.5", batchUpdating && "animate-spin")} />
                   {t("mySkills.updateActions.updateAvailable", { count: availableUpdateCount })}
-                </button>
-                <span
-                  aria-hidden="true"
-                  className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle"
-                />
-                <button
-                  onClick={() => setViewMode("grid")}
-                  data-testid="view-grid"
-                  className={cn(
-                    "rounded-md p-2 transition-colors outline-none",
-                    viewMode === "grid"
-                      ? "bg-surface-active text-secondary"
-                      : "text-muted hover:text-tertiary",
-                  )}
-                >
-                  <LayoutGrid className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={() => setViewMode("list")}
-                  data-testid="view-list"
-                  className={cn(
-                    "rounded-md p-2 transition-colors outline-none",
-                    viewMode === "list"
-                      ? "bg-surface-active text-secondary"
-                      : "text-muted hover:text-tertiary",
-                  )}
-                >
-                  <List className="h-4 w-4" />
-                </button>
-
-                {/* Selection can stay active in either view. */}
-                <span
-                  aria-hidden="true"
-                  className="mx-1 h-5 w-px shrink-0 self-center bg-border-subtle"
-                />
-                <button
-                  type="button"
-                  aria-pressed={isMultiSelect}
-                  onClick={() => (isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true))}
-                  className={cn(
-                    "app-segmented-button inline-flex items-center gap-1.5 hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-border",
-                    isMultiSelect &&
-                      "app-segmented-button-active hover:bg-surface-active hover:text-secondary",
-                  )}
-                >
-                  <SquareCheck className="h-4 w-4" />
-                  {isMultiSelect ? t("mySkills.cancelSelect") : t("mySkills.selectMode")}
                 </button>
               </div>
             </div>
@@ -1482,15 +1506,20 @@ export function MySkills() {
                         </h3>
                       )}
                       <div
-                        className={cn(
+                        style={
                           viewMode === "grid"
-                            ? "grid grid-cols-2 gap-3 lg:grid-cols-3"
-                            : "flex flex-col gap-0.5",
-                        )}
+                            ? {
+                                gridTemplateColumns:
+                                  "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
+                              }
+                            : undefined
+                        }
+                        className={cn(viewMode === "grid" ? "grid gap-3" : "flex flex-col gap-0.5")}
                       >
                         {group.skills.map((skill) => {
                           const itemProps: LibrarySkillItemProps = {
                             skill,
+                            hideCreator: groupBy === "creator",
                             displayName: displayNames.get(skill.id) || skill.name,
                             enabledInPreset: viewedPreset
                               ? skill.preset_ids.includes(viewedPreset.id)

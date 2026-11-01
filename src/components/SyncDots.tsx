@@ -114,6 +114,9 @@ export function SyncDots({
 
   return (
     <div
+      role="group"
+      aria-label={t("dashboard.synced")}
+      title={t("dashboard.synced")}
       className={cn(
         "flex items-center gap-[2px]",
         onToggle && expanded && "max-w-[160px] flex-wrap",

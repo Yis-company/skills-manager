@@ -19,10 +19,10 @@
     --color-text-primary: #18181b;
     --color-text-secondary: #27272a;
     --color-text-tertiary: #52525b;
-    --color-text-muted: #71717a;
-    --color-text-faint: #8b8b94;
-    --color-accent: #059669;
-    --color-accent-light: #10b981;
+    --color-text-muted: #62626c;
+    --color-text-faint: #6b6b74;
+    --color-accent: #047857;
+    --color-accent-light: #047857;
     --color-accent-dark: #047857;
     --color-accent-bg: rgba(5, 150, 105, 0.08);
     --color-accent-border: rgba(5, 150, 105, 0.25);
@@ -46,7 +46,7 @@
     --color-text-secondary: #d4d4d8;
     --color-text-tertiary: #a1a1aa;
     --color-text-muted: #8e8e96;
-    --color-text-faint: #71717a;
+    --color-text-faint: #8e8e96;
     --color-accent: #10b981;
     --color-accent-light: #34d399;
     --color-accent-dark: #059669;
@@ -199,4 +199,14 @@
   .markdown-editor a {
     @apply text-accent underline;
   }
+}
+
+/* Keyboard focus stays visible even on controls that reset browser outlines. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
 }

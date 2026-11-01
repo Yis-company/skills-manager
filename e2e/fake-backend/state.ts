@@ -1,3 +1,4 @@
+import type { ChangeReview } from "../../src/lib/changeReview";
 import type {
   ProjectGitPrReview,
   ProjectGitPushReview,
@@ -77,6 +78,7 @@ export interface Seed {
   remoteHostNewer?: boolean;
   /** Skills changed on two hosts, as this computer's `sync status` lists them. */
   syncConflicts?: SyncConflict[];
+  changeReviews?: Record<string, ChangeReview>;
   /** Instructions and MCPs changed on two hosts, as `sync status` lists them. */
   resourceConflicts?: ResourceConflict[];
   /** Presets renamed apart from a same-name preset, waiting for review. */
@@ -203,6 +205,7 @@ export function createState({ settings, ...seed }: Seed): State {
     remoteCliNeedsUpdate: false,
     remoteHostNewer: false,
     syncConflicts: [],
+    changeReviews: {},
     resourceConflicts: [],
     sameNamePresets: [],
     hostsInSync: [],
