@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Not 1420: that is the Tauri dev server's port, and a running `pnpm tauri:dev`
+// Not 1420: that is the Tauri dev server's port, and a running `bun run tauri:dev`
 // must neither block the tests nor be reused without the fake backend.
 const PORT = 1421;
 
@@ -21,7 +21,7 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: `pnpm exec vite --mode e2e --port ${PORT}`,
+    command: `bunx vite --mode e2e --port ${PORT}`,
     cwd: "..",
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: !CI,
