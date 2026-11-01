@@ -273,9 +273,10 @@ fn delete_preset_with_active_fallback_internal(
 pub async fn apply_preset_to_default(
     app: tauri::AppHandle,
     id: String,
+    review: Option<String>,
     ctx: State<'_, HostCtx>,
 ) -> Result<(), AppError> {
-    apply_preset_to_default_impl(app, id, ctx.inner().clone()).await
+    apply_preset_to_default_impl(app, id, ctx.inner().clone(), review).await
 }
 
 /// Legacy command kept for the CLI and backward compatibility. New callers
@@ -287,17 +288,20 @@ pub async fn switch_preset(
     id: String,
     ctx: State<'_, HostCtx>,
 ) -> Result<(), AppError> {
-    apply_preset_to_default_impl(app, id, ctx.inner().clone()).await
+    apply_preset_to_default_impl(app, id, ctx.inner().clone(), None).await
 }
 
 async fn apply_preset_to_default_impl(
     app: tauri::AppHandle,
     id: String,
     ctx: HostCtx,
+    review: Option<String>,
 ) -> Result<(), AppError> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || apply_preset_to_default_core(&ctx, id))
-            .await?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        scenario_service::apply_scenario_reviewed(&ctx.store, &id, review.as_deref())
+            .and_then(scenario_service::refusals_to_error)
+    })
+    .await?;
     // Refresh even on failure. `apply_scenario_to_default` commits the active
     // preset before syncing, and syncing now reports ownership refusals as an
     // error (#363) — so an error here still means the preset switched and most

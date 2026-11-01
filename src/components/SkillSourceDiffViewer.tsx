@@ -7,6 +7,7 @@ import { DocumentDiffViewer } from "./DocumentDiffViewer";
 interface Props {
   entries: SkillSourceDiffEntry[];
   className?: string;
+  comparison?: boolean;
 }
 
 const STATUS_TONE: Record<SkillSourceDiffEntry["status"], string> = {
@@ -16,7 +17,7 @@ const STATUS_TONE: Record<SkillSourceDiffEntry["status"], string> = {
   modified: "border-sky-300 bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300",
 };
 
-export function SkillSourceDiffViewer({ entries, className }: Props) {
+export function SkillSourceDiffViewer({ entries, className, comparison }: Props) {
   const { t } = useTranslation();
 
   if (entries.length === 0) {
@@ -48,7 +49,11 @@ export function SkillSourceDiffViewer({ entries, className }: Props) {
                 STATUS_TONE[entry.status],
               )}
             >
-              {t(`mySkills.sourceDiff.status.${entry.status}`)}
+              {t(
+                comparison && entry.status === "modified"
+                  ? "review.fileVersions"
+                  : `mySkills.sourceDiff.status.${entry.status}`,
+              )}
             </span>
             <span
               className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-secondary"

@@ -1,4 +1,4 @@
-import { Loader2, Plus, RefreshCw, RotateCcw, Square, SquareCheck, Trash2, X } from "lucide-react";
+import { Loader2, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -36,6 +36,7 @@ interface LibrarySkillCardProps extends LibrarySkillItemProps {
 export function LibrarySkillCard({
   skill,
   displayName,
+  hideCreator,
   enabledInPreset,
   hasViewedPreset,
   viewedPresetName,
@@ -111,11 +112,14 @@ export function LibrarySkillCard({
             {/* Fixed-width slot: status dot / drag handle on hover / checkbox in multi-select */}
             <div className="relative flex h-4 w-4 shrink-0 items-center justify-center">
               {isMultiSelect ? (
-                selected ? (
-                  <SquareCheck className="h-3.5 w-3.5 text-accent" />
-                ) : (
-                  <Square className="h-3.5 w-3.5 text-faint" />
-                )
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  aria-label={t("mySkills.selectSkill", { name: displayName })}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={() => onToggleSelect(skill.id)}
+                  className="h-4 w-4 accent-accent"
+                />
               ) : (
                 <>
                   <span
@@ -138,7 +142,16 @@ export function LibrarySkillCard({
               className="flex-1 truncate text-[14px] font-semibold text-primary group-hover:text-accent-light"
               title={displayName}
             >
-              {displayName}
+              <button
+                type="button"
+                className="max-w-full truncate text-left focus-visible:underline"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenDetail(skill.id);
+                }}
+              >
+                {displayName}
+              </button>
             </h3>
             {showUpdatePill && (
               <button
@@ -147,7 +160,7 @@ export function LibrarySkillCard({
                   onRefresh(skill);
                 }}
                 disabled={updating}
-                className="bg-amber-500/12 inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-amber-600 outline-none transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
+                className="bg-amber-500/12 inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-amber-700 outline-none transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
                 title={refreshLabel(skill, t)}
               >
                 <RotateCcw className={cn("h-2.5 w-2.5", updating && "animate-spin")} />
@@ -161,7 +174,9 @@ export function LibrarySkillCard({
                   onOpenChange={(open) => onMenuSkillChange(open ? skill.id : null)}
                   className={cn(
                     "transition-opacity",
-                    menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                    menuOpen
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
                   )}
                   actions={[
                     {
@@ -199,14 +214,14 @@ export function LibrarySkillCard({
                   checked={enabledInPreset}
                   disabled={!hasViewedPreset}
                   onChange={() => onTogglePreset(skill)}
-                  title={enabledInPreset ? t("mySkills.enabledButton") : t("mySkills.enable")}
+                  title={enabledInPreset ? t("mySkills.inPreset") : t("mySkills.notInPreset")}
                 />
               </>
             )}
           </div>
 
           <div className="px-3.5 pb-3">
-            <p className="truncate text-[13px] leading-[18px] text-muted">
+            <p className="line-clamp-2 text-[13px] leading-[18px] text-muted">
               {skill.description || "—"}
             </p>
             {((badge && !showUpdatePill) || hasConflict) && (
@@ -217,7 +232,7 @@ export function LibrarySkillCard({
                       e.stopPropagation();
                       onOpenBackup();
                     }}
-                    className="bg-amber-500/12 rounded-full px-2 py-0.5 text-[13px] font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+                    className="bg-amber-500/12 rounded-full px-2 py-0.5 text-[13px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
                     title={t("mySkills.needsAttentionHint")}
                   >
                     {t("mySkills.needsAttention")}
@@ -274,7 +289,8 @@ export function LibrarySkillCard({
                       e.stopPropagation();
                       onRemoveTag(skill, tag);
                     }}
-                    className="hidden rounded-full p-0 opacity-60 hover:opacity-100 group-hover/tag:inline-flex"
+                    aria-label={t("mySkills.tags.removeTag", { tag })}
+                    className="inline-flex rounded-full p-0 opacity-0 hover:opacity-100 focus:opacity-100 group-focus-within/tag:opacity-60 group-hover/tag:opacity-60"
                   >
                     <X className="h-2.5 w-2.5" />
                   </button>
@@ -339,7 +355,7 @@ export function LibrarySkillCard({
                     onTagEditSkillChange(skill.id);
                     onTagInputChange("");
                   }}
-                  className="inline-flex items-center rounded-full p-0.5 text-faint opacity-0 transition-colors hover:text-muted group-hover:opacity-100"
+                  className="inline-flex items-center rounded-full p-0.5 text-faint opacity-0 transition-colors hover:text-muted group-focus-within:opacity-100 group-hover:opacity-100"
                   title={t("mySkills.tags.addTag")}
                 >
                   <Plus className="h-3 w-3" />
@@ -348,13 +364,13 @@ export function LibrarySkillCard({
             </div>
           </div>
 
-          <div className="mt-auto flex items-center justify-between gap-2 border-t border-border-faint px-3.5 py-2.5">
+          <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border-faint px-3.5 py-2.5">
             <div className="flex min-w-0 items-center gap-1.5">
               <span className="inline-flex shrink-0 items-center gap-1 text-[12px] text-muted">
                 {sourceIcon(skill.source_type)}
                 {sourceTypeLabel(skill)}
               </span>
-              {creator.kind !== "local" && (
+              {!hideCreator && creator.kind !== "local" && (
                 <>
                   <span className="text-faint">·</span>
                   <CreatorBadge creator={creator} />
@@ -363,22 +379,27 @@ export function LibrarySkillCard({
               {enabledInPreset && (
                 <>
                   <span className="text-faint">·</span>
-                  <span className="truncate text-[12px] font-medium text-amber-600 dark:text-amber-400/80">
+                  <span className="truncate text-[12px] font-medium text-amber-700 dark:text-amber-400/80">
                     {viewedPresetName}
                   </span>
                 </>
               )}
             </div>
-            <SyncDots
-              className="shrink-0"
-              skill={skill}
-              tools={tools}
-              limit={6}
-              onToggle={
-                isMultiSelect ? undefined : (tool, enabled) => onToggleTarget(skill, tool, enabled)
-              }
-              pendingKey={pendingTool}
-            />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-muted">{t("dashboard.synced")}</span>{" "}
+              <SyncDots
+                className="shrink-0"
+                skill={skill}
+                tools={tools}
+                limit={6}
+                onToggle={
+                  isMultiSelect
+                    ? undefined
+                    : (tool, enabled) => onToggleTarget(skill, tool, enabled)
+                }
+                pendingKey={pendingTool}
+              />
+            </div>
           </div>
         </div>
       )}

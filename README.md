@@ -36,14 +36,14 @@
 
 ## Features
 
-Agents Manager brings three kinds of reusable resources into one Library: Skills, Instructions, and MCP definitions. The same host selector scopes the Library and Global and Project Workspaces; a remote host keeps its own files and library. See [Agents Manager workflows and CLI](AGENTS-MANAGER.md) for deployment reviews, credential references, recovery, and backup compatibility.
+Agents Manager brings three kinds of reusable resources into one Library: Skills, Instructions, and MCP definitions. The same host selector scopes the Library and Global and Project Workspaces; a remote host keeps its own files and library. See [Agents Manager workflows and CLI](AGENTS-MANAGER.md) for deployment reviews, credential references, recovery, and Sync compatibility.
 
 - **Unified skill library** — Install skills from Git repos, local folders, `.zip` / `.skill` archives, or the [skills.sh](https://skills.sh) marketplace. Everything goes into one central repo, which defaults to `~/.skills-manager` and can be customized in **Settings**.
 - **Instructions** — Edit supported instruction files in place or save reusable bundles with linked documents. Review deployments against the current project before applying them; library edits never silently change deployed files.
 - **MCP connections** — Add definitions manually, import supported configurations, or browse the official MCP Registry. Review commands, arguments, and credential references before saving or deploying. The target agent handles process startup and authentication.
 - **Marketplace** — Browse popular skills from the marketplace and find them with keyword search.
 - **Your agents can manage skills** — Claude Code, Codex, Cursor and the rest can install a skill, deploy it to another agent, or report what is where, by driving Agents Manager instead of writing into an agent's folder behind its back — so sources, presets, update tracking and per-agent state stay intact. The Dashboard sets this up in one click; see [Let your agents manage skills](#let-your-agents-manage-skills).
-- **Presets** — Group skills into named presets. In any workspace, click a preset pill to instantly activate or deactivate all its skills for the current agent scope. Applying a preset is a one-time copy, not a live sync. The sidebar lists all presets for quick access.
+- **Presets** — Group skills into named presets. Library selects the preset you view and edit. In Global Workspace, switch the shared active preset that hosts in Sync follow; review removals before applying. In Project Workspaces, preset actions add or remove skills only in that project. Edited agent copies are preserved for review. The sidebar lists all presets for quick access.
 - **Global Workspace** — Each agent gets its own page listing every skill in its global folder — including ones installed outside Agents Manager — so the view always reflects what the agent actually sees. Add or remove skills per agent, or use the All Agents overview to manage every installed agent at once.
 - **Project Workspaces** — View and manage project-local skill folders for supported agents, compare them with your central library, and sync changes in either direction. Supports nested skill directories and per-agent assignment when exporting.
 - **SSH hosts** — Register remote macOS or Linux hosts in Settings, connect using your existing SSH access, and manage their own library and project paths from the host selector.
@@ -55,7 +55,7 @@ Agents Manager brings three kinds of reusable resources into one Library: Skills
 - **Update tracking** — Check for upstream updates on Git-based skills; re-import local ones.
 - **Skill preview and source inspection** — Read `SKILL.md` / `README.md`, inspect source metadata, and compare local content with the upstream version inside the app.
 - **Custom tools** — Add your own agents/tools with custom skills directories, or override the default path for any built-in tool.
-- **Backup & multi-device sync** — Back up the library, including portable Instructions and MCP definitions, to a Git repository. Skill changes merge by skill; conflicting Instructions or MCP definitions pause the merge for review. Backups and their controls are local to the machine, even when a remote host is selected. Deployment state, overrides, journals, catalog caches, and secrets are excluded. See [backup compatibility](AGENTS-MANAGER.md#backup-compatibility).
+- **Sync across hosts** — Share skills, presets, and the active preset through a Git repository. Inspect host state and compare conflicts before resolving them. Deployment state, overrides, journals, catalog caches, and credentials stay local. See [Sync compatibility](AGENTS-MANAGER.md#sync-compatibility).
 - **Activity log & Export Logs** — Install / remove / update / sync operations are recorded locally. Use **Settings → Export Logs** to bundle recent logs and activity history into a single zip for easier issue reports.
 - **Flexible app settings** — Configure repo path, sync mode, theme, text size, language, tray behavior, proxy, Git remote, update checks, and the order agents appear throughout the app — all in one place.
 - **In-app updates** — The app tells you when a new version is out and installs it for you on macOS and Windows. Nothing downloads or installs on its own: checking only notifies, and installing and restarting each take a click.
@@ -85,7 +85,7 @@ Every installer ships the CLI inside the app — see [Where the binary lives](#w
 1. Add Skills from local folders, Git repositories, archives, or the marketplace; create or import Instructions and MCP definitions in the Library.
 2. Choose a local or registered SSH host, then open Global Workspace or a Project Workspace and select the agent and resources to deploy.
 3. Review instruction and MCP deployment previews before applying them. Use presets or **+ Add Skills** to manage skills in a workspace.
-4. Set up Git backup for the local library from **Backup** or **Settings** when you want history or multi-device sync.
+4. Open **Sync** to connect the shared library, review participating hosts, and inspect history.
 
 ## Let your agents manage skills
 
@@ -99,31 +99,15 @@ It is also published as a skill, so it can be installed without the app:
 npx skills add Yis-company/skills-manager
 ```
 
-## Backup & Multi-Device Sync
+## Sync across hosts
 
-The **Backup** page (sidebar) keeps your skill library versioned in a Git repository. One device gets versioned backup with a restorable history; several devices connected to the same repository stay in sync with each other automatically. The remote stays a plain Git repository — you can `git clone` it anywhere, no lock-in.
+Open **Sync** to connect the shared library through a Git remote and inspect each participating host. Hosts follow the same skills, presets, and shared active preset; each applies changes on its next successful sync. Selecting a preset in Library only changes what you view and edit.
 
-### Connect
-
-- **Sign in with GitHub** (recommended): an 8-digit device-flow sign-in creates a private `skills-manager-backup` repository for you. The token is stored in the OS keychain — never in files or the repo config.
-- **Advanced**: paste any Git URL (HTTPS + PAT, SSH, self-hosted) under **Settings → Git Sync Configuration**.
-- On a new machine with an empty library, the first launch asks: **start fresh, or restore from a backup?**
-
-### How syncing works
-
-- **Automatic**: local changes are committed and pushed in the background a couple of minutes after you stop editing; updates pushed by your other devices are merged in and pushed back automatically. **Back Up Now** is always available for an immediate run, and every backup in the history shows which device made it.
-- **Skill-aware merging**: changes are merged per skill, not per text line — renaming a skill on one machine combines cleanly with editing its content on another.
-- **Skill conflicts**: if the same skill was edited on two devices at once, review the conflict and choose **keep mine / use remote / keep both**. The version before the choice stays in the history.
-- **Instruction and MCP conflicts**: a conflicting bundle or definition pauses the merge. Choose which version to keep in the Library, then run sync again.
-- **History & restore**: the Backup page history lists every change with the device that made it; restore any of them. A restore first saves the current state, so it can be undone from the history.
-
-### What's included
-
-Skills, tags, presets, per-agent skill toggles, portable instruction bundles, and MCP definitions are backed up. Deployment state, overrides, journals, catalog caches, and secrets stay local. Backups are controlled by the local machine even while an SSH host is selected. Skills over 100 MB stay local and are excluded from backup automatically (labeled on the Backup page). The SQLite database is not in Git — it stores metadata that is rebuilt from the skill files.
-
-### Disconnecting
-
-The Backup page offers three levels: **disconnect this machine** (other devices and remote data untouched), **revoke the GitHub authorization**, or **delete the remote backup** entirely (routed through GitHub's own type-the-name confirmation).
+- **Connect:** use the GitHub sign-in or the repository URL controls in this host's Sync details. Add SSH hosts with your existing SSH access; review the host and join effects before continuing.
+- **Review:** Needs review offers **Compare changes** before choosing a skill, instruction, MCP, or same-name preset outcome. Review the named versions and affected files, then confirm the choice. Changed versions require a fresh review.
+- **Local edits:** edited agent copies remain in place until you compare them and choose **Use Sync version** or **Keep my edit**. Replacing an edited copy preserves it under `edited-backups/` first.
+- **Recover:** Sync history retains recovery points. Inspect the host and selected point before restoring.
+- **Scope:** portable library resources are shared; credentials and host-specific operational state stay local. Unavailable hosts do not provide current evidence about their files. See [workflow and compatibility details](AGENTS-MANAGER.md#sync-compatibility).
 
 ## Supported Tools
 

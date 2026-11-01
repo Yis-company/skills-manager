@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRight,
+  CircleHelp,
   Download,
   Folder,
   FolderOpen,
@@ -32,8 +33,15 @@ export function CommandPalette() {
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  const { managedSkills, presets, projects, viewedPreset, setViewedPresetId, openSkillDetailById } =
-    useApp();
+  const {
+    managedSkills,
+    presets,
+    projects,
+    viewedPreset,
+    setViewedPresetId,
+    openSkillDetailById,
+    openHelp,
+  } = useApp();
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -135,6 +143,13 @@ export function CommandPalette() {
 
     const actionDefs: PaletteItem[] = [
       {
+        id: "action:help",
+        kind: "action",
+        label: t("help.title"),
+        icon: <CircleHelp className="h-3.5 w-3.5" />,
+        run: () => openHelp(),
+      },
+      {
         id: "action:dashboard",
         kind: "action",
         label: t("sidebar.dashboard"),
@@ -177,6 +192,7 @@ export function CommandPalette() {
     return [...skillItems, ...presetItems, ...projectItems, ...actions];
   }, [
     query,
+    openHelp,
     managedSkills,
     presets,
     projects,

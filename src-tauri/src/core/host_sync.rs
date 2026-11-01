@@ -27,6 +27,7 @@ pub const SCREEN_COMMANDS: &[&str] = &[
     "sync_history",
     "sync_restore",
     "sync_conflicts",
+    "sync_review",
     "sync_resolve",
     "sync_resolve_preset",
     "sync_resolve_resource",

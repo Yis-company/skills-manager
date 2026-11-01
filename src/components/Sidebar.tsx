@@ -371,6 +371,8 @@ export function Sidebar() {
       <>
         <div className="mb-1.5 flex items-center gap-1 px-2.5">
           <button
+            aria-expanded={group.isOpen}
+            aria-controls={`sidebar-${group.category}-workspaces`}
             onClick={group.onToggle}
             className="flex min-w-0 flex-1 items-center gap-1 text-left outline-none"
           >
@@ -385,7 +387,7 @@ export function Sidebar() {
           </button>
         </div>
         {group.isOpen && (
-          <>
+          <div id={`sidebar-${group.category}-workspaces`}>
             {/* Pinned overview item */}
             {(() => {
               const isActive = location.pathname === group.basePath;
@@ -481,7 +483,7 @@ export function Sidebar() {
                               </button>
                               <div
                                 className={cn(
-                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
+                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100",
                                   isActive ? "bg-surface-active" : "bg-surface-hover",
                                 )}
                               >
@@ -502,7 +504,7 @@ export function Sidebar() {
                 </SortableContext>
               </DndContext>
             )}
-          </>
+          </div>
         )}
       </>
     );
@@ -554,6 +556,8 @@ export function Sidebar() {
           {/* ── Presets ── */}
           <div className="mb-1.5 flex items-center gap-1 px-2.5">
             <button
+              aria-expanded={presetsOpen}
+              aria-controls="sidebar-presets"
               onClick={() => setPresetsOpen((v) => !v)}
               className="flex min-w-0 flex-1 items-center gap-1 text-left outline-none"
             >
@@ -578,7 +582,12 @@ export function Sidebar() {
                   items={orderedPresets.map((s) => s.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <div className="space-y-0.5">
+                  <div
+                    className="max-h-24 space-y-0.5 overflow-y-auto"
+                    id="sidebar-presets"
+                    role="region"
+                    aria-label={t("sidebar.presets")}
+                  >
                     {orderedPresets.map((preset) => {
                       const isActive = viewedPreset?.id === preset.id;
                       const presetIcon = getPresetIconOption(preset);
@@ -597,7 +606,11 @@ export function Sidebar() {
                             <>
                               <button
                                 onClick={() => handleSwitchPreset(preset.id)}
-                                title={preset.description || undefined}
+                                title={
+                                  preset.description
+                                    ? `${preset.name} — ${preset.description}`
+                                    : preset.name
+                                }
                                 className={cn(
                                   "flex min-w-0 flex-1 items-center gap-2 px-2.5 py-[7px] text-left text-sm leading-5 outline-none",
                                   isActive
@@ -633,7 +646,7 @@ export function Sidebar() {
                               </button>
                               <div
                                 className={cn(
-                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
+                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100",
                                   isActive ? "bg-surface-active" : "bg-surface-hover",
                                 )}
                               >
@@ -721,6 +734,8 @@ export function Sidebar() {
           {/* ── Projects ── */}
           <div className="mb-1.5 flex items-center gap-1 px-2.5">
             <button
+              aria-expanded={projectsOpen}
+              aria-controls="sidebar-projects"
               onClick={() => setProjectsOpen((v) => !v)}
               className="flex min-w-0 flex-1 items-center gap-1 text-left outline-none"
             >
@@ -745,7 +760,7 @@ export function Sidebar() {
                   items={orderedProjects.map((p) => p.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <div className="space-y-0.5">
+                  <div id="sidebar-projects" className="space-y-0.5">
                     {orderedProjects.map((project) => {
                       const isActive = location.pathname === `/project/${project.id}`;
 
@@ -819,7 +834,7 @@ export function Sidebar() {
                               </button>
                               <div
                                 className={cn(
-                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
+                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100",
                                   isActive ? "bg-surface-active" : "bg-surface-hover",
                                 )}
                               >

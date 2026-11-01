@@ -1,8 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { ChangeReviewDialog, type ChangeReviewTarget } from "../../components/ChangeReviewDialog";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { RemoveHostDialog } from "../../components/RemoveHostDialog";
 import { useApp } from "../../context/AppContext";
@@ -131,30 +133,20 @@ export function HostPane({
 
 function AgentLog({ host, onChanged }: { host: SyncHost; onChanged: () => Promise<void> }) {
   const { t } = useTranslation();
-  const [entries, setEntries] = useState<api.AgentLogEntry[] | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<ChangeReviewTarget | null>(null);
   const edited = host.status?.edited_here ?? [];
 
-  const load = useCallback(() => {
-    api
-      .syncCall<api.AgentLogEntry[]>(host.id, "sync_agent_log")
-      .then(setEntries)
-      .catch(() => setEntries([]));
-  }, [host.id]);
+  const query = useQuery({
+    queryKey: ["agent-log", host.id],
+    queryFn: () => api.syncCall<api.AgentLogEntry[]>(host.id, "sync_agent_log"),
+    retry: false,
+  });
 
-  useEffect(load, [load]);
+  const entries = query.isFetching ? null : (query.data ?? null);
+  const logError = query.error ? getErrorMessage(query.error, t("sync.log.loadFailed")) : null;
 
-  const choose = async (copy: api.EditedCopy, keepMine: boolean) => {
-    try {
-      await api.syncCall(host.id, "resolve_edited_copy", {
-        skillId: copy.skill_id,
-        tool: copy.agent,
-        keepMine,
-      });
-      await onChanged();
-      load();
-    } catch (error) {
-      toast.error(getErrorMessage(error, t("common.error")));
-    }
+  const load = () => {
+    void query.refetch();
   };
 
   return (
@@ -170,27 +162,51 @@ function AgentLog({ host, onChanged }: { host: SyncHost; onChanged: () => Promis
                 item: copy.name,
                 agent: copy.agent,
               })}
-              <span className="ml-2 inline-flex gap-1">
-                <button
-                  type="button"
-                  className="text-[12px] font-medium text-accent hover:underline"
-                  onClick={() => choose(copy, false)}
-                >
-                  {t("sync.log.useSync")}
-                </button>
-                ·
-                <button
-                  type="button"
-                  className="text-[12px] font-medium text-accent hover:underline"
-                  onClick={() => choose(copy, true)}
-                >
-                  {t("sync.log.keepMine")}
-                </button>
-              </span>
+              <button
+                type="button"
+                className="ml-2 font-medium text-accent hover:underline"
+                onClick={() =>
+                  setReviewTarget({
+                    kind: "edited",
+                    key: copy.skill_id,
+                    tool: copy.agent,
+                    name: copy.name,
+                    choices: [false, true].map((keepMine) => ({
+                      label: t(keepMine ? "sync.log.keepMine" : "sync.log.useSync"),
+                      command: "resolve_edited_copy",
+                      args: { skillId: copy.skill_id, tool: copy.agent, keepMine },
+                    })),
+                  })
+                }
+              >
+                {t("review.compare")}
+              </button>
             </li>
           ))}
         </ul>
       )}
+      {reviewTarget && (
+        <ChangeReviewDialog
+          hostId={host.id}
+          target={reviewTarget}
+          onClose={() => setReviewTarget(null)}
+          onApplied={async () => {
+            await onChanged();
+            load();
+          }}
+        />
+      )}
+      {logError && (
+        <div role="alert" className="text-red-600 dark:text-red-300">
+          <p>
+            {t("sync.log.loadFailed")} {logError}
+          </p>
+          <button type="button" className="app-button-secondary mt-2" onClick={load}>
+            {t("sync.log.retry")}
+          </button>
+        </div>
+      )}
+      {!logError && entries === null && <p role="status">{t("common.loading")}</p>}
       {entries !== null && entries.length === 0 && edited.length === 0 && (
         <p className="text-muted">{t("sync.log.empty")}</p>
       )}

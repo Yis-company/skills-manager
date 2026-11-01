@@ -88,7 +88,7 @@ export function Sync() {
       </div>
       {noticeOpen && thisHost.inSync && <SyncNotice onDismiss={dismissNotice} />}
 
-      <div className="grid min-h-[560px] grid-cols-[240px_minmax(0,1fr)] overflow-hidden rounded-xl border border-border-subtle">
+      <div className="grid min-h-[560px] grid-cols-1 overflow-hidden rounded-xl border border-border-subtle xl:grid-cols-[240px_minmax(0,1fr)]">
         <aside className="space-y-0.5 border-r border-border-subtle bg-bg-secondary p-2">
           {navItem(
             "overview",
@@ -119,7 +119,10 @@ export function Sync() {
                 ) : (
                   <StateDot state={h.state} />
                 )}
-                <span className="truncate">{h.name || t("sync.thisHost")}</span>
+                <span className="min-w-0 flex-1 truncate">{h.name || t("sync.thisHost")}</span>
+                <span className="text-[11px] text-muted">
+                  {t(`remoteHosts.syncStates.${h.state}`)}
+                </span>
                 {h.id === null && (
                   <span className="text-[11px] text-faint">{t("sync.thisHost")}</span>
                 )}

@@ -78,13 +78,13 @@ Removing a library item with active deployments requires `{"id":"...","detach":t
 
 Interrupted instruction operations can be recovered from Instructions or `instructions recover`. For MCPs, inspect/deployments reports pending recovery IDs; use the displayed recovery control or `mcps recover --id <recovery-id>`. Recovery checks the original destination and preserves later edits. An interrupted library directory replacement blocks Git backup until recovered.
 
-## Backup compatibility
+## Sync compatibility
 
 Reusable instruction bundles and MCP definitions live under the existing Git library in `.agents-manager/`. Deployment state, overrides, journals, catalog caches and secrets are excluded. Restoring a library does not deploy its contents into projects.
 
 Upgrade all devices sharing an expanded library before enabling synchronization. Older clients can mishandle the new resource types; a schema marker cannot change an old binary's behavior. New clients validate portable resources and refuse detected incompatible writes.
 
-A conflicting instruction bundle or MCP definition pauses the merge without applying merged files. In the Library, review both versions and select the version to keep, then run sync again. The CLI exposes the same choices:
+A conflicting instruction bundle or MCP definition pauses the merge without applying merged files. In Sync → Needs review, compare both versions, choose the outcome, and confirm it. The choice is recorded in the shared library; other hosts follow it on their next successful sync. The CLI exposes the same choices:
 
 ```sh
 skills-manager-cli --json instructions conflicts
@@ -93,4 +93,4 @@ skills-manager-cli --json instructions resolve --input conflict-choice.json
 
 The choice file contains `{"id":"<conflict-id>","choice":"local"}` or `"remote"`. Here local means the selected host's library; remote means the Git backup version. Choices are tied to the compared versions and expire when either changes.
 
-Desktop backup controls still operate on the local machine. Selecting an SSH host does not retarget them. Run backup on the remote machine through its own app or existing CLI Git commands.
+The Sync screen names its hosts explicitly and runs each host’s actions through that host’s connection. The Library host selector does not silently redirect a pending Sync review. A comparison failure or unavailable host is not evidence that the host has no changes.

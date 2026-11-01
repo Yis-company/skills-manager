@@ -81,6 +81,7 @@ pub const COMMANDS: &[&str] = &[
     "sync_now",
     "sync_history",
     "sync_conflicts",
+    "sync_review",
     "sync_resolve",
     "sync_resolve_preset",
     "sync_resolve_resource",
@@ -331,12 +332,22 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             a.req("skillId")?,
             a.req("tool")?,
         )),
-        "resolve_edited_copy" => reply(sync::resolve_edited_copy_core(
-            ctx,
-            a.req("skillId")?,
-            a.req("tool")?,
-            a.req("keepMine")?,
-        )),
+        "resolve_edited_copy" => reply((|| {
+            let skill: String = a.req("skillId")?;
+            let tool: String = a.req("tool")?;
+            let review: Option<String> = a.opt("review")?;
+            let _lock = crate::core::repo_lock::RepoLock::acquire_foreground("resolve edited copy")
+                .map_err(AppError::internal)?;
+            crate::core::change_review::check(
+                &ctx.store,
+                review.as_deref(),
+                "edited",
+                &skill,
+                Some(&tool),
+            )
+            .map_err(AppError::internal)?;
+            sync::resolve_edited_copy_core(ctx, skill, tool, a.req("keepMine")?)
+        })()),
         "sync_access_key" => reply(sync_access::public_key(&a.req::<String>("comment")?)),
         "sync_access_setup" => reply(sync_access::write_known_hosts(
             &a.req::<Vec<String>>("hostKeys")?,
@@ -363,6 +374,15 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
             sync_service::SYNC_COMMIT_MESSAGE,
         )),
         "sync_history" => reply(sync_service::history(a.opt("limit")?)),
+        "sync_review" => reply(
+            crate::core::change_review::preview(
+                &ctx.store,
+                &a.req::<String>("kind")?,
+                &a.req::<String>("key")?,
+                a.opt::<String>("tool")?.as_deref(),
+            )
+            .map_err(AppError::internal),
+        ),
         "sync_conflicts" => reply(Ok(sync_service::conflicts(&ctx.store))),
         "sync_resolve" => reply((|| {
             let keep: Option<String> = a.opt("keep")?;
@@ -372,7 +392,12 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
                 keep.as_deref(),
                 a.opt("both")?.unwrap_or(false),
             )?;
-            sync_service::resolve(ctx, &skill_id, action)
+            sync_service::resolve_reviewed(
+                ctx,
+                &skill_id,
+                action,
+                a.opt::<String>("review")?.as_deref(),
+            )
         })()),
         "sync_resolve_preset" => reply((|| {
             let choice = match (a.opt::<String>("keep")?, a.opt("combine")?.unwrap_or(false)) {
@@ -380,13 +405,19 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
                 (None, true) => sync_service::PresetChoice::Combine,
                 (None, false) => sync_service::PresetChoice::KeepBoth,
             };
-            sync_service::resolve_preset(&ctx.store, &a.req::<String>("preset")?, choice)
+            sync_service::resolve_preset_reviewed(
+                &ctx.store,
+                &a.req::<String>("preset")?,
+                choice,
+                a.opt::<String>("review")?.as_deref(),
+            )
         })()),
         "sync_resolve_resource" => reply(
-            crate::core::resource_sync::resolve(
+            crate::core::resource_sync::resolve_reviewed(
                 ctx,
                 &a.req::<String>("key")?,
                 a.opt("other")?.unwrap_or(false),
+                a.opt::<String>("review")?.as_deref(),
             )
             .map_err(|e| AppError::classify_git_error(format!("{e:#}"))),
         ),
@@ -575,7 +606,16 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
         "delete_preset" => reply(presets::delete_preset_core(ctx, a.req("id")?)),
         "preview_preset_switch" => reply(presets::preview_preset_switch_core(ctx, a.req("id")?)),
         "switch_preset" | "apply_preset_to_default" => {
-            reply(presets::apply_preset_to_default_core(ctx, a.req("id")?))
+            let id: String = a.req("id")?;
+            let review: Option<String> = a.opt("review")?;
+            reply(
+                crate::core::scenario_service::apply_scenario_reviewed(
+                    &ctx.store,
+                    &id,
+                    review.as_deref(),
+                )
+                .and_then(crate::core::scenario_service::refusals_to_error),
+            )
         }
         "apply_preset_to_coding_agents" => reply(presets::apply_preset_to_coding_agents_core(
             ctx,

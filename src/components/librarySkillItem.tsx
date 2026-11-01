@@ -8,6 +8,7 @@ import type { SortableHandleProps } from "./SortableItem";
 export interface LibrarySkillItemProps {
   skill: ManagedSkill;
   displayName: string;
+  hideCreator?: boolean;
   enabledInPreset: boolean;
   hasViewedPreset: boolean;
   viewedPresetName: string;
@@ -83,11 +84,13 @@ export const statusBadge = (skill: ManagedSkill, t: TFunction) => {
 };
 
 export const renderDragHandle = (handleProps: SortableHandleProps, title: string) => (
-  <div
+  <button
+    type="button"
     {...handleProps}
+    aria-label={title}
     title={title}
-    className="absolute inset-0 flex cursor-grab items-center justify-center rounded text-faint opacity-0 transition-opacity hover:text-muted active:cursor-grabbing group-hover:opacity-100"
+    className="absolute inset-0 flex cursor-grab items-center justify-center rounded text-faint opacity-0 transition-opacity hover:text-muted active:cursor-grabbing group-focus-within:opacity-100 group-hover:opacity-100"
   >
     <GripVertical className="h-4 w-4" />
-  </div>
+  </button>
 );

@@ -18,7 +18,16 @@ const DOT: Record<ShownState, string> = {
 };
 
 export function StateDot({ state }: { state: ShownState }) {
-  return <span className={cn("h-2 w-2 shrink-0 rounded-full", DOT[state])} />;
+  const { t } = useTranslation();
+
+  return (
+    <span
+      role="img"
+      aria-label={t(`remoteHosts.syncStates.${state}`)}
+      title={t(`remoteHosts.syncStates.${state}`)}
+      className={cn("h-2 w-2 shrink-0 rounded-full", DOT[state])}
+    />
+  );
 }
 
 export function StatePill({ state, className }: { state: ShownState; className?: string }) {

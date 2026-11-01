@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw, RotateCcw, Square, SquareCheck, Trash2 } from "lucide-react";
+import { Loader2, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canRefreshSkill } from "../lib/librarySkillQuery";
@@ -23,6 +23,7 @@ import { ToggleSwitch } from "./ToggleSwitch";
 export function LibrarySkillRow({
   skill,
   displayName,
+  hideCreator,
   enabledInPreset,
   hasViewedPreset,
   viewedPresetName,
@@ -69,7 +70,7 @@ export function LibrarySkillRow({
       {(handleProps) => (
         <div
           className={cn(
-            "app-panel group relative flex cursor-pointer items-center gap-3.5 rounded-xl border-transparent px-3.5 py-3 transition-all hover:border-border hover:bg-surface-hover",
+            "app-panel group relative flex flex-wrap cursor-pointer items-center gap-3.5 rounded-xl border-transparent px-3.5 py-3 transition-all hover:border-border hover:bg-surface-hover",
             isMultiSelect && selected && "ring-1 ring-accent border-accent/40",
           )}
           onClick={() => (isMultiSelect ? onToggleSelect(skill.id) : onOpenDetail(skill.id))}
@@ -82,11 +83,14 @@ export function LibrarySkillRow({
           {/* Same fixed slot as the grid card: status dot / drag handle / checkbox */}
           <div className="relative flex h-4 w-4 shrink-0 items-center justify-center">
             {isMultiSelect ? (
-              selected ? (
-                <SquareCheck className="h-3.5 w-3.5 text-accent" />
-              ) : (
-                <Square className="h-3.5 w-3.5 text-faint" />
-              )
+              <input
+                type="checkbox"
+                checked={selected}
+                aria-label={t("mySkills.selectSkill", { name: displayName })}
+                onClick={(event) => event.stopPropagation()}
+                onChange={() => onToggleSelect(skill.id)}
+                className="h-4 w-4 accent-accent"
+              />
             ) : (
               <>
                 <span
@@ -108,7 +112,16 @@ export function LibrarySkillRow({
             className="w-[180px] shrink-0 truncate text-[14px] font-semibold text-secondary group-hover:text-primary"
             title={displayName}
           >
-            {displayName}
+            <button
+              type="button"
+              className="max-w-full truncate text-left focus-visible:underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenDetail(skill.id);
+              }}
+            >
+              {displayName}
+            </button>
           </h3>
 
           <p className="min-w-0 flex-1 truncate text-[13px] text-muted">
@@ -129,14 +142,14 @@ export function LibrarySkillRow({
             ))}
           </div>
 
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
             {hasConflict && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenBackup();
                 }}
-                className="bg-amber-500/12 rounded-full px-2 py-0.5 text-[12px] font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+                className="bg-amber-500/12 rounded-full px-2 py-0.5 text-[12px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
                 title={t("mySkills.needsAttentionHint")}
               >
                 {t("mySkills.needsAttention")}
@@ -149,7 +162,7 @@ export function LibrarySkillRow({
                   onRefresh(skill);
                 }}
                 disabled={updating}
-                className="bg-amber-500/12 inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-amber-600 outline-none transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
+                className="bg-amber-500/12 inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-amber-700 outline-none transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
                 title={refreshLabel(skill, t)}
               >
                 <RotateCcw className={cn("h-2.5 w-2.5", updating && "animate-spin")} />
@@ -167,6 +180,7 @@ export function LibrarySkillRow({
                 </span>
               )
             )}
+            <span className="text-[11px] text-muted">{t("dashboard.synced")}</span>
             <SyncDots
               skill={skill}
               tools={tools}
@@ -177,20 +191,22 @@ export function LibrarySkillRow({
               }
               pendingKey={pendingTool}
             />
-            <CreatorBadge creator={creator} size="md" hideLocal className="max-w-[160px]" />
+            {!hideCreator && (
+              <CreatorBadge creator={creator} size="md" hideLocal className="max-w-[160px]" />
+            )}
             <span className="inline-flex items-center gap-1 text-[13px] text-muted">
               {sourceIcon(skill.source_type)}
               {sourceTypeLabel(skill)}
             </span>
             {enabledInPreset && (
-              <span className="text-[13px] font-medium text-amber-600 dark:text-amber-400/80">
+              <span className="text-[13px] font-medium text-amber-700 dark:text-amber-400/80">
                 {viewedPresetName}
               </span>
             )}
           </div>
 
           {isMissingLocalSource && !isMultiSelect && (
-            <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+            <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -221,7 +237,9 @@ export function LibrarySkillRow({
                 onOpenChange={(open) => onMenuSkillChange(open ? skill.id : null)}
                 className={cn(
                   "transition-opacity",
-                  menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                  menuOpen
+                    ? "opacity-100"
+                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
                 )}
                 actions={[
                   {
@@ -257,7 +275,7 @@ export function LibrarySkillRow({
                 checked={enabledInPreset}
                 disabled={!hasViewedPreset}
                 onChange={() => onTogglePreset(skill)}
-                title={enabledInPreset ? t("mySkills.enabledButton") : t("mySkills.enable")}
+                title={enabledInPreset ? t("mySkills.inPreset") : t("mySkills.notInPreset")}
               />
             </div>
           )}

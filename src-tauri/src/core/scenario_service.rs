@@ -648,18 +648,78 @@ pub fn apply_scenario_to_default(
     store: &SkillStore,
     scenario_id: &str,
 ) -> Result<Vec<TargetConflict>, AppError> {
-    ensure_scenario_exists(store, scenario_id)?;
-    let desired_targets = collect_scenario_sync_targets(store, scenario_id)?;
+    apply_scenario_reviewed(store, scenario_id, None)
+}
 
-    unsync_obsolete_scenario_targets(store, &desired_targets)?;
-
-    // The active preset is shared (SID-98): its file goes out with the next sync.
+pub fn apply_scenario_reviewed(
+    store: &SkillStore,
+    scenario_id: &str,
+    review: Option<&str>,
+) -> Result<Vec<TargetConflict>, AppError> {
     super::sync_metadata::with_repo_lock("switch preset", || {
+        super::change_review::check(store, review, "switch", scenario_id, None)?;
+        ensure_scenario_exists(store, scenario_id)?;
+        let desired = collect_scenario_sync_targets(store, scenario_id)?;
+        unsync_obsolete_scenario_targets(store, &desired)?;
         store.set_active_scenario(scenario_id)?;
-        super::sync_metadata::write_all_from_db_unlocked(store)
+        super::sync_metadata::write_all_from_db_unlocked(store)?;
+        Ok(sync_desired_targets(store, &desired)?)
     })
-    .map_err(AppError::db)?;
-    sync_desired_targets(store, &desired_targets)
+    .map_err(AppError::db)
+}
+
+/// Exact host-local effects. Other Sync hosts calculate their own targets later.
+pub fn preview_switch_review(store: &SkillStore, id: &str) -> anyhow::Result<serde_json::Value> {
+    use serde_json::json;
+    ensure_scenario_exists(store, id)?;
+    let desired = collect_scenario_sync_targets(store, id)?;
+    let mut targets = store.get_all_targets()?;
+    targets.sort_by(|a, b| (&a.skill_id, &a.tool).cmp(&(&b.skill_id, &b.tool)));
+    let mut additions = Vec::new();
+    let mut removals = Vec::new();
+    let mut preserved = Vec::new();
+    let mut state = Vec::new();
+    for target in &targets {
+        let edited = edited_here(target);
+        let owned =
+            sync_engine::matches_recorded_deployment(Path::new(&target.target_path), &target.mode)?;
+        let exists = match std::fs::symlink_metadata(&target.target_path) {
+            Ok(_) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        let wanted = desired.iter().any(|d| {
+            d.skill_id == target.skill_id
+                && d.tool == target.tool
+                && d.target == Path::new(&target.target_path)
+        });
+        let name = store
+            .get_skill_by_id(&target.skill_id)?
+            .map(|s| s.name)
+            .unwrap_or_else(|| target.skill_id.clone());
+        let item = json!({"name":name,"agent":target.tool,"path":target.target_path});
+        if exists && (edited || !owned) {
+            preserved.push(item);
+        } else if !wanted && exists {
+            removals.push(item);
+        }
+        state.push(json!({"target":target,"edited":edited,"owned":owned,"exists":exists}));
+    }
+    let mut desired_state = Vec::new();
+    for d in &desired {
+        if !targets.iter().any(|t| {
+            t.skill_id == d.skill_id && t.tool == d.tool && Path::new(&t.target_path) == d.target
+        }) {
+            additions.push(json!({"name":d.skill_name,"agent":d.tool,"path":d.target}));
+        }
+        desired_state.push(json!({"id":d.skill_id,"name":d.skill_name,"agent":d.tool,"path":d.target,"source":d.source,"mode":d.mode.as_str(),"revision":d.source_hash}));
+    }
+    desired_state.sort_by_key(|v| v.to_string());
+    let active = store.get_active_scenario_id()?;
+    let presets = store.get_all_scenarios()?;
+    Ok(
+        json!({"kind":"switch","key":id,"files":[],"left_label":active.as_ref().and_then(|id|presets.iter().find(|p| &p.id==id)).map(|p|&p.name),"right_label":presets.iter().find(|p|p.id==id).map(|p|&p.name),"additions":additions,"removals":removals,"preserved":preserved,"state":state,"desired":desired_state,"active":active}),
+    )
 }
 
 pub fn sync_skill_to_active_scenario(

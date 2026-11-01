@@ -4,7 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { cn } from "../utils";
 
 /** Spread onto the element that should start a drag (the grip handle). */
-export type SortableHandleProps = NonNullable<ReturnType<typeof useSortable>["listeners"]> & {
+export type SortableHandleProps = React.HTMLAttributes<HTMLElement> & {
   ref: (element: HTMLElement | null) => void;
   onClick: (event: React.MouseEvent) => void;
 };
@@ -34,13 +34,21 @@ export function SortableItem({ id, disabled, className, children }: SortableItem
   };
 
   const handleProps: SortableHandleProps = {
+    ...attributes,
+    "aria-roledescription": undefined,
     ...listeners,
     ref: setActivatorNodeRef,
     onClick: (e) => e.stopPropagation(),
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} className={cn("h-full", className)}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      role="group"
+      aria-roledescription="sortable"
+      className={cn("h-full", className)}
+    >
       {children(handleProps)}
     </div>
   );

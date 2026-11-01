@@ -296,9 +296,19 @@ pub fn resolve_choice(
 
 /// Resolve a skill conflict (SID-108) and apply the result.
 pub fn resolve(ctx: &HostCtx, skill_id: &str, action: ResolveAction) -> Result<(), AppError> {
+    resolve_reviewed(ctx, skill_id, action, None)
+}
+
+pub fn resolve_reviewed(
+    ctx: &HostCtx,
+    skill_id: &str,
+    action: ResolveAction,
+    review: Option<&str>,
+) -> Result<(), AppError> {
     let store = &ctx.store;
     let skills_dir = central_repo::skills_dir();
     git_backup::with_repo_lock("resolve conflict", || {
+        super::change_review::check(store, review, "skill", skill_id, None)?;
         apply_device_identity(store, &skills_dir);
         merge::resolve::resolve_conflict_unlocked(store, &skills_dir, skill_id, action)?;
         reconcile_skills_index_unlocked(store)?;
@@ -320,6 +330,15 @@ pub fn resolve_preset(
     preset_id: &str,
     choice: PresetChoice,
 ) -> Result<(), AppError> {
+    resolve_preset_reviewed(store, preset_id, choice, None)
+}
+
+pub fn resolve_preset_reviewed(
+    store: &SkillStore,
+    preset_id: &str,
+    choice: PresetChoice,
+    review: Option<&str>,
+) -> Result<(), AppError> {
     let mut reviews = sync_metadata::preset_reviews(store).map_err(AppError::db)?;
     let other = reviews
         .remove(preset_id)
@@ -337,6 +356,14 @@ pub fn resolve_preset(
     };
     let active = store.get_active_scenario_id().map_err(AppError::db)?;
     sync_metadata::with_repo_lock("resolve same-name presets", || {
+        super::change_review::check(store, review, "preset", preset_id, None)?;
+        if review.is_some() {
+            sync_metadata::write_all_from_db_unlocked(store)?;
+            git_backup::commit_changes_unlocked(
+                &central_repo::skills_dir(),
+                "backup before preset resolution",
+            )?;
+        }
         if let (Some(keep), Some(drop)) = (&keep, &drop) {
             if choice == PresetChoice::Combine {
                 for skill_id in store.get_skill_ids_for_scenario(drop)? {

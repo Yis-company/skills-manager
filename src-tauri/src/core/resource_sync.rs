@@ -319,7 +319,7 @@ pub struct ResourceConflict {
 pub fn conflicts(repo: &Repository) -> Result<Vec<ResourceConflict>> {
     open_conflicts(repo)?
         .into_iter()
-        .map(|(key, declared)| describe(repo, key, declared).map(|(conflict, ..)| conflict))
+        .map(|(key, _)| comparison_versions(repo, &key).map(|(conflict, ..)| conflict))
         .collect()
 }
 
@@ -359,10 +359,67 @@ fn resource_name(key: &str, files: Option<&BTreeMap<String, String>>) -> String 
         .unwrap_or_else(|| key.to_owned())
 }
 
+pub fn comparison_versions(
+    repo: &Repository,
+    key: &str,
+) -> Result<(
+    ResourceConflict,
+    BTreeMap<String, FileEntry>,
+    BTreeMap<String, FileEntry>,
+    Oid,
+)> {
+    let declared = *open_conflicts(repo)?
+        .get(key)
+        .context("Conflict no longer exists")?;
+    let merge = repo.find_commit(declared)?;
+    let other = merge.parent(1)?;
+    let head = repo.head()?.peel_to_commit()?;
+    let files = |commit: &git2::Commit| -> Result<BTreeMap<String, FileEntry>> {
+        let tree = commit.tree()?;
+        validate_tree(repo, &tree)?;
+        Ok(
+            groups(&super::merge::snapshot::read_snapshot(repo, &tree)?.residual)
+                .remove(key)
+                .unwrap_or_default(),
+        )
+    };
+    let kept = files(&head)?;
+    let alternative = files(&other)?;
+    let metadata = kept
+        .iter()
+        .chain(alternative.iter())
+        .filter(|(path, _)| path.ends_with("definition.json") || key.starts_with("mcps/"))
+        .map(|(path, entry)| {
+            Ok((
+                path.clone(),
+                std::str::from_utf8(repo.find_blob(entry.oid)?.content())?.to_owned(),
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let conflict = ResourceConflict {
+        key: key.into(),
+        kind: key.split('/').next().unwrap_or_default().into(),
+        name: resource_name(key, Some(&metadata)),
+        this_host: merge.author().name().unwrap_or_default().into(),
+        other_host: other.author().name().unwrap_or_default().into(),
+    };
+    Ok((conflict, kept, alternative, declared))
+}
+
 /// Resolve a conflict, then apply the result to this host's agents.
 pub fn resolve(ctx: &HostCtx, key: &str, use_other: bool) -> Result<()> {
+    resolve_reviewed(ctx, key, use_other, None)
+}
+
+pub fn resolve_reviewed(
+    ctx: &HostCtx,
+    key: &str,
+    use_other: bool,
+    review: Option<&str>,
+) -> Result<()> {
     {
         let _lock = RepoLock::acquire_foreground("resolve instruction or MCP conflict")?;
+        super::change_review::check(&ctx.store, review, "resource", key, None)?;
         resolve_unlocked(&ctx.store, key, use_other)?;
     }
     super::sync_apply::reapply_resources(ctx);

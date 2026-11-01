@@ -158,12 +158,37 @@ export const handlers = {
           ]
         : [];
     }),
-  host_sync_call: ({ hostId, command }: { hostId: string; command: string }, state) => {
+  host_sync_call: (
+    { hostId, command, args }: { hostId: string; command: string; args: SyncCallArgs },
+    state,
+  ) => {
+    if (command === "sync_review")
+      return changeReview(
+        args,
+        state.remoteStates[hostId] ? createState(state.remoteStates[hostId]) : state,
+      );
     const host = state.remoteHosts.find((h) => h.id === hostId);
 
     return syncCommand(command, syncStatus(state, host?.name ?? hostId, []));
   },
   sync_screen_call: ({ command, args }: { command: string; args: SyncCallArgs }, state) => {
+    if (command === "sync_review") return changeReview(args, state);
+
+    if (args.review) {
+      const expected = JSON.parse(String(args.review));
+
+      if (
+        JSON.stringify(expected) !==
+        JSON.stringify(
+          changeReview(
+            { kind: expected.kind, key: expected.key, tool: expected.tool ?? null },
+            state,
+          ),
+        )
+      )
+        throw new Error("Changes since review. Compare again before applying.");
+    }
+
     if (command === "sync_resolve") {
       state.syncConflicts = state.syncConflicts.filter((c) => c.skill_id !== args.skill);
     }
@@ -743,6 +768,13 @@ export const handlers = {
 
     return null;
   },
+  get_source_skill_document: ({ skillId }: { skillId: string }, state) => ({
+    skill_id: skillId,
+    filename: "SKILL.md",
+    content: `# ${state.skills.find((skill) => skill.id === skillId)?.name ?? skillId}\n\nSource copy.`,
+    source_label: "Fixture source",
+    revision: "fixture",
+  }),
   get_skill_document: ({ skillId }: { skillId: string }, state) => {
     const found = state.skills.find((s) => s.id === skillId);
 
@@ -755,6 +787,19 @@ export const handlers = {
   },
 
   // ── Presets ──
+  apply_preset_to_default: ({ id, review }: { id: string; review?: string }, state) => {
+    if (
+      review &&
+      JSON.stringify(JSON.parse(review)) !==
+        JSON.stringify(changeReview({ kind: "switch", key: id }, state))
+    )
+      throw new Error("Changes since review. Compare again before applying.");
+    state.activePresetId = id;
+
+    for (const skill of state.skills) if (!skill.preset_ids.includes(id)) skill.targets = [];
+
+    return null;
+  },
   get_presets: (_args, state) => presetsWithCounts(state),
   get_active_preset: (_args, state) =>
     presetsWithCounts(state).find((p) => p.id === state.activePresetId) ?? null,
@@ -963,4 +1008,46 @@ function syncCommand(command: string, status: SyncStatus) {
   if (["sync_agent_log", "sync_pre_join_copies", "sync_history"].includes(command)) return [];
 
   return null;
+}
+
+/** Fixture data for review flows; real version/staleness protection is tested in Rust. */
+function changeReview(args: SyncCallArgs, state: State) {
+  const kind = String(args.kind);
+  const key = String(args.key);
+  const supplied = state.changeReviews[`${kind}:${key}`];
+
+  if (supplied) return supplied;
+
+  if (kind === "switch") {
+    return {
+      kind,
+      key,
+      left_label: state.presets.find((p) => p.id === state.activePresetId)?.name ?? null,
+      right_label: state.presets.find((p) => p.id === key)?.name ?? key,
+      additions: [],
+      removals: state.skills
+        .filter((skill) => !skill.preset_ids.includes(key))
+        .flatMap((skill) =>
+          skill.targets.map((target) => ({
+            name: skill.name,
+            agent: target.tool,
+            path: target.target_path,
+          })),
+        ),
+      preserved: [],
+    };
+  }
+
+  const conflict =
+    state.syncConflicts.find((c) => c.skill_id === key) ??
+    state.resourceConflicts.find((c) => c.key === key);
+
+  return {
+    kind,
+    key,
+    tool: args.tool ?? null,
+    left_label: conflict?.this_host ?? "e2e-machine",
+    right_label: conflict?.other_host ?? "Remote-agent",
+    files: [],
+  };
 }

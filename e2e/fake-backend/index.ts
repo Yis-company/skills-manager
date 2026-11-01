@@ -10,7 +10,7 @@ import { emit } from "@tauri-apps/api/event";
  */
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
-import { findHandler } from "./handlers";
+import { type CommandArgs, findHandler } from "./handlers";
 import { createState, type Seed, type State } from "./state";
 
 export interface RecordedCall {
@@ -76,10 +76,17 @@ mockIPC(
     calls.push({ cmd, args });
     await holds.get(cmd)?.promise;
 
-    const failure = failures.get(cmd)?.shift();
+    // SAFETY: these two IPC names own the SyncCallArgs contract; other commands keep their own key.
+    const subcommand =
+      cmd === "sync_screen_call" || cmd === "host_sync_call"
+        ? (args as CommandArgs<"sync_screen_call">).command
+        : cmd;
+
+    const failureKey = failures.has(subcommand) ? subcommand : cmd;
+    const failure = failures.get(failureKey)?.shift();
 
     if (failure !== undefined) {
-      if (failures.get(cmd)?.length === 0) failures.delete(cmd);
+      if (failures.get(failureKey)?.length === 0) failures.delete(failureKey);
       throw failure;
     }
 
