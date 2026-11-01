@@ -695,7 +695,7 @@ for (const theme of ["light", "dark"]) {
   test(`bounded recovery retains successes and an unknown result offers reconnect without Retry in ${theme}`, async ({
     page,
     backend,
-  }) => {
+  }, testInfo) => {
     const build: OperationSnapshot = {
       ...installation("build"),
       items: [
@@ -733,7 +733,7 @@ for (const theme of ["light", "dark"]) {
     ).toBeVisible();
     await page.screenshot({
       animations: "disabled",
-      path: `/private/tmp/ski-23-checking-${theme}.png`,
+      path: testInfo.outputPath(`checking-${theme}.png`),
     });
     await page.clock.fastForward(12500);
     await expect(
@@ -751,7 +751,7 @@ for (const theme of ["light", "dark"]) {
     await expect(region.getByRole("button", { name: "Reconnect and check result" })).toBeVisible();
     await page.screenshot({
       animations: "disabled",
-      path: `/private/tmp/ski-23-recovery-${theme}.png`,
+      path: testInfo.outputPath(`recovery-${theme}.png`),
     });
     await backend.patch({
       remoteStates: {

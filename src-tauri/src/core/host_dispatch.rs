@@ -1173,8 +1173,8 @@ mod tests {
         std::fs::write(
             &config,
             format!(
-                "[url \"file://{}\"]\n    insteadOf = https://fixture.invalid/skills.git\n",
-                repo.display()
+                "[url \"{}\"]\n    insteadOf = https://fixture.invalid/skills.git\n",
+                tauri::Url::from_directory_path(&repo).unwrap()
             ),
         )
         .unwrap();
@@ -1281,8 +1281,8 @@ mod tests {
         std::fs::write(
             &config,
             format!(
-                "[url \"file://{}\"]\n    insteadOf = https://github.com/fixture/skills.git\n",
-                repo.display()
+                "[url \"{}\"]\n    insteadOf = https://github.com/fixture/skills.git\n",
+                tauri::Url::from_directory_path(&repo).unwrap()
             ),
         )
         .unwrap();
@@ -1325,7 +1325,8 @@ mod tests {
     #[test]
     fn cache_waits_release_execution_slots_and_cancel_without_library_writes() {
         use fs2::FileExt;
-        let host = test_host();
+        let events = Arc::new(RecordingEvents::default());
+        let host = test_host_with(events.clone());
         let repo = host.tmp.path().join("git-source");
         crate::core::test_support::write_skill(&repo.join("skills/one"), "one");
         for args in [
@@ -1354,8 +1355,8 @@ mod tests {
         std::fs::write(
             &config,
             format!(
-                "[url \"file://{}\"]\n    insteadOf = https://github.com/fixture/skills.git\n",
-                repo.display()
+                "[url \"{}\"]\n    insteadOf = https://github.com/fixture/skills.git\n",
+                tauri::Url::from_directory_path(&repo).unwrap()
             ),
         )
         .unwrap();
@@ -1380,10 +1381,24 @@ mod tests {
         for (id, skill) in [("cache-one", "two"), ("cache-two", "three")] {
             dispatch(&host.ctx, "operation_request", &request(id, skill)).unwrap();
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        let waiting_observed = || {
+            let events = events.0.lock().unwrap();
+            ["cache-one", "cache-two"].iter().all(|id| {
+                events.iter().any(|(event, snapshot)| {
+                    event == "operation-changed"
+                        && snapshot["operation_id"] == *id
+                        && snapshot["items"][0]["phase"] == "waiting"
+                })
+            })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !waiting_observed() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        let waited = waiting_observed();
         let project = operation_project(&host, "unrelated-cache");
         submit_operation(&host, "unrelated-cache", &project);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while read_operation(&host, "unrelated-cache")["settled"] != true
             && std::time::Instant::now() < deadline
         {
@@ -1391,7 +1406,6 @@ mod tests {
         }
         let progressed =
             read_operation(&host, "unrelated-cache")["items"][0]["phase"] == "succeeded";
-        let waiting = read_operation(&host, "cache-one");
         for id in ["cache-one", "cache-two"] {
             dispatch(
                 &host.ctx,
@@ -1405,7 +1419,7 @@ mod tests {
         settled_operation(&host, "cache-two");
         settled_operation(&host, "unrelated-cache");
         assert!(progressed, "a cache wait consumed both execution slots");
-        assert_eq!(waiting["items"][0]["phase"], "waiting", "{waiting}");
+        assert!(waited, "both cache-blocked operations must report waiting");
         assert!(!crate::core::central_repo::skills_dir().join("two").exists());
     }
 

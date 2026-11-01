@@ -410,7 +410,7 @@ for (const theme of ["light", "dark"])
   test(`quit choices remain readable and keyboard accessible in ${theme}`, async ({
     page,
     backend,
-  }) => {
+  }, testInfo) => {
     await backend.seed({ operations: [operation()], settings: { theme, text_size: "xlarge" } });
     await page.setViewportSize({ width: 1000, height: 900 });
     await page.goto("/install?tab=local");
@@ -419,7 +419,7 @@ for (const theme of ["light", "dark"])
     await expect(dialog).toBeVisible();
     expect(await dialog.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
     await page.screenshot({
-      path: `/private/tmp/ski-25-choices-${theme}.png`,
+      path: testInfo.outputPath(`choices-${theme}.png`),
       animations: "disabled",
     });
     await dialog
@@ -428,7 +428,7 @@ for (const theme of ["light", "dark"])
     await page.keyboard.press("Enter");
     await expect(page.getByRole("status", { name: "Pending quit" })).toBeVisible();
     await page.screenshot({
-      path: `/private/tmp/ski-25-pending-${theme}.png`,
+      path: testInfo.outputPath(`pending-${theme}.png`),
       animations: "disabled",
     });
     await page.getByRole("button", { name: "Keep app open", exact: true }).focus();

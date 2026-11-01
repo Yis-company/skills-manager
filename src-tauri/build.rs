@@ -10,4 +10,13 @@ fn main() {
         ),
     )
     .expect("failed to run tauri-build");
+
+    // Tauri's resource is linked into app binaries, but native adapter unit tests
+    // also need Common Controls v6 to load (tauri-apps/tauri#14580).
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+            .join("windows-app-manifest.xml");
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+    }
 }

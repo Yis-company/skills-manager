@@ -543,7 +543,7 @@ for (const theme of ["light", "dark"]) {
   test(`restored context stays readable and keyboard accessible with enlarged text in ${theme}`, async ({
     page,
     backend,
-  }) => {
+  }, testInfo) => {
     const offline: OperationSnapshot = {
       ...result("offline", "outcome_unknown", "removed"),
       recovery: "unknown",
@@ -576,7 +576,7 @@ for (const theme of ["light", "dark"]) {
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
       .toBe(true);
     await page.screenshot({
-      path: `/private/tmp/ski-24-restored-${theme}.png`,
+      path: testInfo.outputPath(`restored-${theme}.png`),
       animations: "disabled",
     });
     const shortcut = page.getByRole("button", { name: /Original host · Webapp.*Outcome unknown/ });
@@ -586,7 +586,7 @@ for (const theme of ["light", "dark"]) {
     await expect(dialog).toContainText("/original/projects/a-long-project-name");
     await expect(dialog.getByRole("button", { name: "Reconnect and check result" })).toBeDisabled();
     await page.screenshot({
-      path: `/private/tmp/ski-24-offline-${theme}.png`,
+      path: testInfo.outputPath(`offline-${theme}.png`),
       animations: "disabled",
     });
     await page.keyboard.press("Escape");
