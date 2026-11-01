@@ -1,4 +1,5 @@
 import type { ChangeReview } from "../../src/lib/changeReview";
+import type { OperationSnapshot } from "../../src/lib/operations";
 import type {
   ProjectGitPrReview,
   ProjectGitPushReview,
@@ -27,6 +28,8 @@ export type RemoteSeed = Omit<Seed, "remoteHosts" | "remoteStates">;
 
 /** What a test starts from. Every field is optional; a missing one is empty. */
 export interface Seed {
+  operations?: OperationSnapshot[];
+  holdOperations?: boolean;
   skills?: ManagedSkill[];
   /** `skill_count` is computed from the skills' `preset_ids`. */
   presets?: Preset[];
@@ -190,6 +193,8 @@ export type State = Required<Seed>;
 
 export function createState({ settings, ...seed }: Seed): State {
   return structuredClone({
+    operations: [],
+    holdOperations: false,
     skills: [],
     presets: [],
     activePresetId: null,

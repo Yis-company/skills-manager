@@ -118,6 +118,7 @@ pub fn serve_stdio(store: Arc<SkillStore>) -> io::Result<()> {
         alive.emit("keepalive", Value::Null);
     });
     let ctx = HostCtx {
+        operations: Arc::default(),
         store,
         cancel: Arc::new(InstallCancelRegistry::new()),
         events,

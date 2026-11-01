@@ -36,6 +36,9 @@ pub fn toggle_project_skill_core(
     agent: String,
     enabled: bool,
 ) -> Result<(), AppError> {
+    let target =
+        super::center_sync::project_update_target(ctx, &project_id, &skill_relative_path, &agent)?;
+    let _guard = crate::core::project_update_lock::ProjectUpdateLock::acquire(&target)?;
     let store = ctx.store.clone();
     ensure_safe_skill_relative_path(&skill_relative_path)?;
 
@@ -101,6 +104,9 @@ pub fn delete_project_skill_core(
     agent: String,
     whole_skill: Option<bool>,
 ) -> Result<(), AppError> {
+    let target =
+        super::center_sync::project_update_target(ctx, &project_id, &skill_relative_path, &agent)?;
+    let _guard = crate::core::project_update_lock::ProjectUpdateLock::acquire(&target)?;
     let store = ctx.store.clone();
     ensure_safe_skill_relative_path(&skill_relative_path)?;
 

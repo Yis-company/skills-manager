@@ -2,12 +2,15 @@ import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useApp } from "../context/AppContext";
+import { useOperations } from "../context/OperationsContext";
 import { invokeHost } from "../lib/hostCall";
+import { isItemActive } from "../lib/operations";
 import { getAssignedAgents, type ProjectSkillGroup } from "../lib/projectSkillGroups";
 import type { ManagedSkill, ProjectSkill, SkillAgentOutcome, ToolCategory } from "../lib/tauri";
 import type { WorkspaceChange } from "../lib/workspaceChanges";
 import { AgentMatrix, type MatrixAgent, type MatrixRow } from "./AgentMatrix";
 import { statusBadge } from "./librarySkillItem";
+import { ProjectItemProgress } from "./ProjectOperationProgress";
 import { getSyncStatusMeta } from "./projectSkillItem";
 
 interface Props {
@@ -30,6 +33,20 @@ export function SkillMatrix(props: Props) {
   const { t } = useTranslation();
   const { activeHostId, activeHost, managedSkills, tools } = useApp();
   const hostId = activeHostId;
+  const { operations } = useOperations();
+
+  const projectOperations = props.projectId
+    ? operations.filter(
+        (operation) => operation.project_id === props.projectId && operation.host_id === hostId,
+      )
+    : [];
+
+  const operationItems = (relativePath: string | undefined) =>
+    projectOperations
+      .slice()
+      .reverse()
+      .find((operation) => operation.items.some((item) => item.relative_path === relativePath))
+      ?.items.filter((item) => item.relative_path === relativePath) ?? [];
 
   const destination = t("workspace.hostDestination", {
     host: activeHost?.name ?? t("hostSwitcher.local"),
@@ -85,6 +102,14 @@ export function SkillMatrix(props: Props) {
     selected: props.selection?.ids.has(id),
     metadata: (
       <>
+        {operationItems(group?.relative_path ?? copies[0]?.relative_path).length > 0 && (
+          <div className="basis-full">
+            <ProjectItemProgress
+              items={operationItems(group?.relative_path ?? copies[0]?.relative_path)}
+              targets={agents}
+            />
+          </div>
+        )}
         <span>
           {props.projectId
             ? group?.relative_path
@@ -116,15 +141,21 @@ export function SkillMatrix(props: Props) {
 
       const vendoredLock = props.projectId && copy?.vendored;
 
-      const disabled = vendoredLock
-        ? t("project.vendored.lockedReason", { agents: agent.display_name })
-        : edited && !add
-          ? t("workspace.editedProtection")
-          : add && (agent.installed === false || agent.enabled === false)
-            ? t("workspace.unsupported")
-            : add && !library && !group?.vendoredVariant
-              ? t("project.agentAddRequiresCenter", { agent: agent.display_name })
-              : undefined;
+      const updating = operationItems(group?.relative_path ?? copies[0]?.relative_path).some(
+        isItemActive,
+      );
+
+      const disabled = updating
+        ? t("operations.destinationBusy")
+        : vendoredLock
+          ? t("project.vendored.lockedReason", { agents: agent.display_name })
+          : edited && !add
+            ? t("workspace.editedProtection")
+            : add && (agent.installed === false || agent.enabled === false)
+              ? t("workspace.unsupported")
+              : add && !library && !group?.vendoredVariant
+                ? t("project.agentAddRequiresCenter", { agent: agent.display_name })
+                : undefined;
 
       const change: WorkspaceChange = {
         id: JSON.stringify([

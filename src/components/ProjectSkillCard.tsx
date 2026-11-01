@@ -10,12 +10,14 @@ import { getTagColor } from "../lib/skillTags";
 import { cn } from "../utils";
 import { CreatorBadge } from "./CreatorBadge";
 import { ProjectAgentDots } from "./ProjectAgentDots";
+import { ProjectItemProgress } from "./ProjectOperationProgress";
 import { getSyncStatusMeta, type ProjectSkillItemProps } from "./projectSkillItem";
 import { ToggleSwitch } from "./ToggleSwitch";
 
 /** A skill in the project grid view. */
 export function ProjectSkillCard({
   skill,
+  operationItems,
   creator,
   allTags,
   targets,
@@ -87,6 +89,7 @@ export function ProjectSkillCard({
         <p className="truncate text-[13px] leading-[18px] text-muted">
           {skill.description || "\u2014"}
         </p>
+        <ProjectItemProgress items={operationItems} targets={targets} />
         {skill.tags.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1">
             {skill.tags.map((tag) => (
@@ -125,7 +128,11 @@ export function ProjectSkillCard({
               targets={targets}
               limit={4}
               size="sm"
-              onToggle={(agentKey, enabled) => onToggleAgent(skill, agentKey, enabled)}
+              onToggle={
+                isUpdatingProject
+                  ? undefined
+                  : (agentKey, enabled) => onToggleAgent(skill, agentKey, enabled)
+              }
               locked={vendoredLock}
               pendingKey={pendingAgent}
             />
@@ -167,6 +174,7 @@ export function ProjectSkillCard({
               <ToggleSwitch
                 checked={skill.enabledCount === skill.totalCount}
                 loading={isToggling}
+                disabled={isUpdatingProject}
                 onChange={() => onToggleSkill(skill)}
                 title={
                   skill.enabledCount === skill.totalCount
@@ -180,6 +188,7 @@ export function ProjectSkillCard({
                 e.stopPropagation();
                 onDelete(skill);
               }}
+              disabled={isUpdatingProject}
               className="rounded px-2 py-1 text-muted outline-none transition-colors hover:bg-red-500/10 hover:text-red-500"
               title={t("project.deleteSkill")}
             >

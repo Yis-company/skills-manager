@@ -111,10 +111,16 @@ test("updating the center brings the skill up to date", async ({ page, backend }
 test("updating the project brings the skill up to date", async ({ page, backend }) => {
   await skillItem(page, "deploy").getByRole("button", { name: "Update Project" }).click();
 
-  await expect(page.getByText('"deploy" updated to project')).toBeVisible();
-  expect(await backend.calls("update_project_skill_from_center")).toEqual([
-    { projectId: "p1", skillRelativePath: "deploy", agent: "claude_code" },
-  ]);
+  await expect(page.getByRole("region", { name: "Project update progress" })).toContainText(
+    "1 updated",
+  );
+
+  const submissions = (await backend.calls("operation_request")).filter(
+    (call) => call.request.action === "submit_project_update",
+  );
+
+  expect(submissions).toHaveLength(1);
+  expect(submissions[0]).toMatchObject({ request: { project_id: "p1", skill_paths: ["deploy"] } });
   await expect(skillItem(page, "deploy")).toContainText("Up to date");
   await expect(skillItem(page, "deploy").getByRole("button", { name: /^Update/ })).toHaveCount(0);
 });

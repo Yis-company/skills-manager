@@ -853,6 +853,7 @@ pub fn run() {
 
             core::panic_log::install_panic_hook(app.handle().clone());
             let host = core::host::HostCtx {
+                operations: Arc::default(),
                 store: store_for_setup.clone(),
                 cancel: Arc::new(core::install_cancel::InstallCancelRegistry::new()),
                 events: Arc::new(core::host::TauriEvents(app.handle().clone())),
@@ -1014,6 +1015,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::resources::operation_request,
             commands::resources::instructions_request,
             commands::resources::mcps_request,
             commands::resources::resource_sync_request,

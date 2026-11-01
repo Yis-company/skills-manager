@@ -40,6 +40,7 @@ import * as api from "../lib/tauri";
 import { applyTextSize } from "../lib/textScale";
 import { settingsLink } from "../views/settings/categories";
 import { useInstallQueueControl } from "./InstallQueueContext";
+import { OperationsProvider } from "./OperationsContext";
 import { useWorkspaceChanges } from "./WorkspaceChangesContext";
 
 /** The live link to the active remote host. */
@@ -885,7 +886,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         closeSkillDetail: () => setDetailSkillId(null),
       }}
     >
-      {children}
+      <OperationsProvider hostId={activeHostId}>{children}</OperationsProvider>
       <RemoteCliUpdateDialog
         hostId={remoteCliUpdateHostId}
         host={remoteHosts.find((host) => host.id === remoteCliUpdateHostId)}

@@ -11,6 +11,7 @@ import type {
   SyncConflict,
   SyncStatus,
 } from "../../src/lib/tauri";
+import { operationHandler } from "./operations";
 import { projectGitHandler } from "./projectGit";
 import {
   createState,
@@ -122,6 +123,7 @@ type ProjectSkillArgs = {
 // Only the commands the specs reach. Add one when a spec needs it; an unknown
 // command fails the test with "fake backend: no handler for <cmd>".
 export const handlers = {
+  operation_request: operationHandler,
   project_git_request: projectGitHandler,
   // ── App shell ──
   log_startup_event: nothing,
@@ -289,6 +291,8 @@ export const handlers = {
     const result = handler(args ?? {}, remoteState);
 
     const remoteSeed: RemoteSeed = {
+      operations: remoteState.operations,
+      holdOperations: remoteState.holdOperations,
       skills: remoteState.skills,
       globalLocalSkills: remoteState.globalLocalSkills,
       presets: remoteState.presets,

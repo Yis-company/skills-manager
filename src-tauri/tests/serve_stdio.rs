@@ -385,3 +385,81 @@ async fn ssh_localhost_round_trip() {
     let presets = session.call("get_presets", json!({})).await.unwrap();
     assert!(presets.is_array());
 }
+
+#[tokio::test]
+async fn project_operations_use_the_same_contract_over_real_stdio() {
+    let server = start();
+    let source = server.tmp.path().join("source/demo");
+    let project = server.tmp.path().join("project");
+    let target = project.join(".claude/skills/demo");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(source.join("SKILL.md"), "---\nname: demo\n---\nlibrary\n").unwrap();
+    std::fs::write(target.join("SKILL.md"), "---\nname: demo\n---\nold\n").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(target.join("SKILL.md"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(60))
+        .unwrap();
+    server
+        .session
+        .call("install_local", json!({"sourcePath":source}))
+        .await
+        .unwrap();
+    let project = server
+        .session
+        .call("add_project", json!({"path":project}))
+        .await
+        .unwrap();
+    let args = json!({"request":{"action":"submit_project_update","operation_id":"stdio-project","host_id":"test-host","project_id":project["id"]}});
+    let submitted = server
+        .session
+        .call("operation_request", args.clone())
+        .await
+        .unwrap();
+    assert_eq!(submitted["host_id"], "test-host");
+    assert_eq!(submitted["project_id"], project["id"]);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let snapshot = server
+            .session
+            .call(
+                "operation_request",
+                json!({"request":{"action":"read","operation_id":"stdio-project"}}),
+            )
+            .await
+            .unwrap();
+        if snapshot["settled"] == true {
+            assert_eq!(snapshot["items"][0]["phase"], "succeeded");
+            break;
+        }
+        assert!(Instant::now() < deadline, "{snapshot}");
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+        "---\nname: demo\n---\nlibrary\n"
+    );
+    let reattached = server
+        .session
+        .call("operation_request", args)
+        .await
+        .unwrap();
+    assert_eq!(reattached["attempt_id"], submitted["attempt_id"]);
+    let receipt = server
+        .session
+        .call(
+            "operation_request",
+            json!({"request":{"action":"reconcile","operation_id":"stdio-project"}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt["items"][0]["phase"], "succeeded");
+    let list = server
+        .session
+        .call("operation_request", json!({"request":{"action":"list"}}))
+        .await
+        .unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+}

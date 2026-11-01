@@ -1,3 +1,4 @@
+import type { OperationItem } from "../lib/operations";
 import type { ProjectSkillGroup } from "../lib/projectSkillGroups";
 import type { SkillCreator } from "../lib/skillCreator";
 import type { ProjectAgentTarget, ProjectSkill } from "../lib/tauri";
@@ -5,6 +6,7 @@ import type { ProjectAgentTarget, ProjectSkill } from "../lib/tauri";
 /** Shared by the project's grid card and list row. */
 export interface ProjectSkillItemProps {
   skill: ProjectSkillGroup;
+  operationItems: OperationItem[];
   creator: SkillCreator;
   allTags: string[];
   targets: ProjectAgentTarget[];

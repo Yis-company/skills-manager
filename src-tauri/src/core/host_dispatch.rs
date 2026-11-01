@@ -18,6 +18,7 @@ use crate::core::{sync_access, sync_join, sync_service, sync_timer};
 
 /// Every command [`dispatch`] accepts.
 pub const COMMANDS: &[&str] = &[
+    "operation_request",
     "instructions_request",
     "mcps_request",
     "resource_sync_request",
@@ -197,6 +198,7 @@ fn reply<T: Serialize>(result: Result<T, AppError>) -> Result<Value, AppError> {
 pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, AppError> {
     let a = Args(args);
     match command {
+        "operation_request" => crate::core::operations::dispatch(ctx, a.req("request")?),
         "project_git_request" => projects::project_git_request_core(
             ctx,
             &a.req::<String>("projectId")?,
@@ -727,6 +729,457 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn project_operation_captures_scope_and_reports_real_updates() {
+        let host = test_host();
+        let project = host.tmp.path().join("project");
+        let target = project.join(".claude/skills/x");
+        let source = crate::core::central_repo::skills_dir().join("x");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(target.join("SKILL.md"), "old copy").unwrap();
+        std::fs::write(source.join("SKILL.md"), "library version").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(source.join("SKILL.md"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3))
+            .unwrap();
+        host.ctx
+            .store
+            .insert_skill(&crate::core::test_support::sample_skill("x", "x", &source))
+            .unwrap();
+        let project = dispatch(&host.ctx, "add_project", &json!({"path": project})).unwrap();
+        let request = json!({"request": {"action":"submit_project_update", "operation_id":"update-1", "host_id":null, "project_id":project["id"]}});
+        let submitted = dispatch(&host.ctx, "operation_request", &request).unwrap();
+        assert_eq!(submitted["project_id"], project["id"]);
+        assert_eq!(submitted["items"].as_array().unwrap().len(), 1);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let completed = loop {
+            let status = dispatch(
+                &host.ctx,
+                "operation_request",
+                &json!({"request":{"action":"read", "operation_id":"update-1"}}),
+            )
+            .unwrap();
+            if status["settled"] == true {
+                break status;
+            }
+            assert!(std::time::Instant::now() < deadline, "{status}");
+            std::thread::yield_now();
+        };
+        assert_eq!(completed["items"][0]["phase"], "succeeded");
+        assert_eq!(
+            std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+            "library version"
+        );
+        let repeated = dispatch(&host.ctx, "operation_request", &request).unwrap();
+        assert_eq!(repeated["attempt_id"], submitted["attempt_id"]);
+        let receipt = dispatch(
+            &host.ctx,
+            "operation_request",
+            &json!({"request":{"action":"reconcile", "operation_id":"update-1"}}),
+        )
+        .unwrap();
+        assert_eq!(receipt["items"][0]["phase"], "succeeded");
+    }
+
+    struct HeldOperation {
+        entered_once: std::sync::atomic::AtomicBool,
+        entered: std::sync::mpsc::Sender<()>,
+        release: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    }
+    impl HostEvents for HeldOperation {
+        fn emit(&self, event: &str, payload: Value) {
+            if event == "operation-changed"
+                && payload["operation_id"] == "held"
+                && payload["items"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item["phase"] == "applying"))
+                && !self
+                    .entered_once
+                    .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                self.entered.send(()).unwrap();
+                let (lock, wake) = &*self.release;
+                let _guard = wake
+                    .wait_while(lock.lock().unwrap(), |released| !*released)
+                    .unwrap();
+            }
+        }
+    }
+    struct ReleaseOnDrop(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            *self.0 .0.lock().unwrap() = true;
+            self.0 .1.notify_all();
+        }
+    }
+    fn operation_project(host: &TestHost, name: &str) -> Value {
+        let project = host.tmp.path().join(name);
+        let target = project.join(".claude/skills/x");
+        let source = crate::core::central_repo::skills_dir().join("x");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(target.join("SKILL.md"), "old copy").unwrap();
+        std::fs::write(source.join("SKILL.md"), "library version").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(source.join("SKILL.md"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3))
+            .unwrap();
+        if host.ctx.store.get_skill_by_id("x").unwrap().is_none() {
+            host.ctx
+                .store
+                .insert_skill(&crate::core::test_support::sample_skill("x", "x", &source))
+                .unwrap();
+        }
+        dispatch(&host.ctx, "add_project", &json!({"path":project})).unwrap()
+    }
+    fn submit_operation(host: &TestHost, id: &str, project: &Value) -> Value {
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_project_update","operation_id":id,"project_id":project["id"],"host_id":null}})).unwrap()
+    }
+    fn read_operation(host: &TestHost, id: &str) -> Value {
+        dispatch(
+            &host.ctx,
+            "operation_request",
+            &json!({"request":{"action":"read","operation_id":id}}),
+        )
+        .unwrap()
+    }
+    fn settled_operation(host: &TestHost, id: &str) -> Value {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let status = read_operation(host, id);
+            if status["settled"] == true {
+                return status;
+            }
+            assert!(std::time::Instant::now() < deadline, "{status}");
+            std::thread::yield_now();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_operations_serialize_aliases_without_starving_independent_projects() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = test_host_with(Arc::new(HeldOperation {
+            entered_once: std::sync::atomic::AtomicBool::new(false),
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        let a = operation_project(&host, "a");
+        let c = operation_project(&host, "c");
+        submit_operation(&host, "held", &a);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let duplicate = submit_operation(&host, "duplicate", &a);
+        assert_eq!(
+            duplicate["operation_id"], "held",
+            "equivalent active work reattaches"
+        );
+        // A separate linked workspace reaches the same physical folder.
+        let alias = dispatch(&host.ctx, "add_linked_workspace", &json!({"path": host.tmp.path().join("a/.claude/skills"),"agentKey":"claude_code","name":"Alias"})).unwrap();
+        submit_operation(&host, "alias", &alias);
+        submit_operation(&host, "independent", &c);
+        assert_eq!(
+            settled_operation(&host, "independent")["items"][0]["phase"],
+            "succeeded"
+        );
+        assert_ne!(read_operation(&host, "alias")["settled"], true);
+        assert_eq!(
+            std::fs::read_to_string(host.tmp.path().join("a/.claude/skills/x/SKILL.md")).unwrap(),
+            "old copy"
+        );
+        drop(release);
+        assert_eq!(
+            settled_operation(&host, "held")["items"][0]["phase"],
+            "succeeded"
+        );
+        assert_eq!(
+            settled_operation(&host, "alias")["items"][0]["phase"],
+            "unchanged"
+        );
+    }
+
+    #[test]
+    fn cancel_queued_project_work_never_applies_a_write() {
+        let host = test_host();
+        let project = operation_project(&host, "queued");
+        let guard = crate::core::repo_lock::RepoLock::acquire("external library writer").unwrap();
+        submit_operation(&host, "cancel-me", &project);
+        let canceled = dispatch(
+            &host.ctx,
+            "operation_request",
+            &json!({"request":{"action":"cancel","operation_id":"cancel-me"}}),
+        )
+        .unwrap();
+        assert_eq!(canceled["items"][0]["phase"], "canceled");
+        drop(guard);
+        assert_eq!(
+            settled_operation(&host, "cancel-me")["items"][0]["phase"],
+            "canceled"
+        );
+        assert_eq!(
+            std::fs::read_to_string(host.tmp.path().join("queued/.claude/skills/x/SKILL.md"))
+                .unwrap(),
+            "old copy"
+        );
+    }
+
+    #[test]
+    fn failed_only_retry_keeps_successes_and_review_items() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = test_host_with(Arc::new(HeldOperation {
+            entered_once: std::sync::atomic::AtomicBool::new(false),
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        let project = operation_project(&host, "retry");
+        for name in ["y", "review"] {
+            let target = host.tmp.path().join(format!("retry/.claude/skills/{name}"));
+            let source = crate::core::central_repo::skills_dir().join(name);
+            std::fs::create_dir_all(&target).unwrap();
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::write(target.join("SKILL.md"), format!("project {name}")).unwrap();
+            std::fs::write(source.join("SKILL.md"), format!("library {name}")).unwrap();
+            let newer = if name == "review" { &target } else { &source };
+            std::fs::File::options()
+                .write(true)
+                .open(newer.join("SKILL.md"))
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3))
+                .unwrap();
+            host.ctx
+                .store
+                .insert_skill(&crate::core::test_support::sample_skill(
+                    name, name, &source,
+                ))
+                .unwrap();
+        }
+        submit_operation(&host, "held", &project);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let source = crate::core::central_repo::skills_dir().join("x");
+        let saved = host.tmp.path().join("saved-source");
+        std::fs::rename(&source, &saved).unwrap();
+        drop(release);
+        let finished = settled_operation(&host, "held");
+        let phases: std::collections::HashMap<_, _> = finished["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| {
+                (
+                    item["relative_path"].as_str().unwrap(),
+                    item["phase"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(phases["x"], "failed");
+        assert_eq!(phases["y"], "succeeded");
+        assert_eq!(phases["review"], "needs_review");
+        std::fs::rename(saved, source).unwrap();
+        let request = json!({"request":{"action":"retry_failed","operation_id":"held","attempt_id":"retry-attempt"}});
+        dispatch(&host.ctx, "operation_request", &request).unwrap();
+        let retried = settled_operation(&host, "held");
+        let items = retried["items"].as_array().unwrap();
+        assert_eq!(
+            items.iter().find(|i| i["relative_path"] == "x").unwrap()["phase"],
+            "succeeded"
+        );
+        let y = items.iter().find(|i| i["relative_path"] == "y").unwrap();
+        assert_eq!(y["phase"], "succeeded");
+        assert_eq!(y["attempt_id"], finished["attempt_id"]);
+        assert_eq!(
+            items
+                .iter()
+                .find(|i| i["relative_path"] == "review")
+                .unwrap()["phase"],
+            "needs_review"
+        );
+        assert_eq!(
+            dispatch(&host.ctx, "operation_request", &request).unwrap()["revision"],
+            retried["revision"]
+        );
+    }
+
+    #[test]
+    fn reconcile_uses_receipts_without_replaying_an_unowned_apply() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = test_host_with(Arc::new(HeldOperation {
+            entered_once: std::sync::atomic::AtomicBool::new(false),
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        let project = operation_project(&host, "receipt");
+        submit_operation(&host, "held", &project);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let reader = HostCtx::headless(host.ctx.store.clone());
+        let reattached = dispatch(&reader, "operation_request", &json!({"request":{"action":"submit_project_update","operation_id":"held","project_id":project["id"],"host_id":null}})).unwrap();
+        assert_eq!(reattached["items"][0]["phase"], "outcome_unknown");
+        let response = dispatch(
+            &reader,
+            "operation_request",
+            &json!({"request":{"action":"reconcile","operation_id":"held"}}),
+        )
+        .unwrap();
+        assert_eq!(response["items"][0]["phase"], "outcome_unknown");
+        assert_eq!(
+            std::fs::read_to_string(host.tmp.path().join("receipt/.claude/skills/x/SKILL.md"))
+                .unwrap(),
+            "old copy"
+        );
+        drop(release);
+        settled_operation(&host, "held");
+        let response = dispatch(
+            &reader,
+            "operation_request",
+            &json!({"request":{"action":"reconcile","operation_id":"held"}}),
+        )
+        .unwrap();
+        assert_eq!(response["items"][0]["phase"], "succeeded");
+    }
+
+    #[test]
+    fn changed_project_update_intent_returns_to_review() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = test_host_with(Arc::new(HeldOperation {
+            entered_once: std::sync::atomic::AtomicBool::new(false),
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        let project = operation_project(&host, "changed");
+        dispatch(
+            &host.ctx,
+            "set_settings",
+            &json!({"key":"sync_mode","value":"copy"}),
+        )
+        .unwrap();
+        submit_operation(&host, "held", &project);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        dispatch(
+            &host.ctx,
+            "set_settings",
+            &json!({"key":"sync_mode","value":"symlink"}),
+        )
+        .unwrap();
+        drop(release);
+        assert_eq!(
+            settled_operation(&host, "held")["items"][0]["phase"],
+            "needs_review"
+        );
+        assert_eq!(
+            std::fs::read_to_string(host.tmp.path().join("changed/.claude/skills/x/SKILL.md"))
+                .unwrap(),
+            "old copy"
+        );
+    }
+
+    struct HoldEveryApply {
+        entered: std::sync::mpsc::Sender<()>,
+        release: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    }
+    impl HostEvents for HoldEveryApply {
+        fn emit(&self, event: &str, payload: Value) {
+            if event == "operation-changed" && payload["items"][0]["phase"] == "applying" {
+                self.entered.send(()).unwrap();
+                let (lock, wake) = &*self.release;
+                let _guard = wake
+                    .wait_while(lock.lock().unwrap(), |released| !*released)
+                    .unwrap();
+            }
+        }
+    }
+    #[test]
+    fn project_operation_admission_is_bounded_and_running_cancel_waits_for_a_safe_point() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = test_host_with(Arc::new(HoldEveryApply {
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        for name in ["first", "second", "third"] {
+            let project = operation_project(&host, name);
+            submit_operation(&host, name, &project);
+        }
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        // The first two real workers are held at the public progress boundary.
+        // A third may not enter until a slot is released.
+        assert!(receiver
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err());
+        let list = dispatch(
+            &host.ctx,
+            "operation_request",
+            &json!({"request":{"action":"list"}}),
+        )
+        .unwrap();
+        assert_eq!(
+            list.as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["items"][0]["phase"] == "applying")
+                .count(),
+            2
+        );
+        let stopping = dispatch(
+            &host.ctx,
+            "operation_request",
+            &json!({"request":{"action":"cancel","operation_id":"first"}}),
+        )
+        .unwrap();
+        assert_eq!(stopping["items"][0]["phase"], "stopping");
+        assert_eq!(
+            stopping["settled"], false,
+            "cancel acknowledgement is not completion"
+        );
+        drop(release);
+        assert_eq!(
+            settled_operation(&host, "first")["items"][0]["phase"],
+            "canceled"
+        );
+        assert_eq!(
+            settled_operation(&host, "second")["items"][0]["phase"],
+            "succeeded"
+        );
+        assert_eq!(
+            settled_operation(&host, "third")["items"][0]["phase"],
+            "succeeded"
+        );
+        assert_eq!(
+            std::fs::read_to_string(host.tmp.path().join("first/.claude/skills/x/SKILL.md"))
+                .unwrap(),
+            "old copy"
+        );
+        assert_eq!(
+            std::fs::read_to_string(host.tmp.path().join("second/.claude/skills/x/SKILL.md"))
+                .unwrap(),
+            "library version"
+        );
     }
 
     #[test]

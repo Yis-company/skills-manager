@@ -1617,5 +1617,36 @@
     "stagedCount_one": "1 target change staged",
     "stagedCount_other": "{{count}} target changes staged",
     "managedPresenceHint": "Managed library deployments · native files and imports are available in details."
+  },
+  "operations": {
+    "projectProgress": "Project update progress",
+    "finished": "Project update finished",
+    "stopping": "Stopping safely",
+    "updating": "Updating from library",
+    "progress": "{{completed}} of {{total}} finished · {{updated}} updated",
+    "result": "{{updated}} updated · {{failed}} failed · {{review}} need review · {{canceled}} canceled",
+    "cancel": "Cancel update",
+    "retry": "Retry failed ({{count}})",
+    "refreshFailed": "Changes finished, but project refresh failed.",
+    "navResult": "{{updated}} updated · {{failed}} failed · {{review}} need review",
+    "navProgress": "Updating {{completed}}/{{total}}",
+    "phase": {
+      "queued": "Queued",
+      "preparing": "Preparing",
+      "waiting": "Waiting for another change",
+      "applying": "Applying update",
+      "stopping": "Stopping safely",
+      "checking_result": "Checking result",
+      "succeeded": "Updated",
+      "unchanged": "Up to date",
+      "failed": "Update failed",
+      "canceled": "Canceled",
+      "needs_review": "Needs review — your copy was kept",
+      "outcome_unknown": "Outcome unknown"
+    },
+    "otherResults": "{{unchanged}} already up to date · {{unknown}} outcome unknown",
+    "destinationBusy": "Update in progress",
+    "navUnknown": "{{unknown}} outcome unknown",
+    "navCanceled": "{{updated}} updated · {{canceled}} canceled"
   }
 }

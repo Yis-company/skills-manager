@@ -36,8 +36,10 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { useApp } from "../context/AppContext";
+import { useOperations } from "../context/OperationsContext";
 import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import { type PresetsData, queryKeys } from "../lib/appQueries";
+import { operationCounts } from "../lib/operations";
 import { getPresetIconOption } from "../lib/presetIcons";
 import { applyStoredOrder } from "../lib/storedOrder";
 import * as api from "../lib/tauri";
@@ -183,6 +185,7 @@ export function Sidebar() {
   const presetReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const projectReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [presetsOpen, setPresetsOpen] = useState(true);
+  const { operations } = useOperations();
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [globalWorkspaceOpen, setGlobalWorkspaceOpen] = useState(true);
   const [lobsterWorkspaceOpen, setLobsterWorkspaceOpen] = useState(true);
@@ -767,6 +770,33 @@ export function Sidebar() {
                     {orderedProjects.map((project) => {
                       const isActive = location.pathname === `/project/${project.id}`;
 
+                      const projectOperations = operations.filter(
+                        (operation) => operation.project_id === project.id,
+                      );
+
+                      const progress =
+                        projectOperations
+                          .slice()
+                          .reverse()
+                          .find((operation) => !operation.settled) ??
+                        projectOperations
+                          .slice()
+                          .reverse()
+                          .find((operation) =>
+                            operation.items.some((item) =>
+                              ["failed", "needs_review", "outcome_unknown"].includes(item.phase),
+                            ),
+                          ) ??
+                        projectOperations.at(-1);
+
+                      const progressKey = !progress?.settled
+                        ? "operations.navProgress"
+                        : progress.items.some((item) => item.phase === "outcome_unknown")
+                          ? "operations.navUnknown"
+                          : progress.items.some((item) => item.phase === "canceled")
+                            ? "operations.navCanceled"
+                            : "operations.navResult";
+
                       const healthIndicator = getSyncHealthIndicator(
                         project.sync_health,
                         project.skill_count,
@@ -810,7 +840,14 @@ export function Sidebar() {
                                     <FolderOpen className="h-3 w-3" />
                                   )}
                                 </span>
-                                <span className="flex-1 truncate">{project.name}</span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">{project.name}</span>
+                                  {progress && (
+                                    <span className="block truncate text-[11px] text-secondary">
+                                      {t(progressKey, operationCounts(progress))}
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="ml-auto flex h-[18px] w-[52px] shrink-0 items-center justify-end gap-2 group-hover:hidden">
                                   {healthIndicator && (
                                     <span

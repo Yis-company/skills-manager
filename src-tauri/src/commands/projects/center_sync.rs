@@ -40,6 +40,8 @@ pub fn import_project_skill_to_center_core(
     skill_relative_path: String,
     agent: String,
 ) -> Result<(), AppError> {
+    let _repository = crate::core::repo_lock::RepoLock::acquire_foreground("import project skill")
+        .map_err(AppError::io)?;
     let store = ctx.store.clone();
     ensure_safe_skill_relative_path(&skill_relative_path)?;
 
@@ -264,6 +266,38 @@ pub fn update_project_skill_from_center_core(
     skill_relative_path: String,
     agent: String,
 ) -> Result<(), AppError> {
+    let target = project_update_target(ctx, &project_id, &skill_relative_path, &agent)?;
+    let _guard = crate::core::project_update_lock::ProjectUpdateLock::acquire(&target)?;
+    update_project_skill_from_center_unlocked(ctx, project_id, skill_relative_path, agent)
+}
+
+pub(crate) fn project_update_target(
+    ctx: &HostCtx,
+    project_id: &str,
+    relative_path: &str,
+    agent: &str,
+) -> Result<PathBuf, AppError> {
+    ensure_safe_skill_relative_path(relative_path)?;
+    let record = ctx
+        .store
+        .get_project_by_id(project_id)
+        .map_err(AppError::db)?
+        .ok_or_else(|| AppError::not_found("Workspace not found"))?;
+    let skills = read_workspace_skills(&record, &agent_skill_configs(&ctx.store));
+    let skill = skills
+        .iter()
+        .find(|s| s.relative_path == relative_path && s.agent == agent)
+        .ok_or_else(|| AppError::not_found("Skill not found"))?;
+    let target = vendored_variant(&record, &skills, skill).unwrap_or(skill);
+    crate::core::project_update_lock::destination(Path::new(&target.path))
+}
+
+fn update_project_skill_from_center_unlocked(
+    ctx: &HostCtx,
+    project_id: String,
+    skill_relative_path: String,
+    agent: String,
+) -> Result<(), AppError> {
     let store = ctx.store.clone();
     ensure_safe_skill_relative_path(&skill_relative_path)?;
 
@@ -379,6 +413,66 @@ mod tests {
     #[cfg(unix)]
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    #[test]
+    fn project_operation_updates_the_vendored_copy_and_keeps_agent_links() {
+        use crate::core::{central_repo, host::HostCtx, host_dispatch};
+        let _lock = central_repo::test_base_dir_lock();
+        let tmp = tempdir().unwrap();
+        central_repo::set_test_base_dir_override(Some(tmp.path().join("host")));
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                central_repo::set_test_base_dir_override(None);
+            }
+        }
+        let _reset = Reset;
+        let (store, record) = agent_selection_fixture(tmp.path(), None);
+        convert_project_to_copy(&store, &record).unwrap();
+        let library_md = tmp.path().join("library/x/SKILL.md");
+        fs::write(&library_md, "---\nname: x\n---\nnew\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&library_md)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3))
+            .unwrap();
+        let ctx = HostCtx::headless(std::sync::Arc::new(store));
+        let submitted = host_dispatch::dispatch(&ctx,"operation_request",&serde_json::json!({"request":{"action":"submit_project_update","operation_id":"vendored","host_id":null,"project_id":record.id}})).unwrap();
+        assert_eq!(
+            submitted["items"].as_array().unwrap().len(),
+            1,
+            "aliases do not duplicate the vendored write"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let snapshot = host_dispatch::dispatch(
+                &ctx,
+                "operation_request",
+                &serde_json::json!({"request":{"action":"read","operation_id":"vendored"}}),
+            )
+            .unwrap();
+            if snapshot["settled"] == true {
+                assert_eq!(snapshot["items"][0]["phase"], "succeeded", "{snapshot}");
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{snapshot}");
+            std::thread::yield_now();
+        }
+        for path in [".agents/skills/x", ".a/skills/x"] {
+            assert_eq!(
+                fs::read_to_string(Path::new(&record.path).join(path).join("SKILL.md")).unwrap(),
+                "---\nname: x\n---\nnew\n"
+            );
+        }
+        assert!(
+            fs::symlink_metadata(Path::new(&record.path).join(".a/skills/x"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
     /// Pulling from the library replaces only the vendored copy, and in place,
     /// so the agent links keep resolving; an edit made in the repo is never
     /// pulled over.
@@ -443,4 +537,147 @@ mod tests {
             "edited in the repo"
         );
     }
+}
+
+/// Captured evidence belongs to the host receipt, never portable Sync metadata.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CapturedProjectUpdate {
+    pub relative_path: String,
+    pub agent: String,
+    pub target: PathBuf,
+    pub source: PathBuf,
+    pub project_path: PathBuf,
+    pub target_content: Option<String>,
+    pub source_content: String,
+    pub source_id: String,
+    pub physical_target: PathBuf,
+    pub deploy_mode: String,
+    pub sync_mode: Option<String>,
+}
+
+type CapturedItem = (
+    Option<CapturedProjectUpdate>,
+    String,
+    String,
+    crate::core::operations::Phase,
+);
+
+pub(crate) fn capture_project_updates(
+    ctx: &HostCtx,
+    project_id: &str,
+    paths: Option<&[String]>,
+) -> Result<(String, Vec<CapturedItem>), AppError> {
+    use crate::core::{content_hash, operations::Phase};
+    let record = ctx
+        .store
+        .get_project_by_id(project_id)
+        .map_err(AppError::db)?
+        .ok_or_else(|| AppError::not_found("Workspace not found"))?;
+    let skills = super::query::get_project_skills_core(ctx, project_id.to_string())?;
+    let managed = ctx.store.get_all_skills().map_err(AppError::db)?;
+    let mut items = vec![];
+    for skill in skills.iter().filter(|s| {
+        s.alias_of.is_none() && paths.map(|p| p.contains(&s.relative_path)).unwrap_or(true)
+    }) {
+        let phase = match skill.sync_status.as_str() {
+            "center_newer" if skill.in_center => Phase::Queued,
+            "project_newer" | "diverged" if skill.in_center => Phase::NeedsReview,
+            _ => continue,
+        };
+        let update = if phase == Phase::Queued {
+            let source = managed
+                .iter()
+                .find(|m| Some(&m.id) == skill.center_skill_id.as_ref())
+                .ok_or_else(|| AppError::not_found("Library skill not found"))?;
+            Some(CapturedProjectUpdate {
+                relative_path: skill.relative_path.clone(),
+                agent: skill.agent.clone(),
+                target: crate::core::project_update_lock::destination(Path::new(&skill.path))?,
+                source: PathBuf::from(&source.central_path).canonicalize()?,
+                project_path: PathBuf::from(&record.path).canonicalize()?,
+                target_content: skill.content_hash.clone(),
+                physical_target: PathBuf::from(&skill.path).canonicalize()?,
+                source_id: source.id.clone(),
+                deploy_mode: record.deploy_mode.clone(),
+                sync_mode: ctx.store.get_setting("sync_mode").map_err(AppError::db)?,
+                source_content: content_hash::hash_directory(Path::new(&source.central_path))
+                    .map_err(AppError::io)?,
+            })
+        } else {
+            None
+        };
+        items.push((
+            update,
+            skill.relative_path.clone(),
+            skill.agent.clone(),
+            phase,
+        ));
+    }
+    Ok((record.path, items))
+}
+
+pub(crate) fn apply_captured_project_update(
+    ctx: &HostCtx,
+    operation_id: &str,
+    project_id: &str,
+    update: &CapturedProjectUpdate,
+) -> Result<crate::core::operations::Phase, AppError> {
+    use crate::core::{content_hash, operations::Phase};
+    if ctx.operations.cancel_requested(operation_id) {
+        return Ok(Phase::Canceled);
+    }
+    let source_content = content_hash::hash_entries(
+        &content_hash::list_content_files_strict(&update.source).map_err(AppError::io)?,
+    );
+    let record = ctx
+        .store
+        .get_project_by_id(project_id)
+        .map_err(AppError::db)?
+        .ok_or_else(|| AppError::not_found("Workspace not found"))?;
+    let skills = super::query::get_project_skills_core(ctx, project_id.to_string())?;
+    let Some(skill) = skills
+        .iter()
+        .find(|s| s.relative_path == update.relative_path && s.agent == update.agent)
+    else {
+        return Ok(Phase::NeedsReview);
+    };
+    if PathBuf::from(&record.path).canonicalize()? != update.project_path
+        || crate::core::project_update_lock::destination(Path::new(&skill.path))? != update.target
+    {
+        return Ok(Phase::NeedsReview);
+    }
+    let managed = ctx
+        .store
+        .get_skill_by_id(&update.source_id)
+        .map_err(AppError::db)?;
+    if record.deploy_mode != update.deploy_mode
+        || ctx.store.get_setting("sync_mode").map_err(AppError::db)? != update.sync_mode
+        || skill.center_skill_id.as_ref() != Some(&update.source_id)
+        || managed
+            .as_ref()
+            .and_then(|m| PathBuf::from(&m.central_path).canonicalize().ok())
+            .as_ref()
+            != Some(&update.source)
+        || source_content != update.source_content
+    {
+        return Ok(Phase::NeedsReview);
+    }
+    if skill.content_hash.as_deref() == Some(update.source_content.as_str()) {
+        return Ok(Phase::Unchanged);
+    }
+    if PathBuf::from(&skill.path).canonicalize()? != update.physical_target
+        || skill.content_hash != update.target_content
+    {
+        return Ok(Phase::NeedsReview);
+    }
+    if ctx.operations.cancel_requested(operation_id) {
+        return Ok(Phase::Canceled);
+    }
+    update_project_skill_from_center_unlocked(
+        ctx,
+        project_id.to_string(),
+        update.relative_path.clone(),
+        update.agent.clone(),
+    )?;
+    Ok(Phase::Succeeded)
 }

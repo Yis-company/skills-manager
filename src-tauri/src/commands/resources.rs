@@ -28,3 +28,10 @@ pub async fn resource_sync_request(
     })
     .await?
 }
+
+#[tauri::command]
+pub async fn operation_request(ctx: State<'_, HostCtx>, request: Value) -> Result<Value, AppError> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::core::operations::dispatch(&ctx, request))
+        .await?
+}
