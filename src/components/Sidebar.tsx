@@ -39,7 +39,7 @@ import { useApp } from "../context/AppContext";
 import { useOperations } from "../context/OperationsContext";
 import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import { type PresetsData, queryKeys } from "../lib/appQueries";
-import { operationCounts } from "../lib/operations";
+import { isLibraryOperation, operationCounts } from "../lib/operations";
 import { getPresetIconOption } from "../lib/presetIcons";
 import { applyStoredOrder } from "../lib/storedOrder";
 import * as api from "../lib/tauri";
@@ -186,6 +186,15 @@ export function Sidebar() {
   const projectReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [presetsOpen, setPresetsOpen] = useState(true);
   const { operations } = useOperations();
+  const libraryOperations = operations.filter(isLibraryOperation);
+  const installActive = libraryOperations.filter((o) => !o.settled).length;
+
+  const installAttention = libraryOperations.reduce((count, operation) => {
+    const counts = operationCounts(operation);
+
+    return count + counts.failed + counts.review + counts.unknown;
+  }, 0);
+
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [globalWorkspaceOpen, setGlobalWorkspaceOpen] = useState(true);
   const [lobsterWorkspaceOpen, setLobsterWorkspaceOpen] = useState(true);
@@ -548,7 +557,16 @@ export function Sidebar() {
                 )}
               >
                 <Icon className={cn("w-4 h-4 shrink-0", isActive ? "text-accent" : "text-muted")} />
-                {item.name}
+                <span>
+                  {item.name}
+                  {item.path === "/install" && (installActive > 0 || installAttention > 0) && (
+                    <span className="block text-[12px] font-normal text-secondary">
+                      {t(installActive ? "operations.installNav" : "operations.installAttention", {
+                        count: installActive || installAttention,
+                      })}
+                    </span>
+                  )}
+                </span>
               </Link>
             );
           })}

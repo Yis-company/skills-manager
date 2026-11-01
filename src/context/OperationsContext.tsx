@@ -10,16 +10,28 @@ import {
   useState,
 } from "react";
 
-import { projectSkillsQueryOptions, queryKeys, refreshQuery } from "../lib/appQueries";
+import {
+  managedSkillsQueryOptions,
+  projectSkillsQueryOptions,
+  queryKeys,
+  refreshQuery,
+} from "../lib/appQueries";
 import { invokeHost } from "../lib/hostCall";
 import { listenOnActiveHost } from "../lib/hostEvents";
-import type { OperationRequest, OperationSnapshot } from "../lib/operations";
+import {
+  type InstallSource,
+  isLibraryOperation,
+  operationQueryKey,
+  type OperationRequest,
+  type OperationSnapshot,
+} from "../lib/operations";
 import { groupProjectSkills } from "../lib/projectSkillGroups";
 import type { Project } from "../lib/tauri";
 
 interface OperationsState {
   operations: OperationSnapshot[];
   refreshErrors: Record<string, string>;
+  install: (sources: InstallSource[]) => Promise<void>;
   submit: (projectId: string, paths?: string[]) => Promise<void>;
   act: (request: OperationRequest) => Promise<void>;
   refresh: (operation: OperationSnapshot) => Promise<void>;
@@ -29,7 +41,7 @@ const Context = createContext<null | OperationsState>(null);
 
 const EMPTY_OPERATIONS: OperationSnapshot[] = [];
 
-const key = (hostId: null | string) => ["host", hostId, "operations"] as const;
+const key = operationQueryKey;
 
 /** Owns observation for the app session; views never run item execution loops. */
 export function OperationsProvider({
@@ -77,30 +89,35 @@ export function OperationsProvider({
       const origin = operation.host_id;
 
       try {
-        const skills = await refreshQuery(
-          client,
-          projectSkillsQueryOptions(origin, operation.project_id),
-        );
+        if (isLibraryOperation(operation)) {
+          await refreshQuery(client, managedSkillsQueryOptions(origin));
+        } else if (operation.project_id) {
+          const skills = await refreshQuery(
+            client,
+            projectSkillsQueryOptions(origin, operation.project_id),
+          );
 
-        // Refresh only the changed project's health, without rescanning every project.
-        const groups = groupProjectSkills(skills);
-        client.setQueryData<Project[]>(queryKeys.projects(origin), (current) =>
-          current?.map((project) =>
-            project.id !== operation.project_id
-              ? project
-              : {
-                  ...project,
-                  skill_count: groups.length,
-                  sync_health: {
-                    in_sync: groups.filter((g) => g.status === "in_sync").length,
-                    center_newer: groups.filter((g) => g.status === "center_newer").length,
-                    project_newer: groups.filter((g) => g.status === "project_newer").length,
-                    diverged: groups.filter((g) => g.status === "diverged").length,
-                    project_only: groups.filter((g) => g.status === "project_only").length,
+          // Refresh only the changed project's health, without rescanning every project.
+          const groups = groupProjectSkills(skills);
+          client.setQueryData<Project[]>(queryKeys.projects(origin), (current) =>
+            current?.map((project) =>
+              project.id !== operation.project_id
+                ? project
+                : {
+                    ...project,
+                    skill_count: groups.length,
+                    sync_health: {
+                      in_sync: groups.filter((g) => g.status === "in_sync").length,
+                      center_newer: groups.filter((g) => g.status === "center_newer").length,
+                      project_newer: groups.filter((g) => g.status === "project_newer").length,
+                      diverged: groups.filter((g) => g.status === "diverged").length,
+                      project_only: groups.filter((g) => g.status === "project_only").length,
+                    },
                   },
-                },
-          ),
-        );
+            ),
+          );
+        }
+
         setRefreshErrors((current) => {
           const next = { ...current };
           delete next[operation.operation_id];
@@ -175,8 +192,30 @@ export function OperationsProvider({
     }
   }
 
+  async function install(sources: InstallSource[]) {
+    const identity = JSON.stringify([hostId, "library", sources]);
+    const existing = submitting.current.get(identity);
+
+    if (existing) return existing;
+
+    const promise = act({
+      action: "submit_install",
+      operation_id: crypto.randomUUID(),
+      host_id: hostId,
+      sources,
+    });
+
+    submitting.current.set(identity, promise);
+
+    try {
+      await promise;
+    } finally {
+      submitting.current.delete(identity);
+    }
+  }
+
   return (
-    <Context.Provider value={{ operations, refreshErrors, submit, act, refresh }}>
+    <Context.Provider value={{ operations, refreshErrors, submit, install, act, refresh }}>
       {children}
     </Context.Provider>
   );

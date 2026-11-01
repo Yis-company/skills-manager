@@ -51,6 +51,20 @@ impl RepoLock {
         }
     }
 
+    pub fn try_exclusive(operation: &str) -> Result<Option<Self>> {
+        let file = open_lock_file()?;
+        match file.try_lock_exclusive() {
+            Ok(()) => Self::stamp(file, operation).map(Some),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.raw_os_error() == Some(33) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Acquire the lock, failing immediately if it is already held. Used by
     /// background loops that prefer to skip a unit of work and retry on the
     /// next round rather than block a user-initiated operation.

@@ -58,7 +58,7 @@ pub struct SkillSourceDiffEntryDto {
     pub executable_after: bool,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GitSkillPreview {
     /// Path relative to the resolved scan root, using `/` separators. Stable key.
     pub rel_path: String,

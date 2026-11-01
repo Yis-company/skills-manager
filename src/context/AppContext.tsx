@@ -27,6 +27,13 @@ import {
 import { getErrorMessage } from "../lib/error";
 import { getActiveHostId, invokeHost, setActiveHostId } from "../lib/hostCall";
 import { listenOnActiveHost } from "../lib/hostEvents";
+import {
+  cancelUnfinishedLibraryOperations,
+  isItemActive,
+  isLibraryOperation,
+  operationQueryKey,
+  type OperationSnapshot,
+} from "../lib/operations";
 import type {
   AppUpdateInfo,
   HostSessionInfo,
@@ -39,7 +46,6 @@ import type {
 import * as api from "../lib/tauri";
 import { applyTextSize } from "../lib/textScale";
 import { settingsLink } from "../views/settings/categories";
-import { useInstallQueueControl } from "./InstallQueueContext";
 import { OperationsProvider } from "./OperationsContext";
 import { useWorkspaceChanges } from "./WorkspaceChangesContext";
 
@@ -158,7 +164,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [hostSession, setHostSession] = useState<HostSession | null>(null);
   const [connectingHostId, setConnectingHostId] = useState<null | string>(null);
   const connectingHostIdRef = useRef(connectingHostId);
-  const installQueue = useInstallQueueControl();
 
   /** Answers the "installs not finished" question a switch asks. */
   const [installsPrompt, setInstallsPrompt] = useState<{
@@ -343,7 +348,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Installs run on the host they were queued for, whose session the
       // switch closes: leave only once they are cancelled.
-      const installs = installQueue.activeCount();
+      const unfinished = (
+        queryClient.getQueryData<OperationSnapshot[]>(operationQueryKey(previous)) ?? []
+      ).filter((operation) => isLibraryOperation(operation) && !operation.settled);
+
+      const installs = unfinished.reduce(
+        (count, operation) => count + operation.items.filter(isItemActive).length,
+        0,
+      );
 
       if (hostId !== previous && installs > 0) {
         const cancelThem = await new Promise<boolean>((answer) =>
@@ -352,7 +364,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (!cancelThem || !isLatest()) return false;
         setConnectingHostId(hostId);
-        await installQueue.cancelAll();
+        await cancelUnfinishedLibraryOperations(previous, unfinished);
 
         if (!isLatest()) return false;
       }
@@ -413,11 +425,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [
       enterHost,
-      installQueue,
       refreshAppDataForHost,
       remoteHosts,
       updatingRemoteCliHostId,
       confirmWorkspaceLeave,
+      queryClient,
     ],
   );
 

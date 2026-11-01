@@ -6,25 +6,20 @@ import { cn } from "../utils";
 
 interface GitInstallTabProps {
   gitUrl: string;
-  /** Clone and preview in flight. */
+  /** Admission request in flight; execution is observed beside this source. */
   gitLoading: boolean;
-  /** Key to cancel the clone in flight with. */
-  gitCancelKey: null | string;
   findInstalledByGitUrl: (url: string) => ManagedSkill | undefined;
   onGitUrlChange: (url: string) => void;
   onPreview: () => void;
-  onCancelInstall: (cancelKey: string) => void;
 }
 
 /** The install page's git tab: clone a repo URL to preview its skills. */
 export function GitInstallTab({
   gitUrl,
   gitLoading,
-  gitCancelKey,
   findInstalledByGitUrl,
   onGitUrlChange,
   onPreview,
-  onCancelInstall,
 }: GitInstallTabProps) {
   const { t } = useTranslation();
 
@@ -63,32 +58,27 @@ export function GitInstallTab({
             </div>
           )}
           <div className="flex gap-2 pt-2">
-            {gitLoading ? (
-              <button
-                onClick={() => gitCancelKey && onCancelInstall(gitCancelKey)}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-[13px] font-medium text-red-400 transition-colors hover:bg-red-500/20"
-                disabled={!gitCancelKey}
-              >
+            <button
+              onClick={onPreview}
+              disabled={gitLoading || !gitUrl.trim()}
+              className={cn(
+                "flex w-full",
+                gitUrl.trim() && findInstalledByGitUrl(gitUrl)
+                  ? "app-button-secondary bg-background"
+                  : "app-button-primary",
+              )}
+            >
+              {gitLoading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t("install.cancel")}
-              </button>
-            ) : (
-              <button
-                onClick={onPreview}
-                disabled={!gitUrl.trim()}
-                className={cn(
-                  "flex w-full",
-                  gitUrl.trim() && findInstalledByGitUrl(gitUrl)
-                    ? "app-button-secondary bg-background"
-                    : "app-button-primary",
-                )}
-              >
+              ) : (
                 <DownloadCloud className="h-3.5 w-3.5" />
-                {gitUrl.trim() && findInstalledByGitUrl(gitUrl)
+              )}
+              {gitLoading
+                ? t("operations.submitting")
+                : gitUrl.trim() && findInstalledByGitUrl(gitUrl)
                   ? t("install.gitReinstall")
                   : t("install.installClone")}
-              </button>
-            )}
+            </button>
           </div>
         </div>
       </div>

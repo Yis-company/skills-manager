@@ -786,6 +786,502 @@ mod tests {
         assert_eq!(receipt["items"][0]["phase"], "succeeded");
     }
 
+    #[test]
+    fn library_operation_installs_local_without_a_project_or_agent() {
+        let host = test_host();
+        let source = host.tmp.path().join("source");
+        crate::core::test_support::write_skill(&source, "writing");
+        let request = json!({"request":{"action":"submit_install","operation_id":"local-install","host_id":null,"sources":[{"kind":"local","path":source,"name":"writing"}]}});
+        let submitted = dispatch(&host.ctx, "operation_request", &request).unwrap();
+        assert_eq!(submitted["destination"]["kind"], "library");
+        assert!(submitted["project_id"].is_null());
+        let result = settled_operation(&host, "local-install");
+        assert_eq!(result["items"][0]["phase"], "succeeded", "{result}");
+        assert!(crate::core::central_repo::skills_dir()
+            .join("writing/SKILL.md")
+            .exists());
+        let skills = dispatch(&host.ctx, "get_managed_skills", &json!({})).unwrap();
+        assert_eq!(skills.as_array().unwrap().len(), 1);
+        assert_eq!(
+            dispatch(&host.ctx, "operation_request", &request).unwrap()["attempt_id"],
+            submitted["attempt_id"]
+        );
+    }
+
+    #[test]
+    fn library_wait_yields_to_project_and_changed_local_source_requires_review() {
+        let host = test_host();
+        let project = operation_project(&host, "independent");
+        let source = host.tmp.path().join("source");
+        crate::core::test_support::write_skill(&source, "writing");
+        let held = crate::core::repo_lock::RepoLock::try_shared()
+            .unwrap()
+            .unwrap();
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_install","operation_id":"waiting-install","host_id":null,"sources":[{"kind":"local","path":source,"name":"writing"}]}})).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while read_operation(&host, "waiting-install")["items"][0]["phase"] != "waiting" {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        submit_operation(&host, "independent", &project);
+        assert_eq!(
+            settled_operation(&host, "independent")["items"][0]["phase"],
+            "succeeded"
+        );
+        std::fs::write(source.join("SKILL.md"), "changed after admission").unwrap();
+        drop(held);
+        let result = settled_operation(&host, "waiting-install");
+        assert_eq!(result["items"][0]["phase"], "needs_review", "{result}");
+        assert!(!crate::core::central_repo::skills_dir()
+            .join("writing")
+            .exists());
+    }
+
+    #[test]
+    fn git_operation_previews_without_writing_and_installs_only_confirmed_selection() {
+        let host = test_host();
+        let repo = host.tmp.path().join("git-source");
+        crate::core::test_support::write_skill(&repo.join("skills/one"), "one");
+        crate::core::test_support::write_skill(&repo.join("skills/two"), "two");
+        for args in [
+            vec!["init"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+        ] {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
+        let config = host.tmp.path().join("gitconfig");
+        std::fs::write(
+            &config,
+            format!(
+                "[url \"file://{}\"]\n    insteadOf = https://fixture.invalid/skills.git\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
+        let _config = GitConfigGuard::new(&config);
+        let request = json!({"request":{"action":"submit_install","operation_id":"git-preview","host_id":null,"sources":[{"kind":"git","url":"https://fixture-user:fixture-secret@fixture.invalid/skills.git?token=fixture-secret#fragment"}]}});
+        dispatch(&host.ctx, "operation_request", &request).unwrap();
+        let preview = settled_operation(&host, "git-preview");
+        assert_eq!(
+            preview["items"][0]["source"]["url"],
+            "https://fixture.invalid/skills.git"
+        );
+        let reader = HostCtx::headless(host.ctx.store.clone());
+        let receipt = dispatch(
+            &reader,
+            "operation_request",
+            &json!({"request":{"action":"reconcile","operation_id":"git-preview"}}),
+        )
+        .unwrap();
+        assert!(!receipt.to_string().contains("fixture-secret"));
+        assert!(dispatch(&reader, "operation_request", &json!({"request":{"action":"confirm_install","operation_id":"git-preview","attempt_id":"stale","items":[{"rel_path":"one","name":"one"}]}})).is_err());
+        assert_eq!(preview["items"][0]["phase"], "needs_review", "{preview}");
+        assert_eq!(preview["preview"].as_array().unwrap().len(), 2);
+        assert!(!crate::core::central_repo::skills_dir().join("one").exists());
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"confirm_install","operation_id":"git-preview","attempt_id":"selected","items":[{"rel_path":"one","name":"chosen"}]}})).unwrap();
+        let installed = settled_operation(&host, "git-preview");
+        assert_eq!(installed["items"].as_array().unwrap().len(), 1);
+        assert_eq!(installed["items"][0]["phase"], "succeeded", "{installed}");
+        assert!(crate::core::central_repo::skills_dir()
+            .join("chosen/SKILL.md")
+            .exists());
+        assert!(!crate::core::central_repo::skills_dir().join("two").exists());
+    }
+
+    #[test]
+    fn marketplace_operation_uses_local_git_and_keeps_edited_library_skill() {
+        let host = test_host();
+        let repo = host.tmp.path().join("git-source");
+        crate::core::test_support::write_skill(&repo.join("skills/one"), "one");
+        for args in [
+            vec!["init"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+        let config = host.tmp.path().join("gitconfig");
+        std::fs::write(
+            &config,
+            format!(
+                "[url \"file://{}\"]\n    insteadOf = https://github.com/fixture/skills.git\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
+        let _config = GitConfigGuard::new(&config);
+        let request = |id: &str| json!({"request":{"action":"submit_install","operation_id":id,"host_id":null,"sources":[{"kind":"marketplace","source":"fixture/skills","skill_id":"one"}]}});
+        dispatch(&host.ctx, "operation_request", &request("market-one")).unwrap();
+        assert_eq!(
+            settled_operation(&host, "market-one")["items"][0]["phase"],
+            "succeeded"
+        );
+        let installed = crate::core::central_repo::skills_dir().join("one/SKILL.md");
+        std::fs::write(&installed, "my edit").unwrap();
+        dispatch(&host.ctx, "operation_request", &request("market-again")).unwrap();
+        let result = settled_operation(&host, "market-again");
+        assert_eq!(result["items"][0]["phase"], "needs_review", "{result}");
+        assert_eq!(std::fs::read_to_string(installed).unwrap(), "my edit");
+    }
+
+    #[test]
+    fn cache_waits_release_execution_slots_and_cancel_without_library_writes() {
+        use fs2::FileExt;
+        let host = test_host();
+        let repo = host.tmp.path().join("git-source");
+        crate::core::test_support::write_skill(&repo.join("skills/one"), "one");
+        for args in [
+            vec!["init"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+        let config = host.tmp.path().join("gitconfig");
+        std::fs::write(
+            &config,
+            format!(
+                "[url \"file://{}\"]\n    insteadOf = https://github.com/fixture/skills.git\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
+        let _config = GitConfigGuard::new(&config);
+        let request = |id: &str, skill: &str| json!({"request":{"action":"submit_install","operation_id":id,"host_id":null,"sources":[{"kind":"marketplace","source":"fixture/skills","skill_id":skill}]}});
+        dispatch(&host.ctx, "operation_request", &request("prime", "one")).unwrap();
+        assert_eq!(
+            settled_operation(&host, "prime")["items"][0]["phase"],
+            "succeeded"
+        );
+        let lock_path = std::fs::read_dir(crate::core::central_repo::cache_dir().join("repos"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "lock"))
+            .unwrap();
+        let cache = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .unwrap();
+        cache.lock_exclusive().unwrap();
+        for (id, skill) in [("cache-one", "two"), ("cache-two", "three")] {
+            dispatch(&host.ctx, "operation_request", &request(id, skill)).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let project = operation_project(&host, "unrelated-cache");
+        submit_operation(&host, "unrelated-cache", &project);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while read_operation(&host, "unrelated-cache")["settled"] != true
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::yield_now();
+        }
+        let progressed =
+            read_operation(&host, "unrelated-cache")["items"][0]["phase"] == "succeeded";
+        let waiting = read_operation(&host, "cache-one");
+        for id in ["cache-one", "cache-two"] {
+            dispatch(
+                &host.ctx,
+                "operation_request",
+                &json!({"request":{"action":"cancel","operation_id":id}}),
+            )
+            .unwrap();
+        }
+        drop(cache);
+        settled_operation(&host, "cache-one");
+        settled_operation(&host, "cache-two");
+        settled_operation(&host, "unrelated-cache");
+        assert!(progressed, "a cache wait consumed both execution slots");
+        assert_eq!(waiting["items"][0]["phase"], "waiting", "{waiting}");
+        assert!(!crate::core::central_repo::skills_dir().join("two").exists());
+    }
+
+    #[test]
+    fn archive_batch_continues_and_retries_only_failed_items_with_original_evidence() {
+        archive_batch_retry_keeps_evidence(false);
+    }
+
+    #[test]
+    fn changed_failed_install_source_returns_to_review_without_repeating_successes() {
+        archive_batch_retry_keeps_evidence(true);
+    }
+
+    fn archive_batch_retry_keeps_evidence(changed: bool) {
+        use std::io::Write;
+        let host = test_host();
+        let archive = host.tmp.path().join("writing.skill");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        zip.start_file("writing/SKILL.md", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"---\nname: writing\n---\narchive content")
+            .unwrap();
+        zip.finish().unwrap();
+        let source = host.tmp.path().join("disappearing");
+        crate::core::test_support::write_skill(&source, "research");
+        let original = std::fs::read(source.join("SKILL.md")).unwrap();
+        let held = crate::core::repo_lock::RepoLock::try_shared()
+            .unwrap()
+            .unwrap();
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_install","operation_id":"archive-batch","host_id":null,"sources":[{"kind":"local","path":source,"name":"research"},{"kind":"local","path":archive}]}})).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let status = read_operation(&host, "archive-batch");
+            if status["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["phase"] == "waiting")
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{status}");
+            std::thread::yield_now();
+        }
+        std::fs::remove_dir_all(&source).unwrap();
+        drop(held);
+        let partial = settled_operation(&host, "archive-batch");
+        assert_eq!(partial["items"][0]["phase"], "failed", "{partial}");
+        assert_eq!(partial["items"][1]["phase"], "succeeded", "{partial}");
+        assert!(crate::core::central_repo::skills_dir()
+            .join("writing/SKILL.md")
+            .exists());
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            if changed {
+                b"changed since the failed attempt".to_vec()
+            } else {
+                original
+            },
+        )
+        .unwrap();
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"retry_failed","operation_id":"archive-batch","attempt_id":"retry-local"}})).unwrap();
+        let retried = settled_operation(&host, "archive-batch");
+        assert_eq!(
+            retried["items"][0]["phase"],
+            if changed { "needs_review" } else { "succeeded" },
+            "{retried}"
+        );
+        assert_eq!(retried["items"][1], partial["items"][1]);
+        assert_eq!(
+            dispatch(&host.ctx, "get_managed_skills", &json!({}))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            if changed { 1 } else { 2 }
+        );
+    }
+
+    #[test]
+    fn queued_install_does_not_follow_a_changed_library_path() {
+        let host = test_host();
+        let original = crate::core::central_repo::base_dir();
+        let source = host.tmp.path().join("source");
+        crate::core::test_support::write_skill(&source, "writing");
+        let held = crate::core::repo_lock::RepoLock::try_shared()
+            .unwrap()
+            .unwrap();
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_install","operation_id":"original-library","host_id":null,"sources":[{"kind":"local","path":source,"name":"writing"}]}})).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while read_operation(&host, "original-library")["items"][0]["phase"] != "waiting" {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let changed = host.tmp.path().join("changed-library");
+        crate::core::central_repo::set_test_base_dir_override(Some(changed.clone()));
+        std::fs::create_dir_all(crate::core::central_repo::skills_dir()).unwrap();
+        drop(held);
+        let result = settled_operation(&host, "original-library");
+        crate::core::central_repo::set_test_base_dir_override(Some(original.clone()));
+        assert_eq!(result["items"][0]["phase"], "needs_review", "{result}");
+        assert!(!original.join("skills/writing").exists());
+        assert!(!changed.join("skills/writing").exists());
+    }
+
+    #[test]
+    fn local_batch_uses_installation_work_and_never_claims_an_agent_destination() {
+        let host = test_host();
+        let source = host.tmp.path().join("team");
+        crate::core::test_support::write_skill(&source.join("one"), "one");
+        crate::core::test_support::write_skill(&source.join("two"), "two");
+        std::fs::create_dir_all(source.join("not-a-skill")).unwrap();
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_install","operation_id":"local-batch","host_id":null,"sources":[{"kind":"local_batch","path":source}]}})).unwrap();
+        let result = settled_operation(&host, "local-batch");
+        assert_eq!(result["work"], "installation");
+        assert_eq!(result["items"].as_array().unwrap().len(), 2);
+        for item in result["items"].as_array().unwrap() {
+            assert!(item["agent"].is_null());
+            assert_eq!(item["phase"], "succeeded", "{result}");
+        }
+        assert_eq!(
+            dispatch(&host.ctx, "get_managed_skills", &json!({}))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_local_source_alias_requires_fresh_review_even_with_identical_content() {
+        let host = test_host();
+        let source = host.tmp.path().join("source");
+        let other = host.tmp.path().join("other");
+        crate::core::test_support::write_skill(&source, "writing");
+        crate::core::test_support::write_skill(&other, "writing");
+        let held = crate::core::repo_lock::RepoLock::try_shared()
+            .unwrap()
+            .unwrap();
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_install","operation_id":"source-alias","host_id":null,"sources":[{"kind":"local","path":source,"name":"writing"}]}})).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while read_operation(&host, "source-alias")["items"][0]["phase"] != "waiting" {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        std::fs::rename(&source, host.tmp.path().join("original-source")).unwrap();
+        std::os::unix::fs::symlink(&other, &source).unwrap();
+        drop(held);
+        let result = settled_operation(&host, "source-alias");
+        assert_eq!(result["items"][0]["phase"], "needs_review", "{result}");
+        assert!(!crate::core::central_repo::skills_dir()
+            .join("writing")
+            .exists());
+    }
+
+    #[test]
+    fn changed_library_install_target_requires_review_instead_of_choosing_a_new_destination() {
+        let host = test_host();
+        let source = host.tmp.path().join("source");
+        crate::core::test_support::write_skill(&source, "writing");
+        let held = crate::core::repo_lock::RepoLock::try_shared()
+            .unwrap()
+            .unwrap();
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_install","operation_id":"target-change","host_id":null,"sources":[{"kind":"local","path":source,"name":"writing"}]}})).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while read_operation(&host, "target-change")["items"][0]["phase"] != "waiting" {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let target = crate::core::central_repo::skills_dir().join("writing");
+        crate::core::test_support::write_skill(&target, "writing");
+        std::fs::write(target.join("SKILL.md"), "owned by someone else").unwrap();
+        drop(held);
+        let result = settled_operation(&host, "target-change");
+        assert_eq!(result["items"][0]["phase"], "needs_review", "{result}");
+        assert_eq!(
+            std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+            "owned by someone else"
+        );
+        assert!(!crate::core::central_repo::skills_dir()
+            .join("writing-2")
+            .exists());
+    }
+
+    #[test]
+    fn equivalent_library_submission_reattaches_and_running_cancel_stops_before_apply() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = test_host_with(Arc::new(HeldOperation {
+            entered_once: std::sync::atomic::AtomicBool::new(false),
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        let source = host.tmp.path().join("source");
+        crate::core::test_support::write_skill(&source, "writing");
+        let request = |id: &str| json!({"request":{"action":"submit_install","operation_id":id,"host_id":null,"sources":[{"kind":"local","path":source,"name":"writing"}]}});
+        dispatch(&host.ctx, "operation_request", &request("held")).unwrap();
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(
+            dispatch(&host.ctx, "operation_request", &request("equivalent")).unwrap()
+                ["operation_id"],
+            "held"
+        );
+        let stopping = dispatch(
+            &host.ctx,
+            "operation_request",
+            &json!({"request":{"action":"cancel","operation_id":"held"}}),
+        )
+        .unwrap();
+        assert_eq!(stopping["settled"], false);
+        assert_eq!(stopping["items"][0]["phase"], "stopping");
+        drop(release);
+        assert_eq!(
+            settled_operation(&host, "held")["items"][0]["phase"],
+            "canceled"
+        );
+        assert!(!crate::core::central_repo::skills_dir()
+            .join("writing")
+            .exists());
+    }
+
+    struct GitConfigGuard(Option<std::ffi::OsString>);
+    impl GitConfigGuard {
+        fn new(path: &std::path::Path) -> Self {
+            let old = std::env::var_os("GIT_CONFIG_GLOBAL");
+            std::env::set_var("GIT_CONFIG_GLOBAL", path);
+            Self(old)
+        }
+    }
+    impl Drop for GitConfigGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("GIT_CONFIG_GLOBAL", value),
+                None => std::env::remove_var("GIT_CONFIG_GLOBAL"),
+            }
+        }
+    }
+
     struct HeldOperation {
         entered_once: std::sync::atomic::AtomicBool,
         entered: std::sync::mpsc::Sender<()>,

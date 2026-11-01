@@ -1647,6 +1647,21 @@
     "otherResults": "{{unchanged}} already up to date · {{unknown}} outcome unknown",
     "destinationBusy": "Update in progress",
     "navUnknown": "{{unknown}} outcome unknown",
-    "navCanceled": "{{updated}} updated · {{canceled}} canceled"
+    "navCanceled": "{{updated}} updated · {{canceled}} canceled",
+    "installProgress": "Installation progress",
+    "installNav": "{{count}} in progress",
+    "installDestination": "Destination: {{host}} library",
+    "installCancel": "Cancel installation",
+    "installRunning": "Installing to library",
+    "installFinished": "Installation finished",
+    "reviewInstall": "Review selection",
+    "prepareAgain": "Prepare and review again",
+    "libraryRefreshFailed": "Installation results are recorded. The library could not be refreshed.",
+    "hostLocal": "Local",
+    "installAttention": "{{count}} need attention",
+    "submitting": "Submitting…",
+    "installNothing": "No new skills to install",
+    "installNeedsReview": "Needs review",
+    "installPreviewReady": "Ready to select skills"
   }
 }
