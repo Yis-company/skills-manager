@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, FolderOpen, Loader2, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -8,6 +9,7 @@ import * as api from "../lib/tauri";
 import type { ManagedSkill, Project, ProjectAgentTarget } from "../lib/tauri";
 import { cn } from "../utils";
 import { AgentIcon } from "./AgentIcon";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface Props {
   skill: ManagedSkill;
@@ -34,6 +36,11 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
   const [rows, setRows] = useState<Record<string, RowData>>({});
   const [pendingKey, setPendingKey] = useState<null | string>(null);
   const [expanded, setExpanded] = useState(false);
+
+  const [removeTarget, setRemoveTarget] = useState<{
+    project: Project;
+    target: ProjectAgentTarget;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -320,7 +327,7 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
                             title={title}
                             onClick={() => {
                               if (agentState === "installed") {
-                                void handleRemove(project, target);
+                                setRemoveTarget({ project, target });
                               } else {
                                 void handleAdd(project, target);
                               }
@@ -366,6 +373,24 @@ export function SkillProjectsSection({ skill, projects, onChanged }: Props) {
           );
         })}
       </div>
+      {createPortal(
+        <ConfirmDialog
+          open={!!removeTarget}
+          title={t("addFromLibrary.removeConfirmTitle")}
+          message={t("addFromLibrary.removeConfirm", {
+            skill: skill.name,
+            project: removeTarget?.project.name,
+            agent: removeTarget?.target.display_name,
+          })}
+          confirmLabel={t("common.delete")}
+          lockWhilePending
+          onClose={() => setRemoveTarget(null)}
+          onConfirm={async () => {
+            if (removeTarget) await handleRemove(removeTarget.project, removeTarget.target);
+          }}
+        />,
+        document.body,
+      )}
     </div>
   );
 }
