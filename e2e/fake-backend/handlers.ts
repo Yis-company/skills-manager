@@ -1,5 +1,6 @@
 import type { InvokeArgs } from "@tauri-apps/api/core";
 
+import type { OperationResultsRequest } from "../../src/context/useOperationPersistence";
 import type {
   AppUpdateInfo,
   BatchImportResult,
@@ -123,6 +124,44 @@ type ProjectSkillArgs = {
 // Only the commands the specs reach. Add one when a spec needs it; an unknown
 // command fails the test with "fake backend: no handler for <cmd>".
 export const handlers = {
+  operation_results_request: ({ request }: { request: OperationResultsRequest }, state) => {
+    if (request.action === "read") {
+      if (state.operationResultsReadError) {
+        state.operationResultsReadError = false;
+        throw new Error("fixture results read unavailable");
+      }
+
+      return state.operationResults;
+    }
+
+    if (request.version !== state.operationResults.version)
+      throw new Error("Stale operation results");
+    state.operationResults = {
+      version: request.version + 1,
+      results: structuredClone(request.results).map(({ admission, ...o }) => ({
+        ...o,
+        settled: true,
+        recovery:
+          admission || !o.settled || o.recovery === "checking" ? ("unknown" as const) : o.recovery,
+        recovery_attempt: admission?.expected_attempt ?? o.recovery_attempt,
+        preview: null,
+        items: o.items.map((i) => ({
+          ...i,
+          message: null,
+          phase:
+            ["queued", "preparing", "applying", "waiting", "stopping", "checking_result"].includes(
+              i.phase,
+            ) ||
+            (admission?.action === "confirm_install" && i.phase === "needs_review") ||
+            (admission?.action === "retry_failed" && i.phase === "failed")
+              ? ("outcome_unknown" as const)
+              : i.phase,
+        })),
+      })),
+    };
+
+    return state.operationResults;
+  },
   operation_request: operationHandler,
   project_git_request: projectGitHandler,
   // ── App shell ──

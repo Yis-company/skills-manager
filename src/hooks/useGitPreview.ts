@@ -83,6 +83,10 @@ export function useGitPreview() {
     setGitUrl,
     gitLoading: submitting,
     gitPreview: operation?.preview ?? null,
+    reviewIsGit: [
+      ...(operation?.sources ?? []),
+      ...(operation?.items.flatMap((i) => (i.source ? [i.source] : [])) ?? []),
+    ].some((s) => s.kind === "git"),
     gitSelections,
     setGitSelections,
     gitConfirmLoading,

@@ -28,6 +28,8 @@ export type RemoteSeed = Omit<Seed, "remoteHosts" | "remoteStates">;
 
 /** What a test starts from. Every field is optional; a missing one is empty. */
 export interface Seed {
+  operationResultsReadError?: boolean;
+  operationResults?: { version: number; results: OperationSnapshot[] };
   operations?: OperationSnapshot[];
   holdOperations?: boolean;
   skills?: ManagedSkill[];
@@ -194,6 +196,8 @@ export type State = Required<Seed>;
 
 export function createState({ settings, ...seed }: Seed): State {
   return structuredClone({
+    operationResultsReadError: false,
+    operationResults: { version: 0, results: [] },
     operations: [],
     holdOperations: false,
     skills: [],

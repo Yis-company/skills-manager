@@ -795,7 +795,9 @@ export function Sidebar() {
                       const isActive = location.pathname === `/project/${project.id}`;
 
                       const projectOperations = operations.filter(
-                        (operation) => operation.project_id === project.id,
+                        (operation) =>
+                          operation.project_id === project.id &&
+                          (!operation.project_path || operation.project_path === project.path),
                       );
 
                       const progress =

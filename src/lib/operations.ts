@@ -64,6 +64,15 @@ export interface OperationItem {
 
 export interface OperationSnapshot {
   operation_id: string;
+  /** Cached display identity; never a connection, destination or approval authority. */
+  origin?: {
+    host_name: string;
+    ssh_target?: null | string;
+    host_created_at?: null | number;
+    project_name?: null | string;
+  };
+  restored?: boolean;
+  admission?: { id: string; action: string; expected_attempt?: string };
   /** App-session transport observation; never a host receipt or replay authority. */
   recovery?: "checking" | "unknown";
   recovery_attempt?: string;
@@ -90,6 +99,7 @@ export type OperationRequest =
       items: { rel_path: string; name: string }[];
     }
   | { action: "list" }
+  | { action: "prepare_review"; operation_id: string; attempt_id: string; item_ids?: string[] }
   | { action: "retry_failed"; operation_id: string; attempt_id: string }
   | {
       action: "submit_install";
@@ -135,7 +145,13 @@ export const installationPhaseKey = (phase: OperationPhase) =>
 
 /** Tuple encoding avoids collisions between host, operation and attempt identifiers. */
 export const operationIdentity = (operation: OperationSnapshot) =>
-  JSON.stringify([operation.host_id, operation.operation_id, operation.attempt_id]);
+  JSON.stringify([
+    operation.host_id,
+    operation.operation_id,
+    operation.attempt_id,
+    operation.origin?.ssh_target ?? null,
+    operation.origin?.host_created_at ?? null,
+  ]);
 
 export const operationNeedsAttention = (operation: OperationSnapshot) =>
   operation.recovery === "unknown" ||
@@ -144,24 +160,56 @@ export const operationNeedsAttention = (operation: OperationSnapshot) =>
   );
 
 export const operationNeedsSession = (operation: OperationSnapshot) =>
-  !operation.settled || operationNeedsAttention(operation);
+  !!operation.admission || !operation.settled || operationNeedsAttention(operation);
+
+/** A saved host ID/name alone cannot authorize a connection to a replacement. */
+export function operationHostMatches(
+  operation: OperationSnapshot,
+  hosts: { id: string; ssh_target: string; created_at: number }[],
+) {
+  if (operation.host_id === null || (!operation.restored && !operation.origin?.ssh_target))
+    return true;
+  const host = hosts.find((h) => h.id === operation.host_id);
+
+  return (
+    !!host &&
+    operation.origin?.ssh_target === host.ssh_target &&
+    operation.origin.host_created_at === host.created_at
+  );
+}
+
+export function sameOperationContext(a: OperationSnapshot, b: OperationSnapshot) {
+  return (
+    a.host_id === b.host_id &&
+    a.operation_id === b.operation_id &&
+    (!a.origin ||
+      !b.origin ||
+      (a.origin.ssh_target === b.origin.ssh_target &&
+        a.origin.host_created_at === b.origin.host_created_at))
+  );
+}
 
 export function mergeOperations(
   current: OperationSnapshot[],
   snapshots: OperationSnapshot[],
   hostId: null | string,
+  dismissed = new Set<string>(),
 ) {
   const records = [...current];
 
-  for (const snapshot of snapshots) {
-    if (snapshot.host_id !== hostId) continue;
-    const index = records.findIndex((old) => old.operation_id === snapshot.operation_id);
+  for (let snapshot of snapshots) {
+    if (snapshot.host_id !== hostId || dismissed.has(operationIdentity(snapshot))) continue;
+    const index = records.findIndex((old) => sameOperationContext(old, snapshot));
 
     if (index < 0) records.push(snapshot);
     else {
       const old = records[index];
+      snapshot = { ...snapshot, origin: old.origin ?? snapshot.origin };
 
       if (snapshot.revision < old.revision) continue;
+
+      if (old.admission?.expected_attempt && old.admission.expected_attempt !== snapshot.attempt_id)
+        continue;
 
       if (old.recovery) {
         if (old.recovery_attempt && snapshot.attempt_id !== old.recovery_attempt) continue;
@@ -201,7 +249,11 @@ export function mergeOperations(
 
           records[index] = merged;
         }
-      } else if (snapshot.revision > old.revision) records[index] = snapshot;
+      } else if (
+        snapshot.revision > old.revision ||
+        ((old.restored || old.admission) && snapshot.revision === old.revision)
+      )
+        records[index] = snapshot;
     }
   }
 

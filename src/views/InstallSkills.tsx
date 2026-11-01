@@ -46,6 +46,7 @@ export function InstallSkills() {
     setGitUrl,
     gitLoading,
     gitPreview,
+    reviewIsGit,
     gitSelections,
     setGitSelections,
     gitConfirmLoading,
@@ -290,6 +291,7 @@ export function InstallSkills() {
       {/* Git preview / selection dialog */}
       {gitPreview && (
         <GitPreviewDialog
+          repository={reviewIsGit}
           selections={gitSelections}
           setSelections={setGitSelections}
           confirmLoading={gitConfirmLoading}

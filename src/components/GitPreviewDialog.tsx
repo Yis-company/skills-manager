@@ -8,6 +8,7 @@ import { Modal } from "./Modal";
 
 interface GitPreviewDialogProps {
   selections: GitSelection[];
+  repository?: boolean;
   setSelections: Dispatch<SetStateAction<GitSelection[]>>;
   /** Install of the selection in flight; locks the dialog. */
   confirmLoading: boolean;
@@ -18,6 +19,7 @@ interface GitPreviewDialogProps {
 /** Pick and name the skills to install from a previewed git repo. */
 export function GitPreviewDialog({
   selections,
+  repository = true,
   setSelections,
   confirmLoading,
   onClose,
@@ -27,7 +29,9 @@ export function GitPreviewDialog({
 
   return (
     <Modal open title={t("install.gitPreview.title")} locked={confirmLoading} onClose={onClose}>
-      <p className="mb-3 text-[13px] text-muted">{t("install.gitPreview.description")}</p>
+      <p className="mb-3 text-[13px] text-muted">
+        {t(repository ? "install.gitPreview.description" : "operations.reviewDescription")}
+      </p>
 
       {/* Select all / deselect all */}
       <div className="mb-2 flex gap-2">

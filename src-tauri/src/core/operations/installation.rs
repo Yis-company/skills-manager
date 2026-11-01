@@ -32,6 +32,8 @@ pub enum LocalOrigin {
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct InstallWork {
     source: InstallSource,
+    #[serde(default)]
+    selected: Option<(String, String)>,
     pub prepared: Option<Prepared>,
     preview: Vec<(crate::commands::skills::GitSkillPreview, Prepared)>,
     #[serde(default)]
@@ -140,6 +142,7 @@ pub(super) fn submit(
     }
     let attempt_id = uuid::Uuid::new_v4().to_string();
     let mut record = Record {
+        review_only: false,
         snapshot: OperationSnapshot {
             operation_id,
             attempt_id: attempt_id.clone(),
@@ -184,6 +187,7 @@ pub(super) fn submit(
             .into_iter()
             .map(|source| InstallWork {
                 source,
+                selected: None,
                 prepared: None,
                 preview: vec![],
                 staging: vec![],
@@ -284,12 +288,7 @@ pub(super) fn execute(
                     .iter_mut()
                     .find(|r| r.snapshot.operation_id == id)
                     .unwrap();
-                record.installs[index].prepared = Some(prepared);
-                return Ok(if record.snapshot.cancel_requested {
-                    Phase::Canceled
-                } else {
-                    Phase::Waiting
-                });
+                return Ok(prepared_result(record, index, prepared));
             }
             InstallSource::Marketplace { source, skill_id } => {
                 let url = format!("https://github.com/{source}.git");
@@ -357,12 +356,7 @@ pub(super) fn execute(
                     .iter_mut()
                     .find(|r| r.snapshot.operation_id == id)
                     .unwrap();
-                record.installs[index].prepared = Some(prepared);
-                return Ok(if record.snapshot.cancel_requested {
-                    Phase::Canceled
-                } else {
-                    Phase::Waiting
-                });
+                return Ok(prepared_result(record, index, prepared));
             }
             InstallSource::Git { url } => {
                 let preview = crate::commands::skills::preview_git_install_operation(
@@ -419,8 +413,22 @@ pub(super) fn execute(
                     .iter_mut()
                     .find(|r| r.snapshot.operation_id == id)
                     .unwrap();
-                record.snapshot.preview = Some(preview.skills);
+                if let Some((path, name)) = &work.selected {
+                    entries.retain(|(entry, _)| entry.rel_path == *path);
+                    for (entry, prepared) in &mut entries {
+                        entry.name = name.clone();
+                        prepared.name = name.clone();
+                        capture_destination(prepared)?;
+                    }
+                }
                 record.installs[index].preview = entries;
+                record.snapshot.preview = Some(
+                    record
+                        .installs
+                        .iter()
+                        .flat_map(|work| work.preview.iter().map(|(entry, _)| entry.clone()))
+                        .collect(),
+                );
                 return Ok(if record.snapshot.cancel_requested {
                     Phase::Canceled
                 } else {
@@ -553,6 +561,149 @@ pub(super) fn verify(
         && installer::hash_local_source(target).map_err(AppError::io)? == prepared.content)
 }
 
+/// Recreate evidence in the existing coordinator. Receipts supply intent only:
+/// no queued state, worker, old staging directory or confirmation is restored.
+pub(super) fn prepare_review(
+    ctx: &HostCtx,
+    id: &str,
+    attempt: String,
+    item_ids: Option<Vec<String>>,
+) -> Result<Value, AppError> {
+    let mut state = ctx.operations.0.lock().unwrap();
+    let current = state
+        .records
+        .iter()
+        .position(|r| r.snapshot.operation_id == id);
+    let saved: Record = match current {
+        Some(index) => state.records[index].clone(),
+        None => ctx
+            .store
+            .resource_state_get(RECEIPT, id)
+            .map_err(AppError::db)?
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(AppError::db)?
+            .ok_or_else(|| AppError::not_found("Original installation receipt is unavailable"))?,
+    };
+    if saved.attempts.contains(&attempt) {
+        return Ok(json!(if current.is_some() {
+            saved.snapshot
+        } else {
+            unowned_snapshot(saved.snapshot)
+        }));
+    }
+    if item_ids.as_ref().is_some_and(|ids| {
+        ids.is_empty()
+            || ids.iter().any(|id| {
+                !saved
+                    .snapshot
+                    .items
+                    .iter()
+                    .any(|i| i.id == *id && matches!(i.phase, Phase::Failed | Phase::NeedsReview))
+            })
+    }) {
+        return Err(AppError::invalid_input(
+            "Choose unresolved items from the original result",
+        ));
+    }
+    if !saved.snapshot.settled
+        || !matches!(saved.snapshot.work, OperationWork::Installation)
+        || saved
+            .snapshot
+            .items
+            .iter()
+            .any(|i| i.phase == Phase::OutcomeUnknown)
+    {
+        return Err(AppError::invalid_input(
+            "Check the original result before preparing a new review",
+        ));
+    }
+    let mut record = Record {
+        review_only: true,
+        snapshot: unowned_snapshot(saved.snapshot.clone()),
+        installs: vec![],
+        updates: vec![],
+        attempts: saved.attempts.clone(),
+    };
+    record.snapshot.attempt_id = attempt.clone();
+    record.snapshot.cancel_requested = false;
+    record.attempts.push(attempt.clone());
+    for (index, item) in record.snapshot.items.iter_mut().enumerate() {
+        let source = item
+            .source
+            .clone()
+            .ok_or_else(|| AppError::invalid_input("Original source is unavailable"))?;
+        let selected = if matches!(source, InstallSource::Git { .. }) {
+            saved.installs.get(index).and_then(|work| {
+                work.selected.clone().or_else(|| {
+                    work.prepared
+                        .as_ref()
+                        .map(|p| (item.relative_path.clone(), p.name.clone()))
+                })
+            })
+        } else {
+            None
+        };
+        record.installs.push(InstallWork {
+            source,
+            selected,
+            prepared: None,
+            preview: vec![],
+            staging: vec![],
+        });
+        if matches!(item.phase, Phase::Failed | Phase::NeedsReview)
+            && item_ids.as_ref().is_none_or(|ids| ids.contains(&item.id))
+        {
+            item.phase = Phase::Queued;
+            item.attempt_id = attempt.clone();
+            item.message = None;
+        }
+    }
+    save(ctx, &mut record)?;
+    let snapshot = record.snapshot.clone();
+    match current {
+        Some(i) => {
+            state.records[i] = record;
+            cleanup(&saved);
+        }
+        None => state.records.push(record),
+    }
+    if !state.driving {
+        state.driving = true;
+        let ctx = ctx.clone();
+        std::thread::spawn(move || drive(ctx));
+    }
+    Ok(json!(snapshot))
+}
+
+fn prepared_result(record: &mut Record, index: usize, prepared: Prepared) -> Phase {
+    if record.review_only {
+        record.installs[index].preview = vec![(
+            crate::commands::skills::GitSkillPreview {
+                rel_path: record.snapshot.items[index].id.clone(),
+                name: prepared.name.clone(),
+                description: None,
+            },
+            prepared.clone(),
+        )];
+        record.snapshot.preview = Some(
+            record
+                .installs
+                .iter()
+                .flat_map(|work| work.preview.iter().map(|(entry, _)| entry.clone()))
+                .collect(),
+        );
+    }
+    record.installs[index].prepared = Some(prepared);
+    if record.snapshot.cancel_requested {
+        Phase::Canceled
+    } else if record.review_only {
+        Phase::NeedsReview
+    } else {
+        Phase::Waiting
+    }
+}
+
 pub(super) fn confirm(
     ctx: &HostCtx,
     id: &str,
@@ -578,6 +729,84 @@ pub(super) fn confirm(
         ));
     }
     let original = record.clone();
+    if record.review_only {
+        let mut selected = std::collections::HashSet::new();
+        let mut confirmed = vec![];
+        for item in items {
+            if !selected.insert(item.rel_path.clone()) {
+                return Err(AppError::invalid_input("Repeated review selection"));
+            }
+            let (index, mut prepared) = original
+                .installs
+                .iter()
+                .enumerate()
+                .find_map(|(index, work)| {
+                    work.preview
+                        .iter()
+                        .find(|(s, _)| s.rel_path == item.rel_path)
+                        .map(|(_, p)| (index, p.clone()))
+                })
+                .ok_or_else(|| AppError::invalid_input("Selection is outside this fresh review"))?;
+            let name = crate::core::skill_metadata::sanitize_skill_name(&item.name)
+                .ok_or_else(|| AppError::invalid_input("Invalid skill name"))?;
+            if prepared.name != name || prepared.destination.is_none() {
+                prepared.name = name;
+                capture_destination(&mut prepared)?;
+            }
+            confirmed.push((index, item.rel_path, prepared));
+        }
+        let mut installs = vec![];
+        let mut operation_items = vec![];
+        for (index, (item, work)) in original
+            .snapshot
+            .items
+            .iter()
+            .zip(&original.installs)
+            .enumerate()
+        {
+            let chosen: Vec<_> = confirmed.iter().filter(|(i, _, _)| *i == index).collect();
+            if chosen.is_empty() {
+                installs.push(work.clone());
+                operation_items.push(item.clone());
+                continue;
+            }
+            for (_, rel_path, prepared) in chosen {
+                let mut next = item.clone();
+                if matches!(work.source, InstallSource::Git { .. }) {
+                    next.relative_path = rel_path.clone();
+                    next.id = uuid::Uuid::new_v4().to_string();
+                }
+                next.phase = Phase::Queued;
+                next.attempt_id = attempt_id.clone();
+                next.message = None;
+                operation_items.push(next);
+                installs.push(InstallWork {
+                    source: work.source.clone(),
+                    selected: Some((rel_path.clone(), prepared.name.clone())),
+                    prepared: Some(prepared.clone()),
+                    preview: vec![],
+                    staging: work.staging.clone(),
+                });
+            }
+        }
+        record.installs = installs;
+        record.snapshot.items = operation_items;
+        record.review_only = false;
+        record.snapshot.preview = None;
+        record.snapshot.attempt_id = attempt_id.clone();
+        record.attempts.push(attempt_id);
+        if let Err(e) = save(ctx, record) {
+            *record = original;
+            return Err(e);
+        }
+        let snapshot = record.snapshot.clone();
+        if !state.driving {
+            state.driving = true;
+            let ctx = ctx.clone();
+            std::thread::spawn(move || drive(ctx));
+        }
+        return Ok(json!(snapshot));
+    }
     let work = &record.installs[0];
     let mut installs = vec![];
     let mut operation_items = vec![];
@@ -593,6 +822,7 @@ pub(super) fn confirm(
         capture_destination(&mut prepared)?;
         installs.push(InstallWork {
             source: work.source.clone(),
+            selected: None,
             prepared: Some(prepared),
             preview: vec![],
             staging: work.staging.clone(),
@@ -632,7 +862,7 @@ pub(super) fn confirm(
     Ok(json!(snapshot))
 }
 
-fn sanitize(source: &mut InstallSource) -> Result<(), AppError> {
+pub(super) fn sanitize(source: &mut InstallSource) -> Result<(), AppError> {
     match source {
         InstallSource::Git { url } => {
             if let Ok(mut parsed) = tauri::Url::parse(url) {

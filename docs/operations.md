@@ -1,4 +1,4 @@
-# Interactive operations (SKI-20 through SKI-23)
+# Interactive operations (SKI-20 through SKI-24)
 
 Desktop `operation_request({ request })` and the host dispatcher run the same
 backend-owned `OperationService` on `HostCtx`. React observes authoritative
@@ -230,11 +230,85 @@ cannot silently be resubmitted with a fresh identity. Successful verification re
 only the original project/library through the existing scoped query path. Refresh errors
 remain separate from successful writes.
 
-SKI-24 still owns complete app-restart result restoration, retention/pruning and restored
-retry. SKI-25 still owns native/tray/quit/restart coordination. These session-scoped
-checking/unknown states are a public observation contract for those slices, not their
-implementation. Work runs only while the app is open/minimized; no run-after-exit,
-automatic resume or exactly-once guarantee is claimed.
+## Local result retention and restoration
+
+The desktop always calls `operation_results_request` with `invokeLocal`, including
+summaries originating on SSH hosts. The public Rust/store/CLI seam is
+`core::operations::results::dispatch`; the thin desktop adapter uses that same body.
+Requests are `{ action: "read" }` and
+`{ action: "write", version, results: OperationSnapshot[] }`. Responses contain
+`{ version, results }`. Host-local SQLite `resource_state` kind `operation_results`,
+ID `desktop`, stores this document outside portable Sync metadata. It is separate
+from host execution receipts and contains no worker/staging evidence.
+
+The writer retains failures, review requests and unknown outcomes, with successful
+and canceled sibling details explaining partial batches. Standalone successful
+summaries stay in the session cache until dismissed or replaced by the incumbent
+contextual view; they are omitted from disk. Dismissal of a settled summary without
+attention is session-local and suppresses later stale lists for that attempt.
+Resolved results disappear from the saved document. Empty versioned documents are
+kept so a stale writer cannot revive a resolved/dismissed result. SQLite compares
+and replaces the document version atomically across connections. A version conflict
+is reported instead of overwriting newer state; reload is required to resolve a
+conflicting app session. Frontend saves are serialized and drain changes arriving
+while a write is in flight.
+
+Saved display `origin` contains original `host_name`, `ssh_target`, host creation
+time and project name. Snapshot host/project IDs, original project/library paths,
+per-item agent/source identities and outcomes remain intact. Names alone never
+select a host or project. Offline/removed origins remain readable from their host
+shortcut. A replacement saved host with the same ID must also match its original
+SSH target and creation time. Project results and shortcut navigation compare the
+original path as well as ID, including after explicit reconnection. A missing or
+reused context stays inspectable without navigating to its replacement.
+
+Restoration first attempts to load local results, before operation polling can replace
+the cache. If the initial local read fails, current operation observation stays usable;
+writes to the result document remain blocked until a successful read and merge. It does not connect hosts, submit work, restore a queue, cancel, retry or
+confirm anything. `restored` is an in-memory display marker. Unfinished snapshots,
+pending admissions and session `checking` overlays restore as settled uncertainty,
+with their original operation and expected attempt correlation. They never imply
+that original work stopped. A pending submission with no response retains an empty,
+unknown item set instead of invented counts. Manual **Reconnect and check result**
+performs the same bounded read-only reconciliation on Local or the exact original
+SSH host. Current correlated evidence can repair cached uncertainty; older revisions,
+other hosts/attempts, missing receipts and empty lists cannot prove completion.
+
+URL-embedded credentials, query and fragment data are removed using incumbent source
+sanitization. Persisted summaries omit raw exception messages and all previews. They
+retain no transport secrets, temporary clone contents or confirmation authority.
+In-memory results survive storage errors, and the contextual host control offers
+**Retry saving results** with a generic error, without exposing database/remote stderr.
+
+Restored project `retry_failed` explicitly creates a fresh attempt from durable
+project evidence and revalidates the original source, target, deployment and project
+identity through the existing guarded apply body. Successful/review/unknown siblings
+are not queued. An unowned installation receipt cannot use that shortcut: it requires
+`prepare_review { operation_id, attempt_id, item_ids? }`. Optional item IDs select
+only original failed/review items; the restored **Retry failed** control supplies
+failed IDs only. Repeated preparation identities reattach without replay.
+
+`prepare_review` uses the existing bounded coordinator, rebuilds staging and current
+source/destination evidence, then settles at `needs_review` with a fresh preview.
+No write occurs during preparation. Only a fresh explicit `confirm_install` can queue
+selected prepared items; successful and unselected siblings keep their outcomes.
+All installation variants use this path, including marketplace, Git, folder/archive,
+expanded batch and discovered sources. A previously selected Git failure retains its
+original relative entry and chosen name; fresh preparation cannot add unselected
+repository entries. Changed/missing sources, stale approvals, expired/missing staging
+and newly occupied destinations cannot authorize a write from the cached summary.
+Unchanged confirmation names retain the freshly reviewed target; user renaming captures
+a new explicit target. Existing apply guards revalidate again before replacement.
+
+`useOperations()` exposes `persistenceStatus: "loading" | "saving" | "saved" | "error"`
+and `flush(): Promise<void>`. Always await `flush()` for a durability decision; a
+rendered `saved` status alone is not an exit permission. Flush loads/repairs a failed
+initial read when retried, includes in-flight saves and newer cache changes, and rejects
+on storage failure/conflict while retaining memory. Operation admission intent is
+captured before the host request. This seam neither stops work nor closes admission.
+**SKI-25** must coordinate native/tray/app quit and restart, drain/seal admission as
+appropriate, then await successful flush before exit. No shutdown coordination,
+automatic quit/resume, detached worker or run-after-exit support is implemented here.
 
 Real contract/CLI tests use temporary stores, libraries/projects and local Git fixtures.
 Browser fixtures return controlled snapshots and are not a second scheduler or proof of

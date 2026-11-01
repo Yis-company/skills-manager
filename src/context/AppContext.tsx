@@ -854,7 +854,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         closeSkillDetail: () => setDetailSkillId(null),
       }}
     >
-      <OperationsProvider hostId={activeHostId}>{children}</OperationsProvider>
+      <OperationsProvider hostId={activeHostId} remoteHosts={remoteHosts}>
+        {children}
+      </OperationsProvider>
       <RemoteCliUpdateDialog
         hostId={remoteCliUpdateHostId}
         host={remoteHosts.find((host) => host.id === remoteCliUpdateHostId)}

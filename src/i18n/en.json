@@ -1614,6 +1614,12 @@
     "managedPresenceHint": "Managed library deployments · native files and imports are available in details."
   },
   "operations": {
+    "originalHostMissing": "The original host is missing or its connection identity changed. This result stays attached to its original destination.",
+    "reviewDescription": "Review the freshly prepared skills and names, then confirm the selected installations.",
+    "saveFailed": "Could not save operation results. They remain available in this session.",
+    "retrySaving": "Retry saving results",
+    "dismiss": "Dismiss result",
+    "restored": "Restored result · no work resumed",
     "connectionLost": "Connection lost — checking result",
     "reconnect": "Reconnect and check result",
     "unknownHelp": "The result could not be verified. Work may still be running on this host. Reconnect to check without repeating changes.",

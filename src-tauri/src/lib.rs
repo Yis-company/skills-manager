@@ -1016,6 +1016,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::resources::operation_request,
+            commands::resources::operation_results_request,
             commands::resources::instructions_request,
             commands::resources::mcps_request,
             commands::resources::resource_sync_request,

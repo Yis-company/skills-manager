@@ -95,7 +95,11 @@ export function ProjectDetail() {
   const { operations, submit: submitProjectUpdate } = useOperations();
 
   const scopedOperations = operations.filter(
-    (operation) => operation.project_id === id && operation.host_id === activeHostId,
+    (operation) =>
+      operation.project_id === id &&
+      operation.host_id === activeHostId &&
+      (!operation.project_path ||
+        operation.project_path === projects.find((p) => p.id === id)?.path),
   );
 
   const projectOperations = scopedOperations.filter(

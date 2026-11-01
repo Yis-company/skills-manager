@@ -9,6 +9,7 @@ import {
   installationPhaseKey,
   operationCounts,
   operationIdentity,
+  operationNeedsAttention,
   type OperationRequest,
   type OperationSnapshot,
 } from "../lib/operations";
@@ -22,7 +23,7 @@ export function InstallationProgress({
 }) {
   const { t } = useTranslation();
   const { remoteHosts } = useApp();
-  const { act, install, refresh, refreshErrors, reconnect } = useOperations();
+  const { act, refresh, refreshErrors, reconnect, dismiss } = useOperations();
   const region = useRef<HTMLElement>(null);
   const counts = operationCounts(operation);
 
@@ -43,6 +44,11 @@ export function InstallationProgress({
       aria-label={t("operations.installProgress")}
       className="app-panel space-y-2 px-4 py-3"
     >
+      {operation.restored && (
+        <p className="break-words text-[13px] text-secondary">
+          {t("operations.restored")} · {operation.destination?.path}
+        </p>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 text-[13px]" role="status">
           <p className="font-medium text-primary">{t("operations.installDestination", { host })}</p>
@@ -85,7 +91,14 @@ export function InstallationProgress({
             className="app-button-secondary"
             onClick={() =>
               perform({
-                action: "retry_failed",
+                ...(operation.restored
+                  ? {
+                      action: "prepare_review" as const,
+                      item_ids: operation.items
+                        .filter((i) => i.phase === "failed")
+                        .map((i) => i.id),
+                    }
+                  : { action: "retry_failed" as const }),
                 operation_id: operation.operation_id,
                 attempt_id: crypto.randomUUID(),
               })
@@ -111,20 +124,21 @@ export function InstallationProgress({
               <button
                 className="app-button-secondary"
                 onClick={() => {
-                  const sources = operation.items
-                    .filter((i) => i.phase === "needs_review")
-                    .flatMap((i) => (i.source ? [i.source] : []));
-
-                  void install(sources, operation.host_id).catch((e) =>
-                    toast.error(getErrorMessage(e, t("common.error"))),
-                  );
+                  perform({
+                    action: "prepare_review",
+                    item_ids: operation.items
+                      .filter((i) => i.phase === "needs_review")
+                      .map((i) => i.id),
+                    operation_id: operation.operation_id,
+                    attempt_id: crypto.randomUUID(),
+                  });
                 }}
               >
                 {t("operations.prepareAgain")}
               </button>
             )
           ))}
-        {operation.host_id !== null && (operation.recovery === "unknown" || counts.unknown > 0) && (
+        {(operation.recovery === "unknown" || counts.unknown > 0) && (
           <button
             className="app-button-secondary"
             onClick={() => {
@@ -132,6 +146,11 @@ export function InstallationProgress({
             }}
           >
             {t("operations.reconnect")}
+          </button>
+        )}
+        {operation.settled && !operation.admission && !operationNeedsAttention(operation) && (
+          <button className="app-button-secondary" onClick={() => dismiss(operation)}>
+            {t("operations.dismiss")}
           </button>
         )}
       </div>

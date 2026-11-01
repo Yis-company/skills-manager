@@ -564,7 +564,10 @@ for (const theme of ["light", "dark"]) {
       settings: { theme, text_size: "xlarge" },
       projects: [project("shared-project", "Local app", 0)],
       remoteStates: {
-        build: { projects: [project("shared-project", "Build app", 0)], operations: [operation] },
+        build: {
+          projects: [project("shared-project", "Build app", 0, { path: "/projects/build-app" })],
+          operations: [operation],
+        },
       },
     });
     await page.setViewportSize({ width: 1000, height: 900 });
@@ -612,7 +615,10 @@ test("a slow shortcut target cannot navigate a later viewed host when its refres
     remoteHosts: hosts,
     retainedHosts: ["build"],
     remoteStates: {
-      build: { projects: [project("shared-project", "Build app", 0)], operations: [operation] },
+      build: {
+        projects: [project("shared-project", "Build app", 0, { path: "/projects/build-app" })],
+        operations: [operation],
+      },
       gpu: { projects: [project("shared-project", "GPU app", 0)] },
     },
   });

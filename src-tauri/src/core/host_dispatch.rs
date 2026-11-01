@@ -19,6 +19,7 @@ use crate::core::{sync_access, sync_join, sync_service, sync_timer};
 /// Every command [`dispatch`] accepts.
 pub const COMMANDS: &[&str] = &[
     "operation_request",
+    "operation_results_request",
     "instructions_request",
     "mcps_request",
     "resource_sync_request",
@@ -198,6 +199,9 @@ fn reply<T: Serialize>(result: Result<T, AppError>) -> Result<Value, AppError> {
 pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, AppError> {
     let a = Args(args);
     match command {
+        "operation_results_request" => {
+            crate::core::operations::results::dispatch(ctx, a.req("request")?)
+        }
         "operation_request" => crate::core::operations::dispatch(ctx, a.req("request")?),
         "project_git_request" => projects::project_git_request_core(
             ctx,
@@ -787,6 +791,134 @@ mod tests {
     }
 
     #[test]
+    fn retained_results_reopen_locally_without_resuming_work_or_success_history() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("results.db");
+        let ctx = HostCtx::headless(Arc::new(SkillStore::new(&db).unwrap()));
+        let result = |id: &str, phase: &str| {
+            json!({
+                "operation_id":id,"attempt_id":"first","host_id":"offline",
+                "work":"installation","project_id":null,"project_path":null,
+                "destination":{"kind":"library","path":"/original/library"},
+                "origin":{"host_name":"Build","ssh_target":"dev@original","host_created_at":1},
+                "sources":[{"kind":"git","url":"https://user:SECRET@fixture.invalid/repo?token=SECRET#SECRET"}],
+                "preview":[{"rel_path":"unselected","name":"unselected","description":"SECRET"}],
+                "revision":3,"settled":true,"cancel_requested":false,
+                "items":[{"id":"one","attempt_id":"first","relative_path":"one","agent":null,"phase":phase,"message":"raw SECRET exception"},
+                    {"id":"done","attempt_id":"first","relative_path":"done","agent":null,"phase":"succeeded","message":null}]
+            })
+        };
+        let saved = dispatch(&ctx,"operation_results_request", &json!({"request":{"action":"write","version":0,"results":[result("partial","failed"),result("success","succeeded")]}})).unwrap();
+        assert_eq!(saved["version"], 1);
+        drop(ctx);
+        let ctx = HostCtx::headless(Arc::new(SkillStore::new(&db).unwrap()));
+        let restored = dispatch(
+            &ctx,
+            "operation_results_request",
+            &json!({"request":{"action":"read"}}),
+        )
+        .unwrap();
+        assert_eq!(restored["results"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            restored["results"][0]["origin"]["ssh_target"],
+            "dev@original"
+        );
+        assert_eq!(restored["results"][0]["items"][1]["phase"], "succeeded");
+        assert!(restored["results"][0]["preview"].is_null());
+        assert!(!restored.to_string().contains("SECRET"));
+        assert_eq!(
+            dispatch(
+                &ctx,
+                "operation_request",
+                &json!({"request":{"action":"list"}})
+            )
+            .unwrap(),
+            json!([])
+        );
+    }
+
+    #[test]
+    fn retained_results_reject_stale_writes_and_keep_lost_admission_correlation() {
+        let host = test_host();
+        let result = json!({"operation_id":"lost","attempt_id":"old","recovery":"checking","recovery_attempt":"confirm-new",
+            "host_id":"removed","project_id":"same-id","project_path":"/original/project",
+            "destination":{"kind":"project","id":"same-id","path":"/original/project"},
+            "revision":4,"settled":false,"cancel_requested":false,"items":[]});
+        let write = |version: u64, results: Value| json!({"request":{"action":"write","version":version,"results":results}});
+        let saved = dispatch(
+            &host.ctx,
+            "operation_results_request",
+            &write(0, json!([result])),
+        )
+        .unwrap();
+        assert_eq!(saved["results"][0]["recovery"], "unknown");
+        assert_eq!(saved["results"][0]["recovery_attempt"], "confirm-new");
+        assert_eq!(saved["results"][0]["settled"], true);
+        dispatch(&host.ctx, "operation_results_request", &write(1, json!([]))).unwrap();
+        assert!(dispatch(
+            &host.ctx,
+            "operation_results_request",
+            &write(1, saved["results"].clone())
+        )
+        .is_err());
+        assert_eq!(
+            dispatch(
+                &host.ctx,
+                "operation_results_request",
+                &json!({"request":{"action":"read"}})
+            )
+            .unwrap()["results"],
+            json!([])
+        );
+    }
+
+    #[test]
+    fn retained_pending_confirmation_preserves_expected_attempt_as_unknown_not_review_authority() {
+        let host = test_host();
+        let result = json!({"operation_id":"pending-confirm","attempt_id":"preview","host_id":null,
+            "project_id":null,"project_path":null,"work":"installation",
+            "admission":{"action":"confirm_install","expected_attempt":"confirmation"},
+            "revision":2,"settled":true,"cancel_requested":false,
+            "items":[{"id":"one","attempt_id":"preview","relative_path":"one","agent":null,"phase":"needs_review","message":null}]});
+        let saved = dispatch(
+            &host.ctx,
+            "operation_results_request",
+            &json!({"request":{"action":"write","version":0,"results":[result]}}),
+        )
+        .unwrap();
+        assert_eq!(saved["results"][0]["recovery"], "unknown");
+        assert_eq!(saved["results"][0]["recovery_attempt"], "confirmation");
+        assert_eq!(saved["results"][0]["items"][0]["phase"], "outcome_unknown");
+        assert!(saved["results"][0]["admission"].is_null());
+    }
+
+    #[test]
+    fn result_storage_failure_is_sanitized_and_retry_saves_the_same_result() {
+        let host = test_host();
+        let database = rusqlite::Connection::open(host.tmp.path().join("repo/test.db")).unwrap();
+        database.execute_batch("CREATE TRIGGER fail_results BEFORE INSERT ON resource_state WHEN NEW.kind = 'operation_results' BEGIN SELECT RAISE(FAIL, 'SECRET exception'); END;").unwrap();
+        let write = json!({"request":{"action":"write","version":0,"results":[{
+            "operation_id":"keep-memory","attempt_id":"first","host_id":null,"project_id":null,"project_path":null,
+            "revision":3,"settled":true,"cancel_requested":false,
+            "items":[{"id":"one","attempt_id":"first","relative_path":"one","agent":null,"phase":"failed","message":"SECRET stderr"}]
+        }]}});
+        let error = dispatch(&host.ctx, "operation_results_request", &write).unwrap_err();
+        assert!(!error.message.contains("SECRET"));
+        let empty = dispatch(
+            &host.ctx,
+            "operation_results_request",
+            &json!({"request":{"action":"read"}}),
+        )
+        .unwrap();
+        assert_eq!(empty["version"], 0);
+        database.execute_batch("DROP TRIGGER fail_results").unwrap();
+        let saved = dispatch(&host.ctx, "operation_results_request", &write).unwrap();
+        assert_eq!(saved["results"][0]["operation_id"], "keep-memory");
+        assert_eq!(saved["results"][0]["items"][0]["phase"], "failed");
+        assert!(!saved.to_string().contains("SECRET"));
+    }
+
+    #[test]
     fn library_operation_installs_local_without_a_project_or_agent() {
         let host = test_host();
         let source = host.tmp.path().join("source");
@@ -893,7 +1025,21 @@ mod tests {
 
     #[test]
     fn git_operation_previews_without_writing_and_installs_only_confirmed_selection() {
-        let host = test_host();
+        git_operation_review(false, false);
+    }
+
+    #[test]
+    fn restored_git_review_recreates_missing_preview_and_installs_only_fresh_selection() {
+        git_operation_review(true, false);
+    }
+
+    #[test]
+    fn restored_selected_git_failure_never_adds_unselected_preview_entries() {
+        git_operation_review(true, true);
+    }
+
+    fn git_operation_review(restored: bool, failed_selection: bool) {
+        let mut host = test_host();
         let repo = host.tmp.path().join("git-source");
         crate::core::test_support::write_skill(&repo.join("skills/one"), "one");
         crate::core::test_support::write_skill(&repo.join("skills/two"), "two");
@@ -947,9 +1093,51 @@ mod tests {
         assert_eq!(preview["items"][0]["phase"], "needs_review", "{preview}");
         assert_eq!(preview["preview"].as_array().unwrap().len(), 2);
         assert!(!crate::core::central_repo::skills_dir().join("one").exists());
-        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"confirm_install","operation_id":"git-preview","attempt_id":"selected","items":[{"rel_path":"one","name":"chosen"}]}})).unwrap();
+        if restored && !failed_selection {
+            drop(reader);
+            host.ctx = HostCtx::headless(Arc::new(
+                SkillStore::new(&host.tmp.path().join("repo/test.db")).unwrap(),
+            ));
+            dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"prepare_review","operation_id":"git-preview","attempt_id":"recreated"}})).unwrap();
+            let recreated = settled_operation(&host, "git-preview");
+            assert_eq!(recreated["preview"].as_array().unwrap().len(), 2);
+            assert!(!crate::core::central_repo::skills_dir()
+                .join("chosen")
+                .exists());
+        }
+        let mut selection = json!([{"rel_path":"one","name":"chosen"}]);
+        if restored && !failed_selection {
+            selection
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"rel_path":"two","name":"second"}));
+        }
+        let database = rusqlite::Connection::open(host.tmp.path().join("repo/test.db")).unwrap();
+        if failed_selection {
+            database.execute_batch("CREATE TRIGGER fail_selected BEFORE INSERT ON skills BEGIN SELECT RAISE(FAIL, 'fixture failure'); END;").unwrap();
+        }
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"confirm_install","operation_id":"git-preview","attempt_id":"selected","items":selection}})).unwrap();
         let installed = settled_operation(&host, "git-preview");
-        assert_eq!(installed["items"].as_array().unwrap().len(), 1);
+        if failed_selection {
+            assert_eq!(installed["items"][0]["phase"], "failed", "{installed}");
+            database
+                .execute_batch("DROP TRIGGER fail_selected")
+                .unwrap();
+            host.ctx = HostCtx::headless(Arc::new(
+                SkillStore::new(&host.tmp.path().join("repo/test.db")).unwrap(),
+            ));
+            dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"prepare_review","operation_id":"git-preview","attempt_id":"selected-review"}})).unwrap();
+            let review = settled_operation(&host, "git-preview");
+            assert_eq!(review["preview"].as_array().unwrap().len(), 1, "{review}");
+            assert_eq!(review["preview"][0]["rel_path"], "one");
+            assert_eq!(review["preview"][0]["name"], "chosen");
+            assert!(!crate::core::central_repo::skills_dir().join("two").exists());
+            return;
+        }
+        assert_eq!(
+            installed["items"].as_array().unwrap().len(),
+            if restored { 2 } else { 1 }
+        );
         assert_eq!(installed["items"][0]["phase"], "succeeded", "{installed}");
         assert!(crate::core::central_repo::skills_dir()
             .join("chosen/SKILL.md")
@@ -959,7 +1147,7 @@ mod tests {
 
     #[test]
     fn marketplace_operation_uses_local_git_and_keeps_edited_library_skill() {
-        let host = test_host();
+        let mut host = test_host();
         let repo = host.tmp.path().join("git-source");
         crate::core::test_support::write_skill(&repo.join("skills/one"), "one");
         for args in [
@@ -1005,6 +1193,27 @@ mod tests {
         dispatch(&host.ctx, "operation_request", &request("market-again")).unwrap();
         let result = settled_operation(&host, "market-again");
         assert_eq!(result["items"][0]["phase"], "needs_review", "{result}");
+        assert_eq!(std::fs::read_to_string(&installed).unwrap(), "my edit");
+        dispatch(
+            &host.ctx,
+            "operation_results_request",
+            &json!({"request":{"action":"write","version":0,"results":[result]}}),
+        )
+        .unwrap();
+        host.ctx = HostCtx::headless(Arc::new(
+            SkillStore::new(&host.tmp.path().join("repo/test.db")).unwrap(),
+        ));
+        let retained = dispatch(
+            &host.ctx,
+            "operation_results_request",
+            &json!({"request":{"action":"read"}}),
+        )
+        .unwrap();
+        assert_eq!(retained["results"][0]["sources"][0]["kind"], "marketplace");
+        dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"prepare_review","operation_id":"market-again","attempt_id":"fresh-market"}})).unwrap();
+        let review = settled_operation(&host, "market-again");
+        assert_eq!(review["items"][0]["phase"], "needs_review");
+        assert!(review["preview"].is_null());
         assert_eq!(std::fs::read_to_string(installed).unwrap(), "my edit");
     }
 
@@ -1170,6 +1379,173 @@ mod tests {
                 .len(),
             if changed { 1 } else { 2 }
         );
+    }
+
+    #[test]
+    fn restored_install_recreates_review_without_writing_or_repeating_successful_siblings() {
+        restored_install_review(false);
+    }
+
+    #[test]
+    fn restored_install_confirmation_rechecks_target_after_fresh_review() {
+        restored_install_review(true);
+    }
+
+    fn restored_install_review(changed_target: bool) {
+        let mut host = test_host();
+        let good = host.tmp.path().join("good");
+        let missing = host.tmp.path().join("missing");
+        crate::core::test_support::write_skill(&good, "good");
+        dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"submit_install","operation_id":"restore-install","host_id":null,"sources":[{"kind":"local","path":good},{"kind":"local","path":missing}]}})).unwrap();
+        let partial = settled_operation(&host, "restore-install");
+        assert_eq!(partial["items"][0]["phase"], "succeeded");
+        assert_eq!(partial["items"][1]["phase"], "failed");
+        host.ctx = HostCtx::headless(Arc::new(
+            SkillStore::new(&host.tmp.path().join("repo/test.db")).unwrap(),
+        ));
+        crate::core::test_support::write_skill(&missing, "recreated");
+        dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"prepare_review","operation_id":"restore-install","attempt_id":"fresh-review"}})).unwrap();
+        let review = settled_operation(&host, "restore-install");
+        assert_eq!(review["items"][0], partial["items"][0]);
+        assert_eq!(review["items"][1]["phase"], "needs_review");
+        assert!(!crate::core::central_repo::skills_dir()
+            .join("recreated")
+            .exists());
+        assert_eq!(review["preview"].as_array().unwrap().len(), 1);
+        let selection = json!([{"rel_path":review["preview"][0]["rel_path"],"name":"recreated"}]);
+        let target = crate::core::central_repo::skills_dir().join("recreated");
+        if changed_target {
+            crate::core::test_support::write_skill(&target, "someone-else");
+            std::fs::write(target.join("SKILL.md"), "my edit after preview").unwrap();
+        }
+        dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"confirm_install","operation_id":"restore-install","attempt_id":"confirmed","items":selection}})).unwrap();
+        let done = settled_operation(&host, "restore-install");
+        assert_eq!(done["items"][0], partial["items"][0]);
+        if changed_target {
+            assert_eq!(done["items"][1]["phase"], "needs_review", "{done}");
+            assert_eq!(
+                std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+                "my edit after preview"
+            );
+            assert!(!crate::core::central_repo::skills_dir()
+                .join("recreated-2")
+                .exists());
+            return;
+        }
+        assert_eq!(done["items"][1]["phase"], "succeeded");
+        assert!(crate::core::central_repo::skills_dir()
+            .join("recreated/SKILL.md")
+            .exists());
+    }
+
+    #[test]
+    fn restored_local_variants_reopen_real_stores_and_require_fresh_review() {
+        use std::io::Write;
+        for kind in ["folder", "archive", "batch", "discovered"] {
+            let mut host = test_host();
+            let path = host.tmp.path().join("source");
+            let source = match kind {
+                "archive" => {
+                    let archive = host.tmp.path().join("writing.skill");
+                    let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+                    zip.start_file("writing/SKILL.md", zip::write::SimpleFileOptions::default())
+                        .unwrap();
+                    zip.write_all(b"---\nname: writing\n---\narchive content")
+                        .unwrap();
+                    zip.finish().unwrap();
+                    json!({"kind":"local","path":archive})
+                }
+                "batch" => {
+                    crate::core::test_support::write_skill(&path.join("one"), "one");
+                    crate::core::test_support::write_skill(&path.join("two"), "two");
+                    json!({"kind":"local_batch","path":path})
+                }
+                _ => {
+                    crate::core::test_support::write_skill(&path, "writing");
+                    json!({"kind":"local","path":path,"origin":if kind == "discovered" {json!("discovered")} else {Value::Null}})
+                }
+            };
+            let database =
+                rusqlite::Connection::open(host.tmp.path().join("repo/test.db")).unwrap();
+            database.execute_batch("CREATE TRIGGER fail_install BEFORE INSERT ON skills BEGIN SELECT RAISE(FAIL, 'fixture failure'); END;").unwrap();
+            dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"submit_install","operation_id":"variant","host_id":null,"sources":[source]}})).unwrap();
+            let failed = settled_operation(&host, "variant");
+            assert!(
+                failed["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|i| i["phase"] == "failed"),
+                "{kind}: {failed}"
+            );
+            dispatch(
+                &host.ctx,
+                "operation_results_request",
+                &json!({"request":{"action":"write","version":0,"results":[failed]}}),
+            )
+            .unwrap();
+            host.ctx = HostCtx::headless(Arc::new(
+                SkillStore::new(&host.tmp.path().join("repo/test.db")).unwrap(),
+            ));
+            let retained = dispatch(
+                &host.ctx,
+                "operation_results_request",
+                &json!({"request":{"action":"read"}}),
+            )
+            .unwrap();
+            assert_eq!(
+                retained["results"][0]["sources"][0]["kind"], source["kind"],
+                "{kind}"
+            );
+            assert_eq!(
+                retained["results"][0]["sources"][0]["path"], source["path"],
+                "{kind}"
+            );
+            assert_eq!(
+                retained["results"][0]["sources"][0]["origin"], source["origin"],
+                "{kind}"
+            );
+            assert_eq!(
+                dispatch(
+                    &host.ctx,
+                    "operation_request",
+                    &json!({"request":{"action":"list"}})
+                )
+                .unwrap(),
+                json!([])
+            );
+            assert!(dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"retry_failed","operation_id":"variant","attempt_id":"stale-shortcut"}})).is_err());
+            database.execute_batch("DROP TRIGGER fail_install").unwrap();
+            dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"prepare_review","operation_id":"variant","attempt_id":"fresh-review","item_ids":[failed["items"][0]["id"]]}})).unwrap();
+            let review = settled_operation(&host, "variant");
+            assert!(
+                review["items"][0]["phase"] == "needs_review",
+                "{kind}: {review}"
+            );
+            assert_eq!(
+                dispatch(&host.ctx, "get_managed_skills", &json!({})).unwrap(),
+                json!([])
+            );
+            let choice = &review["preview"][0];
+            dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"confirm_install","operation_id":"variant","attempt_id":"confirmed","items":[{"rel_path":choice["rel_path"],"name":choice["name"]}]}})).unwrap();
+            let done = settled_operation(&host, "variant");
+            assert_eq!(done["items"][0]["phase"], "succeeded", "{kind}: {done}");
+            assert_eq!(
+                dispatch(&host.ctx, "get_managed_skills", &json!({}))
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            if kind == "batch" {
+                assert_eq!(done["items"][1]["phase"], "failed");
+                assert_eq!(
+                    done["items"][1]["attempt_id"],
+                    failed["items"][1]["attempt_id"]
+                );
+            }
+        }
     }
 
     #[test]
@@ -1485,9 +1861,18 @@ mod tests {
 
     #[test]
     fn failed_only_retry_keeps_successes_and_review_items() {
+        project_partial_retry(false);
+    }
+
+    #[test]
+    fn restored_failed_project_retry_keeps_successes_and_review_items() {
+        project_partial_retry(true);
+    }
+
+    fn project_partial_retry(restored: bool) {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-        let host = test_host_with(Arc::new(HeldOperation {
+        let mut host = test_host_with(Arc::new(HeldOperation {
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),
@@ -1538,6 +1923,25 @@ mod tests {
         assert_eq!(phases["x"], "failed");
         assert_eq!(phases["y"], "succeeded");
         assert_eq!(phases["review"], "needs_review");
+        if restored {
+            dispatch(
+                &host.ctx,
+                "operation_results_request",
+                &json!({"request":{"action":"write","version":0,"results":[finished]}}),
+            )
+            .unwrap();
+            host.ctx = HostCtx::headless(Arc::new(
+                SkillStore::new(&host.tmp.path().join("repo/test.db")).unwrap(),
+            ));
+            let retained = dispatch(
+                &host.ctx,
+                "operation_results_request",
+                &json!({"request":{"action":"read"}}),
+            )
+            .unwrap();
+            assert_eq!(retained["results"][0]["project_path"], project["path"]);
+            assert_eq!(retained["results"][0]["items"].as_array().unwrap().len(), 3);
+        }
         std::fs::rename(saved, source).unwrap();
         let request = json!({"request":{"action":"retry_failed","operation_id":"held","attempt_id":"retry-attempt"}});
         dispatch(&host.ctx, "operation_request", &request).unwrap();
@@ -1560,6 +1964,49 @@ mod tests {
         assert_eq!(
             dispatch(&host.ctx, "operation_request", &request).unwrap()["revision"],
             retried["revision"]
+        );
+    }
+
+    #[test]
+    fn restored_project_retry_keeps_siblings_and_revalidates_original_evidence() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let mut host = test_host_with(Arc::new(HeldOperation {
+            entered_once: std::sync::atomic::AtomicBool::new(false),
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        let project = operation_project(&host, "restored-project");
+        submit_operation(&host, "held", &project);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let source = crate::core::central_repo::skills_dir().join("x");
+        let saved = host.tmp.path().join("saved-source");
+        std::fs::rename(&source, &saved).unwrap();
+        drop(release);
+        assert_eq!(
+            settled_operation(&host, "held")["items"][0]["phase"],
+            "failed"
+        );
+        // Close the original operation service/store, then reopen the same isolated database.
+        host.ctx = HostCtx::headless(Arc::new(
+            SkillStore::new(&host.tmp.path().join("repo/test.db")).unwrap(),
+        ));
+        std::fs::rename(&saved, &source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "changed after the failure").unwrap();
+        dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"retry_failed","operation_id":"held","attempt_id":"restored-attempt"}})).unwrap();
+        let result = settled_operation(&host, "held");
+        assert_eq!(result["items"][0]["phase"], "needs_review", "{result}");
+        assert_eq!(
+            std::fs::read_to_string(
+                host.tmp
+                    .path()
+                    .join("restored-project/.claude/skills/x/SKILL.md")
+            )
+            .unwrap(),
+            "old copy"
         );
     }
 

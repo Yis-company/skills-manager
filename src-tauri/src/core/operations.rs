@@ -9,6 +9,7 @@ use super::{error::AppError, host::HostCtx};
 use crate::commands::projects;
 
 mod installation;
+pub mod results;
 use installation::InstallWork;
 pub use installation::{InstallSource, LocalOrigin};
 
@@ -91,6 +92,8 @@ pub enum Destination {
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Record {
+    #[serde(default)]
+    review_only: bool,
     snapshot: OperationSnapshot,
     updates: Vec<Option<projects::CapturedProjectUpdate>>,
     attempts: Vec<String>,
@@ -131,6 +134,11 @@ impl Drop for OperationService {
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum OperationRequest {
+    PrepareReview {
+        operation_id: String,
+        attempt_id: String,
+        item_ids: Option<Vec<String>>,
+    },
     ConfirmInstall {
         operation_id: String,
         attempt_id: String,
@@ -168,6 +176,11 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
     let request: OperationRequest =
         serde_json::from_value(request).map_err(|e| AppError::invalid_input(e.to_string()))?;
     match request {
+        OperationRequest::PrepareReview {
+            operation_id,
+            attempt_id,
+            item_ids,
+        } => installation::prepare_review(ctx, &operation_id, attempt_id, item_ids),
         OperationRequest::ConfirmInstall {
             operation_id,
             attempt_id,
@@ -222,6 +235,7 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
             }
             let attempt_id = uuid::Uuid::new_v4().to_string();
             let mut record = Record {
+                review_only: false,
                 snapshot: OperationSnapshot {
                     operation_id,
                     attempt_id: attempt_id.clone(),
@@ -366,6 +380,36 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
             attempt_id,
         } => {
             let mut state = ctx.operations.0.lock().unwrap();
+            if !state
+                .records
+                .iter()
+                .any(|r| r.snapshot.operation_id == operation_id)
+            {
+                let saved: Record = ctx
+                    .store
+                    .resource_state_get(RECEIPT, &operation_id)
+                    .map_err(AppError::db)?
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(AppError::db)?
+                    .ok_or_else(|| {
+                        AppError::not_found("Operation receipt not found; prepare and review again")
+                    })?;
+                if matches!(saved.snapshot.work, OperationWork::Installation) {
+                    return Err(AppError::invalid_input(
+                        "Prepare and review this source again before retrying",
+                    ));
+                }
+                // Explicit retry creates a fresh attempt from durable project
+                // evidence; no original worker or temporary staging is adopted.
+                state.records.push(Record {
+                    review_only: false,
+                    snapshot: unowned_snapshot(saved.snapshot),
+                    updates: saved.updates,
+                    installs: vec![],
+                    attempts: saved.attempts,
+                });
+            }
             let record = state
                 .records
                 .iter_mut()

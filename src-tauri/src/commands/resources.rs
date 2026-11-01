@@ -35,3 +35,16 @@ pub async fn operation_request(ctx: State<'_, HostCtx>, request: Value) -> Resul
     tauri::async_runtime::spawn_blocking(move || crate::core::operations::dispatch(&ctx, request))
         .await?
 }
+
+/// Always called locally by the desktop, including results from offline SSH hosts.
+#[tauri::command]
+pub async fn operation_results_request(
+    ctx: State<'_, HostCtx>,
+    request: Value,
+) -> Result<Value, AppError> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::core::operations::results::dispatch(&ctx, request)
+    })
+    .await?
+}

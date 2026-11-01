@@ -8,13 +8,14 @@ import {
   operationCounts,
   operationIdentity,
   type OperationItem,
+  operationNeedsAttention,
   type OperationSnapshot,
 } from "../lib/operations";
 
 export function ProjectOperationProgress({ operation }: { operation: OperationSnapshot }) {
   const { t } = useTranslation();
   const progressRef = useRef<HTMLElement>(null);
-  const { act, refresh, refreshErrors, reconnect } = useOperations();
+  const { act, refresh, refreshErrors, reconnect, dismiss } = useOperations();
   const counts = operationCounts(operation);
 
   const perform = (action: "cancel" | "retry_failed") => {
@@ -35,6 +36,20 @@ export function ProjectOperationProgress({ operation }: { operation: OperationSn
       aria-label={t("operations.projectProgress")}
       className="app-panel space-y-2 px-4 py-3"
     >
+      {operation.restored && (
+        <div className="space-y-1 text-[13px] text-secondary">
+          <p className="break-words">
+            {t("operations.restored")} · {operation.project_path}
+          </p>
+          {operation.items.map((item) => (
+            <p key={item.id} className="break-words">
+              {[item.relative_path, item.agent, t(`operations.phase.${item.phase}`)]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div role="status" className="min-w-0 text-[13px]">
           <p className="font-medium text-primary">
@@ -75,7 +90,7 @@ export function ProjectOperationProgress({ operation }: { operation: OperationSn
             {t("operations.retry", { count: counts.failed })}
           </button>
         )}
-        {operation.host_id !== null && (operation.recovery === "unknown" || counts.unknown > 0) && (
+        {(operation.recovery === "unknown" || counts.unknown > 0) && (
           <button
             className="app-toolbar-button app-toolbar-button-secondary"
             onClick={() => {
@@ -83,6 +98,11 @@ export function ProjectOperationProgress({ operation }: { operation: OperationSn
             }}
           >
             {t("operations.reconnect")}
+          </button>
+        )}
+        {operation.settled && !operation.admission && !operationNeedsAttention(operation) && (
+          <button className="app-button-secondary" onClick={() => dismiss(operation)}>
+            {t("operations.dismiss")}
           </button>
         )}
       </div>
