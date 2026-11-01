@@ -39,7 +39,7 @@ import { useApp } from "../context/AppContext";
 import { useOperations } from "../context/OperationsContext";
 import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import { type PresetsData, queryKeys } from "../lib/appQueries";
-import { isLibraryOperation, operationCounts } from "../lib/operations";
+import { isLibraryOperation, operationCounts, operationProjectMatches } from "../lib/operations";
 import { getPresetIconOption } from "../lib/presetIcons";
 import { applyStoredOrder } from "../lib/storedOrder";
 import * as api from "../lib/tauri";
@@ -794,10 +794,8 @@ export function Sidebar() {
                     {orderedProjects.map((project) => {
                       const isActive = location.pathname === `/project/${project.id}`;
 
-                      const projectOperations = operations.filter(
-                        (operation) =>
-                          operation.project_id === project.id &&
-                          (!operation.project_path || operation.project_path === project.path),
+                      const projectOperations = operations.filter((operation) =>
+                        operationProjectMatches(operation, activeHostId, project.id, project.path),
                       );
 
                       const progress =

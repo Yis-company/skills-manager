@@ -55,7 +55,7 @@ import {
 import { getErrorMessage } from "../lib/error";
 import { enabledInstalledAgentKeys, getDefaultExportAgents } from "../lib/exportAgents";
 import { invokeHost } from "../lib/hostCall";
-import { isItemActive } from "../lib/operations";
+import { isItemActive, operationProjectMatches } from "../lib/operations";
 import {
   filterProjectSkillGroups,
   getAssignedAgents,
@@ -93,13 +93,10 @@ export function ProjectDetail() {
   } = useApp();
 
   const { operations, submit: submitProjectUpdate } = useOperations();
+  const project = projects.find((p) => p.id === id);
 
-  const scopedOperations = operations.filter(
-    (operation) =>
-      operation.project_id === id &&
-      operation.host_id === activeHostId &&
-      (!operation.project_path ||
-        operation.project_path === projects.find((p) => p.id === id)?.path),
+  const scopedOperations = operations.filter((operation) =>
+    operationProjectMatches(operation, activeHostId, id, project?.path),
   );
 
   const projectOperations = scopedOperations.filter(
@@ -239,8 +236,6 @@ export function ProjectDetail() {
       // ignore
     }
   };
-
-  const project = projects.find((p) => p.id === id);
 
   const getSkillKey = useCallback((skill: Pick<ProjectSkillGroup, "id">) => {
     return skill.id;

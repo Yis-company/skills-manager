@@ -736,7 +736,7 @@ fn drive(ctx: HostCtx) {
                         update.as_ref().unwrap(),
                     )
                 }));
-                let result = result.unwrap_or_else(|_| Ok(Phase::OutcomeUnknown));
+                let result = result.unwrap_or(Ok(Phase::OutcomeUnknown));
                 drop(guard);
                 let snapshot = {
                     let mut state = ctx.operations.0.lock().unwrap();

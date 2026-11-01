@@ -63,6 +63,57 @@ test("project progress survives navigation while another project accepts work", 
   await expect(page.getByRole("button", { name: "Cancel update", exact: true })).toBeVisible();
 });
 
+test("a newer settled result cannot enable a matrix cell while older work is active", async ({
+  page,
+  backend,
+}) => {
+  const active: OperationSnapshot = {
+    operation_id: "active",
+    attempt_id: "first",
+    host_id: null,
+    project_id: "p1",
+    project_path: "/home/e2e/code/webapp",
+    revision: 1,
+    settled: false,
+    cancel_requested: false,
+    items: [
+      {
+        id: "active-item",
+        attempt_id: "first",
+        relative_path: "x",
+        agent: "claude_code",
+        phase: "waiting",
+        message: null,
+      },
+    ],
+  };
+
+  await backend.seed({
+    projects: [project("p1", "webapp", 0)],
+    projectSkills: { p1: [projectSkill("x", "claude_code")] },
+    projectAgentTargets: { p1: [agentTarget("claude_code", "Claude Code")] },
+    operations: [
+      active,
+      {
+        ...active,
+        operation_id: "newer-result",
+        settled: true,
+        items: [{ ...active.items[0], id: "settled-item", phase: "succeeded" }],
+      },
+    ],
+  });
+  await page.goto("/project/p1");
+  const matrix = page.getByRole("region", { name: "On agents", exact: true });
+  await expect(matrix.getByRole("status")).toContainText("Claude Code: Updated");
+  const control = matrix.getByRole("button", { name: "Remove x from Claude Code", exact: true });
+  await expect(control).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel update", exact: true }).click();
+  await expect(control).toBeEnabled();
+  expect(
+    (await backend.calls("operation_request")).filter((call) => call.request.action === "cancel"),
+  ).toEqual([{ request: { action: "cancel", operation_id: "active" } }]);
+});
+
 test("Retry failed preserves successful, review and unknown outcomes", async ({
   page,
   backend,

@@ -134,6 +134,17 @@ export const operationCounts = (operation: OperationSnapshot) => ({
 export const isLibraryOperation = (operation: OperationSnapshot) =>
   operation.destination?.kind === "library";
 
+/** Older project receipts may omit the path; captured paths must still match. */
+export const operationProjectMatches = (
+  operation: OperationSnapshot,
+  hostId: null | string,
+  projectId: string,
+  projectPath?: string,
+) =>
+  operation.host_id === hostId &&
+  operation.project_id === projectId &&
+  (!operation.project_path || operation.project_path === projectPath);
+
 export const operationQueryKey = (hostId: null | string) => ["host", hostId, "operations"] as const;
 
 export const installationPhaseKey = (phase: OperationPhase) =>

@@ -1,5 +1,5 @@
 import type { OperationSnapshot } from "../../src/lib/operations";
-import { project } from "../fake-backend/state";
+import { agentTarget, project, projectSkill } from "../fake-backend/state";
 import { expect, test } from "../fixtures";
 
 const result = (
@@ -366,6 +366,69 @@ test("restored project detail remains visible without current skill rows and nev
   await shortcut.click();
   await expect(page.getByRole("dialog")).toContainText("/original/project");
 });
+
+for (const phase of ["outcome_unknown", "queued"] as const) {
+  test(`replacement project matrix excludes original ${phase} work and keeps its controls usable`, async ({
+    page,
+    backend,
+  }) => {
+    const original: OperationSnapshot = {
+      ...result("original-project", "outcome_unknown"),
+      project_id: "same",
+      project_path: "/original/project",
+      work: "project_update",
+      destination: { kind: "project", id: "same", path: "/original/project" },
+      origin: { host_name: "Local", project_name: "Webapp" },
+      settled: phase !== "queued",
+      items: [{ ...result("original-project").items[0], agent: "claude_code", phase }],
+    };
+
+    await backend.seed({
+      projects: [project("same", "Webapp", 0, { path: "/replacement/project" })],
+      projectAgentTargets: { same: [agentTarget("claude_code", "Claude Code")] },
+      projectSkills: { same: [projectSkill("writing", "claude_code")] },
+      ...(phase === "queued"
+        ? { operations: [original] }
+        : { operationResults: { version: 1, results: [original] } }),
+    });
+    await page.goto("/project/same");
+    const matrix = page.getByRole("region", { name: "On agents", exact: true });
+    const control = matrix.getByRole("button", { name: "Remove writing from Claude Code" });
+
+    await expect(control).toBeVisible();
+    // Wait for observation/restoration before asserting that the current project excludes it.
+    const shortcut = page.getByRole("button", { name: /Local · Webapp/ });
+
+    if (phase === "queued") {
+      await page.getByRole("button", { name: "Local", exact: true }).click();
+      await expect(page.getByRole("menuitemradio", { name: /Local.*1 in progress/ })).toBeVisible();
+      await page.keyboard.press("Escape");
+    } else {
+      await expect(shortcut).toBeVisible();
+    }
+
+    await expect(matrix.getByRole("status")).toHaveCount(0);
+    await expect(control).toBeEnabled();
+    await expect(page.getByRole("region", { name: "Project update progress" })).toHaveCount(0);
+    await expect(page.locator("#sidebar-projects")).not.toContainText(
+      phase === "queued" ? "0 of 1" : "Outcome unknown",
+    );
+
+    if (phase === "outcome_unknown") {
+      await shortcut.click();
+      const context = page.getByRole("dialog", { name: "Webapp" });
+      await expect(context).toContainText("/original/project");
+      await expect(context).toContainText("writing");
+      await expect(context).toContainText("Outcome unknown");
+    }
+
+    expect(
+      (await backend.calls("operation_request")).filter(
+        (call) => !["read", "list", "reconcile"].includes(call.request.action),
+      ),
+    ).toEqual([]);
+  });
+}
 
 test("reconnection cannot navigate a restored result into a project that reused its ID", async ({
   page,

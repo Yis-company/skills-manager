@@ -120,7 +120,8 @@ pub(super) fn submit(
         }
     }
     if let Some(record) = state.records.iter().find(|r| {
-        !r.snapshot.settled
+        !sources.is_empty()
+            && !r.snapshot.settled
             && sources
                 .iter()
                 .all(|s| r.installs.iter().any(|i| &i.source == s))
@@ -877,18 +878,17 @@ pub(super) fn sanitize(source: &mut InstallSource) -> Result<(), AppError> {
             crate::core::git_fetcher::validate_git_url(url)
                 .map_err(|_| AppError::invalid_input("Use an HTTPS or SSH Git URL"))?;
         }
-        InstallSource::Marketplace { source, skill_id } => {
+        InstallSource::Marketplace { source, skill_id }
             if source.split('/').count() != 2
                 || !source
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || "-_/ .".contains(c) && c != ' ')
                 || crate::core::skill_metadata::sanitize_skill_name(skill_id).as_deref()
-                    != Some(skill_id.as_str())
-            {
-                return Err(AppError::invalid_input(
-                    "Invalid marketplace source or skill",
-                ));
-            }
+                    != Some(skill_id.as_str()) =>
+        {
+            return Err(AppError::invalid_input(
+                "Invalid marketplace source or skill",
+            ));
         }
         _ => {}
     }

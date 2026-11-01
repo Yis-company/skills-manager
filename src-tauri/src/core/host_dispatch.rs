@@ -1680,6 +1680,113 @@ mod tests {
     }
 
     #[test]
+    fn empty_local_batches_keep_their_own_context_while_unrelated_work_waits() {
+        for project_work in [true, false] {
+            let host = test_host();
+            let project = operation_project(&host, "blocked-project");
+            let batch = host.tmp.path().join("batch");
+            crate::core::test_support::write_skill(&batch.join("one"), "one");
+            let submit_batch = |id: &str, path: &std::path::Path| {
+                dispatch(
+                    &host.ctx,
+                    "operation_request",
+                    &json!({"request":{
+                        "action":"submit_install", "operation_id":id, "host_id":"original-host",
+                        "sources":[{"kind":"local_batch", "path":path}]
+                    }}),
+                )
+                .unwrap()
+            };
+            submit_batch("initial-batch", &batch);
+            settled_operation(&host, "initial-batch");
+            let skills = dispatch(&host.ctx, "get_managed_skills", &json!({})).unwrap();
+            let installed = crate::core::central_repo::skills_dir().join("one/SKILL.md");
+            let before = std::fs::metadata(&installed).unwrap().modified().unwrap();
+            let source = host.tmp.path().join("unrelated");
+            crate::core::test_support::write_skill(&source, "unrelated");
+            let guard = crate::core::repo_lock::RepoLock::acquire("external writer").unwrap();
+            if project_work {
+                submit_operation(&host, "held", &project);
+            } else {
+                dispatch(
+                    &host.ctx,
+                    "operation_request",
+                    &json!({"request":{
+                        "action":"submit_install", "operation_id":"held", "host_id":null,
+                        "sources":[{"kind":"local", "path":source}]
+                    }}),
+                )
+                .unwrap();
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while read_operation(&host, "held")["items"][0]["phase"] != "waiting" {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            let held = read_operation(&host, "held");
+            let empty = host.tmp.path().join("empty");
+            std::fs::create_dir_all(empty.join("not-a-skill")).unwrap();
+            for (id, path) in [("all-installed", &batch), ("empty-batch", &empty)] {
+                let snapshot = submit_batch(id, path);
+                assert_eq!(snapshot["operation_id"], id, "{snapshot}");
+                assert_eq!(snapshot["host_id"], "original-host");
+                assert_eq!(snapshot["work"], "installation");
+                assert_eq!(
+                    snapshot["destination"],
+                    json!({"kind":"library", "path":
+                    crate::core::central_repo::skills_dir().canonicalize().unwrap()})
+                );
+                assert!(snapshot["project_id"].is_null());
+                assert!(snapshot["project_path"].is_null());
+                assert_eq!(
+                    snapshot["sources"],
+                    json!([{"kind":"local_batch","path":path}])
+                );
+                assert_eq!(snapshot["items"], json!([]));
+                assert_eq!(snapshot["settled"], true);
+                assert_eq!(read_operation(&host, id), snapshot);
+                assert_eq!(submit_batch(id, path), snapshot);
+                dispatch(
+                    &host.ctx,
+                    "operation_request",
+                    &json!({"request":{
+                        "action":"cancel", "operation_id":id
+                    }}),
+                )
+                .unwrap();
+                assert_eq!(read_operation(&host, "held"), held);
+            }
+            assert_eq!(
+                std::fs::metadata(&installed).unwrap().modified().unwrap(),
+                before
+            );
+            assert!(!crate::core::central_repo::skills_dir()
+                .join("unrelated")
+                .exists());
+            assert_eq!(
+                std::fs::read_to_string(
+                    host.tmp
+                        .path()
+                        .join("blocked-project/.claude/skills/x/SKILL.md")
+                )
+                .unwrap(),
+                "old copy"
+            );
+            drop(guard);
+            assert_eq!(
+                settled_operation(&host, "held")["items"][0]["phase"],
+                "succeeded"
+            );
+            if project_work {
+                assert_eq!(
+                    dispatch(&host.ctx, "get_managed_skills", &json!({})).unwrap(),
+                    skills
+                );
+            }
+        }
+    }
+
+    #[test]
     fn local_batch_uses_installation_work_and_never_claims_an_agent_destination() {
         let host = test_host();
         let source = host.tmp.path().join("team");
