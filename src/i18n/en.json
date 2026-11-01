@@ -975,7 +975,9 @@
     "trayIcon_on": "Show",
     "trayIcon_off": "Hide",
     "trayIconOffHint": "Tray icon is hidden, so closing the window will quit the app.",
-    "repoPathReconnectNotice": "Reconnect to {{name}} to apply the new path and migrate its existing data."
+    "repoPathReconnectNotice": "Reconnect to {{name}} to apply the new path and migrate its existing data.",
+    "repoTargetInsideLibrary": "Choose a folder outside the current library.",
+    "repoTargetNotEmpty": "Choose an empty folder for the library."
   },
   "closeAction": {
     "title": "Close behavior",
@@ -1050,7 +1052,9 @@
       "remove": "Click to remove from this agent",
       "conflict": "Rename the skill in your library first",
       "unavailable": "Select a target agent first"
-    }
+    },
+    "removeConfirmTitle": "Remove workspace skill?",
+    "removeConfirm": "Permanently delete \"{{skill}}\" from {{project}} for {{agent}}? Local edits in that copy will be lost. The library copy stays."
   },
   "preset": {
     "create": "New Preset",
@@ -1310,7 +1314,10 @@
       "removed": "Removed {{count}} old skill links",
       "kept": "{{count}} links in old agent folders were kept: they don't point at your library",
       "failed": "{{count}} old skill links could not be removed"
-    }
+    },
+    "removeUnsyncedTitle": "Remove copies with local changes?",
+    "removeUnsyncedConfirm": "These copies may contain changes that are not in the library. Removing them permanently deletes those copies.",
+    "removeUnsyncedConfirmWithOthers": "These copies may contain changes that are not in the library. Removing them permanently deletes those copies, along with {{count}} other copies."
   },
   "presetActions": {
     "switch": "Switch",

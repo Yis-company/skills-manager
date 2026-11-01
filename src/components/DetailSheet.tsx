@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { type ReactNode, useEffect, useId } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
@@ -24,13 +24,27 @@ export function DetailSheet({
 }: DetailSheetProps) {
   const { t } = useTranslation();
   const titleId = useId();
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   // Escape closes the drawer, unless a nested menu or dialog already handled it.
   useEffect(() => {
     if (!open) return;
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) onClose();
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      const sheet = sheetRef.current;
+
+      if (!sheet) return;
+      const rect = sheet.getBoundingClientRect();
+
+      const topElement = document.elementFromPoint(
+        rect.x + rect.width / 2,
+        rect.y + rect.height / 2,
+      );
+
+      if (!topElement || !sheet.contains(topElement)) return;
+      e.preventDefault();
+      onClose();
     };
 
     window.addEventListener("keydown", onKey);
@@ -41,7 +55,7 @@ export function DetailSheet({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed bottom-0 left-[220px] right-0 top-[28px] isolate z-40">
+    <div ref={sheetRef} className="fixed bottom-0 left-[220px] right-0 top-[28px] isolate z-40">
       <div
         className={
           IS_MACOS

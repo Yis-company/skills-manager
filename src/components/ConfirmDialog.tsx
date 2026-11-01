@@ -65,6 +65,7 @@ export function ConfirmDialog({
       open={open}
       title={title || t("common.confirm")}
       locked={loading && lockWhilePending}
+      escapeDisabled={loading}
       onClose={close}
     >
       {error && (

@@ -13,8 +13,7 @@
     "public/**",
     "index.html",
     "package.json",
-    "pnpm-lock.yaml",
-    "pnpm-workspace.yaml",
+    "bun.lock",
     "vite.config.ts",
     "tailwind.config.js",
     "postcss.config.js"

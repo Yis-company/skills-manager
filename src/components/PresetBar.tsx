@@ -17,6 +17,7 @@ export interface PresetBarProps {
   onAddSkill: (skill: ManagedSkill, agentKey: string) => Promise<void>;
   onRemoveSkill: (skill: ManagedSkill, agentKey: string) => Promise<void>;
   onComplete: () => Promise<void>;
+  confirmRemove?: (pairs: { skill: ManagedSkill; agentKey: string }[]) => Promise<boolean>;
   /** Whether the status badge counts agent copies or logical skills. */
   statusMode?: PresetStatusMode;
   /** Global workspace: a click switches the shared active preset (SID-98)
@@ -33,6 +34,7 @@ export function PresetBar({
   onAddSkill,
   onRemoveSkill,
   onComplete,
+  confirmRemove,
   statusMode = "agent-pair",
   onSwitch,
   activePresetId,
@@ -119,6 +121,14 @@ export function PresetBar({
       try {
         const presetSkills = managedSkills.filter((s) => s.preset_ids.includes(preset.id));
 
+        const pairs = presetSkills.flatMap((skill) =>
+          agentKeys
+            .filter((key) => existsInWorkspace(skill, key))
+            .map((agentKey) => ({ skill, agentKey })),
+        );
+
+        if (confirmRemove && !(await confirmRemove(pairs))) return;
+
         let removed = 0,
           failed = 0;
 
@@ -159,7 +169,7 @@ export function PresetBar({
         setLoadingKey(null);
       }
     },
-    [agentKeys, existsInWorkspace, managedSkills, onComplete, onRemoveSkill, t],
+    [agentKeys, existsInWorkspace, managedSkills, onComplete, onRemoveSkill, confirmRemove, t],
   );
 
   if (visiblePresets.length === 0) return null;

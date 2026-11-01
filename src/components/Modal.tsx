@@ -10,6 +10,7 @@ export function Modal({
   open,
   title,
   locked = false,
+  escapeDisabled = false,
   wide = false,
   onClose,
   children,
@@ -17,6 +18,7 @@ export function Modal({
   open: boolean;
   title: string;
   locked?: boolean;
+  escapeDisabled?: boolean;
   wide?: boolean;
   onClose: () => void;
   children: ReactNode;
@@ -57,11 +59,14 @@ export function Modal({
         onKeyDown={(event) => {
           event.stopPropagation();
 
+          // Escape cancels IME composition without dismissing its dialog.
+          if (event.nativeEvent.isComposing) return;
+
           if (event.key === "Escape") {
             event.stopPropagation();
             event.preventDefault();
 
-            if (!locked) onClose();
+            if (!locked && !escapeDisabled) onClose();
           }
 
           if (event.key !== "Tab") return;

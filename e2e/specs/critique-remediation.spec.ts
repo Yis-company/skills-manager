@@ -307,3 +307,33 @@ test("a named shared switch without removals applies once without an extra confi
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect((await backend.calls("apply_preset_to_default"))[0].review).toContain('"removals":[]');
 });
+
+test("composing Escape keeps confirmation open, then normal Escape closes only confirmation", async ({
+  page,
+  backend,
+}) => {
+  await backend.seed(syncSeed);
+  await page.goto("/backup");
+  await page.getByRole("button", { name: /Needs review/ }).click();
+  await page.getByRole("button", { name: "Compare changes for frontend" }).click();
+  const sheet = page.getByRole("dialog", { name: "Compare frontend" });
+  await sheet.getByRole("button", { name: "Keep Build host's version" }).click();
+  const confirmation = page.getByRole("dialog", { name: "Keep Build host's version" });
+  await confirmation.evaluate((element) =>
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  await expect(confirmation).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await expect(sheet).toBeVisible();
+  expect(
+    (await backend.calls("sync_screen_call")).filter((call) => call.command === "sync_resolve"),
+  ).toHaveLength(0);
+});
