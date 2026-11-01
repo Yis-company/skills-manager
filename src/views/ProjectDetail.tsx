@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -153,6 +154,13 @@ export function ProjectDetail() {
   const [showAgentsDialog, setShowAgentsDialog] = useState(false);
   const [showGitDialog, setShowGitDialog] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<null | ProjectSkillGroup>(null);
+
+  const [unsyncedRemoval, setUnsyncedRemoval] = useState<{
+    details: string[];
+    alsoRemoved: number;
+  } | null>(null);
+
+  const unsyncedRemovalResolve = useRef<((confirmed: boolean) => void) | null>(null);
 
   const [batchDeleteTarget, setBatchDeleteTarget] = useState<{
     hostId: null | string;
@@ -744,6 +752,56 @@ export function ProjectDetail() {
     }
   };
 
+  const settleUnsyncedRemoval = useCallback((confirmed: boolean) => {
+    unsyncedRemovalResolve.current?.(confirmed);
+    unsyncedRemovalResolve.current = null;
+    setUnsyncedRemoval(null);
+  }, []);
+
+  useEffect(() => () => settleUnsyncedRemoval(false), [activeHostId, id, settleUnsyncedRemoval]);
+
+  // Re-read disk status before removing a copy: the displayed scan may predate edits.
+  const confirmUnsyncedRemoval = useCallback(
+    async (variants: ProjectSkill[]) => {
+      if (!id || variants.length === 0) return true;
+      const viewVersion = viewVersionRef.current;
+      const isCurrentView = () => mountedRef.current && viewVersionRef.current === viewVersion;
+      let fresh: null | ProjectSkill[] = null;
+
+      try {
+        fresh = await invokeHost<ProjectSkill[]>(activeHostId, "get_project_skills", {
+          projectId: id,
+        });
+      } catch (error) {
+        console.error("Failed to re-read project skills before removal:", error);
+      }
+
+      if (!isCurrentView()) return false;
+
+      const unsynced = variants.filter((variant) => {
+        const current = fresh?.find(
+          (skill) => skill.relative_path === variant.relative_path && skill.agent === variant.agent,
+        );
+
+        return current?.sync_status !== "in_sync";
+      });
+
+      if (unsynced.length === 0) return true;
+      unsyncedRemovalResolve.current?.(false);
+
+      const confirmed = await new Promise<boolean>((resolve) => {
+        unsyncedRemovalResolve.current = resolve;
+        setUnsyncedRemoval({
+          details: unsynced.map((variant) => `${variant.name} · ${variant.agent_display_name}`),
+          alsoRemoved: variants.length - unsynced.length,
+        });
+      });
+
+      return confirmed && isCurrentView();
+    },
+    [activeHostId, id],
+  );
+
   const handleToggleDetailAgent = async (
     skill: ProjectSkillGroup,
     agentKey: string,
@@ -772,6 +830,8 @@ export function ProjectDetail() {
     setTogglingAgentTarget({ skillKey: getSkillKey(skill), agent: agentKey });
 
     try {
+      if (!enabled && existingVariant && !(await confirmUnsyncedRemoval([existingVariant]))) return;
+
       if (project?.workspace_type === "linked") {
         // One agent, nothing to choose between: add or delete the one copy.
         if (enabled) await api.exportSkillToProject(centerSkillId, id, [agentKey]);
@@ -1091,6 +1151,18 @@ export function ProjectDetail() {
     [findProjectPresetVariant, id, t],
   );
 
+  const confirmPresetRemoval = useCallback(
+    (pairs: { skill: ManagedSkill; agentKey: string }[]) =>
+      confirmUnsyncedRemoval(
+        pairs.flatMap(({ skill, agentKey }) => {
+          const variant = findProjectPresetVariant(skill, agentKey);
+
+          return variant ? [variant] : [];
+        }),
+      ),
+    [confirmUnsyncedRemoval, findProjectPresetVariant],
+  );
+
   const handlePresetActionComplete = useCallback(async () => {
     await Promise.all([loadSkills(), refreshProjects()]);
   }, [loadSkills, refreshProjects]);
@@ -1361,6 +1433,7 @@ export function ProjectDetail() {
                 onAddSkill={handleAddPresetSkillToProject}
                 onRemoveSkill={handleRemovePresetSkillFromProject}
                 onComplete={handlePresetActionComplete}
+                confirmRemove={confirmPresetRemoval}
               />
             )}
           </div>
@@ -1604,6 +1677,24 @@ export function ProjectDetail() {
             onClose={() => setDeleteTarget(null)}
             onConfirm={handleDeleteSkill}
           />
+
+          {createPortal(
+            <ConfirmDialog
+              open={!!unsyncedRemoval}
+              title={t("project.removeUnsyncedTitle")}
+              message={
+                unsyncedRemoval && unsyncedRemoval.alsoRemoved > 0
+                  ? t("project.removeUnsyncedConfirmWithOthers", {
+                      count: unsyncedRemoval.alsoRemoved,
+                    })
+                  : t("project.removeUnsyncedConfirm")
+              }
+              details={unsyncedRemoval?.details}
+              onClose={() => settleUnsyncedRemoval(false)}
+              onConfirm={async () => settleUnsyncedRemoval(true)}
+            />,
+            document.body,
+          )}
 
           {/* Batch Delete Confirm Dialog */}
           <ConfirmDialog

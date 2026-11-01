@@ -1,5 +1,5 @@
 import { AlertTriangle, X } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 interface Props {
@@ -32,13 +32,17 @@ export function ConfirmDialog({
 }: Props) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
+  const titleId = useId();
 
   // Escape closes the dialog, except while the confirmed action is running.
   useEffect(() => {
     if (!open || loading) return;
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !e.isComposing) {
+        e.preventDefault();
+        onClose();
+      }
     };
 
     window.addEventListener("keydown", onKey);
@@ -69,9 +73,17 @@ export function ConfirmDialog({
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
         onClick={loading && lockWhilePending ? undefined : onClose}
       />
-      <div className="relative flex max-h-[calc(85vh/var(--app-scale))] w-full max-w-sm flex-col rounded-xl border border-border bg-surface p-5 shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative flex max-h-[calc(85vh/var(--app-scale))] w-full max-w-sm flex-col rounded-xl border border-border bg-surface p-5 shadow-2xl"
+      >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-[13px] font-semibold text-primary">
+          <h2
+            id={titleId}
+            className="flex items-center gap-2 text-[13px] font-semibold text-primary"
+          >
             <AlertTriangle className="h-4 w-4 text-amber-400" />
             {title || t("common.confirm")}
           </h2>

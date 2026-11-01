@@ -10,8 +10,8 @@ use crate::core::{
     repo_lock::RepoLock,
     skill_source::git_source_from_skill,
     skill_update_check::{
-        check_skill_update_internal_with_remote, prefetch_skill_remote, resolve_remotes_concurrent,
-        should_skip_update_check, PrefetchedRemote, RemoteKey,
+        check_skill_update_internal_with_remote, installed_subtree, prefetch_skill_remote,
+        resolve_remotes_concurrent, should_skip_update_check, RemoteKey,
     },
 };
 
@@ -65,7 +65,7 @@ pub fn check_all_skill_updates_core(ctx: &HostCtx, force: Option<bool>) -> Resul
     // advertisement runs ~30s) never starves a concurrent check into a 20s
     // lock-timeout "busy" failure — the reason "检查全部" both crawled and
     // popped failures.
-    let mut remotes: HashSet<RemoteKey> = HashSet::new();
+    let mut remotes: HashMap<RemoteKey, HashSet<(String, String)>> = HashMap::new();
     for skill in &skills {
         if !matches!(skill.source_type.as_str(), "git" | "skillssh") {
             continue;
@@ -83,13 +83,17 @@ pub fn check_all_skill_updates_core(ctx: &HostCtx, force: Option<bool>) -> Resul
             ),
         }
         if let Ok(source) = git_source_from_skill(skill) {
-            remotes.insert(RemoteKey::from(source));
+            let installed = installed_subtree(skill, &source);
+            remotes
+                .entry(RemoteKey::from(source))
+                .or_default()
+                .extend(installed);
         }
     }
     let remote_revisions = if remotes.is_empty() {
         HashMap::new()
     } else {
-        resolve_remotes_concurrent(remotes.into_iter().collect(), proxy_url.clone())
+        resolve_remotes_concurrent(remotes, proxy_url.clone())
     };
 
     // ── Phase B: apply the resolved revisions + local-source checks ──
@@ -106,13 +110,9 @@ pub fn check_all_skill_updates_core(ctx: &HostCtx, force: Option<bool>) -> Resul
     let mut failed = Vec::new();
     for skill in &skills {
         let prefetched = if matches!(skill.source_type.as_str(), "git" | "skillssh") {
-            git_source_from_skill(skill).ok().and_then(|source| {
-                let key = RemoteKey::from(source);
-                remote_revisions
-                    .get(&key)
-                    .cloned()
-                    .map(|result| PrefetchedRemote { key, result })
-            })
+            git_source_from_skill(skill)
+                .ok()
+                .and_then(|source| remote_revisions.get(&RemoteKey::from(source)).cloned())
         } else {
             None
         };

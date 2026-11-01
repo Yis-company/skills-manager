@@ -8,14 +8,30 @@ interface SkillMarkdownProps {
   className?: string;
 }
 
+// Older WebKit cannot compile remark-gfm's autolink lookbehind regex.
+const SUPPORTS_LOOKBEHIND = (() => {
+  try {
+    new RegExp("(?<=a)b");
+
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+const REMARK_PLUGINS = SUPPORTS_LOOKBEHIND ? [remarkGfm] : [];
+
 function stripMarkdownFrontmatter(content: string) {
-  if (!content.startsWith("---\n")) return content;
+  const opening = /^---\r?\n/.exec(content);
 
-  const end = content.indexOf("\n---\n", 4);
+  if (!opening) return content;
 
-  if (end === -1) return content;
+  const rest = content.slice(opening[0].length);
+  const closing = /(?:^|\n)---(?:\r?\n|$)/.exec(rest);
 
-  return content.slice(end + 5).trimStart();
+  if (!closing) return content;
+
+  return rest.slice(closing.index + closing[0].length).trimStart();
 }
 
 export function SkillMarkdown({ content, className }: SkillMarkdownProps) {
@@ -29,7 +45,7 @@ export function SkillMarkdown({ content, className }: SkillMarkdownProps) {
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={REMARK_PLUGINS}
         components={{
           h1: ({ className, ...props }) => (
             <h1

@@ -17,6 +17,7 @@ import { toast } from "sonner";
 
 import { HostBadge } from "../../components/HostBadge";
 import { useApp } from "../../context/AppContext";
+import { getErrorMessage } from "../../lib/error";
 import { listenOnActiveHost } from "../../lib/hostEvents";
 import * as api from "../../lib/tauri";
 import { cn, compactHomePath } from "../../utils";
@@ -135,6 +136,15 @@ export function LibrarySection() {
     setEditingCentralRepoPath(true);
   };
 
+  const repoPathError = (message: string) => {
+    if (message.startsWith("REPO_TARGET_INSIDE_LIBRARY:"))
+      return t("settings.repoTargetInsideLibrary");
+
+    if (message.startsWith("REPO_TARGET_NOT_EMPTY:")) return t("settings.repoTargetNotEmpty");
+
+    return message;
+  };
+
   const handleSaveCentralRepoPath = async () => {
     const trimmed = centralRepoPathInput.trim();
 
@@ -156,7 +166,7 @@ export function LibrarySection() {
 
       if (pendingPath) announceRepoPathChange();
     } catch (error) {
-      toast.error(String(error));
+      toast.error(repoPathError(getErrorMessage(error, t("common.error"))));
     } finally {
       setSavingCentralRepoPath(false);
     }
@@ -176,7 +186,7 @@ export function LibrarySection() {
 
       if (pendingPath) announceRepoPathChange();
     } catch (error) {
-      toast.error(String(error));
+      toast.error(repoPathError(getErrorMessage(error, t("common.error"))));
     } finally {
       setSavingCentralRepoPath(false);
     }

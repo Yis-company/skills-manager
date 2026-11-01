@@ -407,6 +407,17 @@ impl SkillStore {
         Ok(())
     }
 
+    /// Record a newer revision for content that did not change. `updated_at` is
+    /// left alone: nothing in the library was touched.
+    pub fn update_skill_source_revision(&self, id: &str, source_revision: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE skills SET source_revision = ?1 WHERE id = ?2",
+            params![source_revision, id],
+        )?;
+        Ok(())
+    }
+
     pub fn update_skill_check_state(
         &self,
         id: &str,
