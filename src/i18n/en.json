@@ -1614,6 +1614,9 @@
     "managedPresenceHint": "Managed library deployments · native files and imports are available in details."
   },
   "operations": {
+    "connectionLost": "Connection lost — checking result",
+    "reconnect": "Reconnect and check result",
+    "unknownHelp": "The result could not be verified. Work may still be running on this host. Reconnect to check without repeating changes.",
     "hostUnavailable": "Connection unavailable",
     "otherHosts": "Work on other hosts",
     "projectProgress": "Project update progress",

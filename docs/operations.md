@@ -1,4 +1,4 @@
-# Interactive operations (SKI-20 through SKI-22)
+# Interactive operations (SKI-20 through SKI-23)
 
 Desktop `operation_request({ request })` and the host dispatcher run the same
 backend-owned `OperationService` on `HostCtx`. React observes authoritative
@@ -68,7 +68,7 @@ outcome and attempt. Repeated submit/confirm/retry identities reattach rather th
 replay. Equivalent active install selections return the existing operation identity;
 callers follow that returned identity. A repeated source with a session-owned unknown
 result reattaches to that result, and marketplace controls do not offer ordinary
-resubmission for it. Automatic verification remains SKI-23. Conflicting destinations serialize, and an
+resubmission for it. Response-loss verification is described below. Conflicting destinations serialize, and an
 already-matching recorded skill reports `unchanged` without another replacement.
 
 Active phases: `queued`, `preparing`, `waiting`, `applying`, `stopping`,
@@ -177,17 +177,64 @@ operation and monotonic revision; refresh markers/errors use a tuple of host, op
 and attempt. Host navigation reveals active work/attention and a compact off-screen
 shortcut to the original project or installation source, without a mixed Activity page.
 
-A transport failure conservatively retains its host's operation evidence. The incumbent
-viewed-host quiet connection retry is unchanged; automatic operation response-loss
-reconciliation and a definitive unknown-result/retry decision remain SKI-23. Reconnecting
-a dead transport can start a new server and cannot itself prove what the previous server
-applied. No automatic replay is introduced. The retained-host listing is not restart
-restoration, persistence/pruning (SKI-24), or coordinated native shutdown (SKI-25).
+## Lost responses and outcome verification
 
-SKI-23 owns automatic dropped-response reconciliation; SKI-24 owns complete restart
-result restoration, retention/pruning and restored retry; SKI-25 owns complete quit,
-native/tray and restart coordination. List remains session-owned. No automatic replay,
-full restart restoration, run-after-exit behavior, or quit coordination is claimed here.
+A lost operation response or an active originating host's transport loss enters
+**Connection lost — checking result** in the original host/project/source. The
+observer attempts three quiet reconnect/read rounds (0, 500, 1500 ms delays), with
+a 12-second overall deadline. Checking counts as unfinished work (`settled: false`)
+until verified or explicitly uncertain. Other hosts and Local remain usable.
+
+`remote_host_connect({hostId, select: false})` reconnects without selecting that host.
+Omitting `select` retains the existing host-switch behavior. Both paths share one
+same-host connection attempt and the existing version/protocol checks. Switching
+views cancels superseded view selections, not off-screen recovery. A reconnect hold
+lasts through reconciliation; verified settlement retains its destination-refresh hold.
+Lost mutations retain operation/expected-attempt correlation even before admission is
+known. Only a corresponding authoritative result clears that uncertainty; an empty
+list, unrelated receipt or stale attempt does not.
+
+`reconcile` never submits, confirms, retries, cancels or applies. It first reads the
+correlated live operation/receipt. Recorded successful siblings remain successful.
+For an unowned unfinished receipt or a live unknown item, it can additionally verify
+that the original destination matches captured intent under the incumbent nonblocking
+repository/destination protection. Project verification checks project, deployment,
+source identity/content, target identity and actual content. Installation checks the
+original library, non-symlink target, source identity/content for local inputs, managed
+record ownership/source metadata and actual content against the captured preparation.
+The comparison reuses existing content/revision evidence; no new hash scheme is used.
+
+A destination verified from incomplete result evidence reports `unchanged` with an
+explanation that intended content is present and no write was repeated. This does not
+claim which process performed the write or exactly-once execution. Busy, missing,
+changed, redirected or insufficient evidence remains unknown. Verification of a live
+unknown can save its repaired result once result storage works again. Read-only
+verification of another process's unfinished receipt does not adopt its workers,
+overwrite its receipt or grant Git confirmation authority. Unowned previews require
+fresh preparation/review. The original process may still be running after a replacement
+session lists no work.
+
+The frontend's optional `recovery` (`checking` / `unknown`) and `recovery_attempt`
+fields are app-session observation overlays, not host receipts or mutation authority.
+Pending admission preserves the original submitted identity and context, with an
+unknown item set rather than invented item counts. Equal-revision verified evidence
+can repair a lost response; late lower revisions, wrong hosts and mismatched pending
+attempts cannot replace it. Polling preserves original cache entries when a replacement
+server lists nothing, and later authoritative settlement can still repair uncertainty.
+
+An unverifiable bounded attempt settles as **Outcome unknown**, names that work may
+still be running, and offers **Reconnect and check result**. This action performs only
+reconnect/read verification. There is no ordinary Retry/confirmation/cancel control for
+uncertain work, no automatic mutation replay, and uncertain sources/project updates
+cannot silently be resubmitted with a fresh identity. Successful verification refreshes
+only the original project/library through the existing scoped query path. Refresh errors
+remain separate from successful writes.
+
+SKI-24 still owns complete app-restart result restoration, retention/pruning and restored
+retry. SKI-25 still owns native/tray/quit/restart coordination. These session-scoped
+checking/unknown states are a public observation contract for those slices, not their
+implementation. Work runs only while the app is open/minimized; no run-after-exit,
+automatic resume or exactly-once guarantee is claimed.
 
 Real contract/CLI tests use temporary stores, libraries/projects and local Git fixtures.
 Browser fixtures return controlled snapshots and are not a second scheduler or proof of

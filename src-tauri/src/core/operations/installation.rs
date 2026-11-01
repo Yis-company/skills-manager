@@ -496,6 +496,63 @@ pub(super) fn execute(
     Ok(Phase::Succeeded)
 }
 
+/// Verify captured intent and actual library ownership/content, never reinstall.
+/// Missing staging is expected after completion; the durable prepared content and
+/// source metadata remain evidence, but never confer Git confirmation authority.
+pub(super) fn verify(
+    ctx: &HostCtx,
+    destination: &Option<Destination>,
+    work: &InstallWork,
+) -> Result<bool, AppError> {
+    let Some(_guard) = crate::core::repo_lock::RepoLock::try_exclusive("verify operation result")
+        .map_err(AppError::io)?
+    else {
+        return Ok(false);
+    };
+    let Some(prepared) = &work.prepared else {
+        return Ok(false);
+    };
+    let Some(target) = &prepared.destination else {
+        return Ok(false);
+    };
+    let library = central_repo::skills_dir().canonicalize()?;
+    if !matches!(destination, Some(Destination::Library {path}) if std::path::Path::new(path) == library)
+        || target.parent().and_then(|p| p.canonicalize().ok()).as_ref() != Some(&library)
+        || std::fs::symlink_metadata(target)?.file_type().is_symlink()
+    {
+        return Ok(false);
+    }
+    if let InstallSource::Local { path, .. } = &work.source {
+        let source = std::path::Path::new(path);
+        if source.canonicalize().ok().as_ref() != prepared.source_identity.as_ref()
+            || installer::hash_local_source(source).map_err(AppError::io)?
+                != prepared.source_content
+        {
+            return Ok(false);
+        }
+    }
+    let Some(current) = ctx
+        .store
+        .get_skill_by_central_path(&target.to_string_lossy())
+        .map_err(AppError::db)?
+    else {
+        return Ok(false);
+    };
+    let metadata = &prepared.metadata;
+    Ok(prepared
+        .existing
+        .as_ref()
+        .is_none_or(|(id, _, _)| *id == current.id)
+        && current.content_hash.as_deref() == Some(prepared.content.as_str())
+        && current.source_type == metadata.source_type
+        && current.source_ref == metadata.source_ref
+        && current.source_ref_resolved == metadata.source_ref_resolved
+        && current.source_subpath == metadata.source_subpath
+        && current.source_branch == metadata.source_branch
+        && current.source_revision == metadata.source_revision
+        && installer::hash_local_source(target).map_err(AppError::io)? == prepared.content)
+}
+
 pub(super) fn confirm(
     ctx: &HostCtx,
     id: &str,

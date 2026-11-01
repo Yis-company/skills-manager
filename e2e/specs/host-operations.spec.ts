@@ -629,3 +629,462 @@ test("a slow shortcut target cannot navigate a later viewed host when its refres
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   await expect(page).toHaveURL(/\/my-skills$/);
 });
+
+test("off-screen response-loss recovery checks its original host without navigating or replaying", async ({
+  page,
+  backend,
+}) => {
+  const build = installation("build");
+  await backend.seed({
+    remoteHosts: hosts,
+    remoteStates: { build: { operations: [build] }, gpu: { operations: [installation("gpu")] } },
+  });
+  await page.goto("/install?tab=local");
+  await page.getByRole("button", { name: "Local", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /build host/ }).click();
+  await expect(page.getByRole("region", { name: "Installation progress" })).toContainText(
+    "build host library",
+  );
+  await page.getByRole("button", { name: "build host", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /gpu host/ }).click();
+  await backend.hold("remote_host_connect");
+  await backend.emit("remote-session-state", { host_id: "build", state: "disconnected" });
+  await expect(
+    page.getByRole("button", {
+      name: /build host · Install Skills.*Connection lost — checking result/,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cancel installation" }).click();
+  await expect(page.getByRole("region", { name: "Installation progress" })).toContainText(
+    "Canceled",
+  );
+  await backend.patch({
+    remoteStates: {
+      build: {
+        operations: [
+          {
+            ...build,
+            revision: 2,
+            settled: true,
+            items: [{ ...build.items[0], phase: "succeeded" }],
+          },
+        ],
+      },
+    },
+  });
+  await backend.release("remote_host_connect");
+  await expect.poll(() => backend.calls("remote_host_release")).toContainEqual({ hostId: "build" });
+  await expect(page.getByRole("button", { name: "gpu host", exact: true })).toBeVisible();
+  expect((await backend.calls("remote_host_connect")).filter((c) => c.select === false)).toEqual([
+    { hostId: "build", select: false },
+  ]);
+  expect(
+    (await backend.calls("remote_invoke")).filter(
+      (c) => c.hostId === "build" && requestAction(c.args) === "submit_install",
+    ),
+  ).toEqual([]);
+});
+
+for (const theme of ["light", "dark"]) {
+  test(`bounded recovery retains successes and an unknown result offers reconnect without Retry in ${theme}`, async ({
+    page,
+    backend,
+  }) => {
+    const build: OperationSnapshot = {
+      ...installation("build"),
+      items: [
+        {
+          ...installation("build").items[0],
+          id: "done",
+          relative_path: "done",
+          phase: "succeeded",
+        },
+        {
+          ...installation("build").items[0],
+          id: "remaining",
+          relative_path: "remaining",
+          phase: "applying",
+        },
+      ],
+    };
+
+    await backend.seed({
+      settings: { theme, text_size: "xlarge" },
+      remoteHosts: hosts,
+      retainedHosts: ["build"],
+      remoteStates: { build: { operations: [build] } },
+    });
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await page.goto("/install?tab=local");
+    await expect(page.getByRole("button", { name: /build host · Install Skills/ })).toBeVisible();
+    await page.clock.install();
+    await backend.hold("remote_host_connect");
+    await backend.emit("remote-session-state", { host_id: "build", state: "disconnected" });
+    await expect(
+      page.getByRole("button", {
+        name: /build host · Install Skills.*Connection lost — checking result/,
+      }),
+    ).toBeVisible();
+    await page.screenshot({
+      animations: "disabled",
+      path: `/private/tmp/ski-23-checking-${theme}.png`,
+    });
+    await page.clock.fastForward(12500);
+    await expect(
+      page.getByRole("button", { name: /build host · Install Skills.*Outcome unknown/ }),
+    ).toBeVisible();
+    await backend.patch({ remoteStates: { build: { operations: [] } } });
+    await backend.release("remote_host_connect");
+    await page
+      .getByRole("button", { name: /build host · Install Skills.*Outcome unknown/ })
+      .click();
+    const region = page.getByRole("region", { name: "Installation progress" });
+    await expect(region).toContainText("done: Installed");
+    await expect(region).toContainText("remaining: Outcome unknown");
+    await expect(region.getByRole("button", { name: /Retry|Cancel/ })).toHaveCount(0);
+    await expect(region.getByRole("button", { name: "Reconnect and check result" })).toBeVisible();
+    await page.screenshot({
+      animations: "disabled",
+      path: `/private/tmp/ski-23-recovery-${theme}.png`,
+    });
+    await backend.patch({
+      remoteStates: {
+        build: {
+          operations: [
+            {
+              ...build,
+              revision: 2,
+              settled: true,
+              items: build.items.map((item) => ({ ...item, phase: "succeeded" })),
+            },
+          ],
+        },
+      },
+    });
+    await region.getByRole("button", { name: "Reconnect and check result" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(region).toContainText("remaining: Installed");
+    await expect(region).not.toContainText("Outcome unknown");
+    await expect(region).toBeFocused();
+    expect(
+      (await backend.calls("remote_invoke")).filter((c) =>
+        ["submit_install", "retry_failed", "confirm_install"].includes(
+          String(requestAction(c.args)),
+        ),
+      ),
+    ).toEqual([]);
+  });
+}
+
+test("lost submit before admission stays correlated and cannot be resubmitted as a new write", async ({
+  page,
+  backend,
+}) => {
+  await backend.seed({
+    remoteHosts: hosts,
+    market: [
+      { id: "demo", name: "demo", skill_id: "demo", source: "fixture/skills", installs: 10 },
+    ],
+  });
+  await page.goto("/install");
+  await page.getByRole("button", { name: "Local", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /build host/ }).click();
+  await backend.dropNext("build:operation_request:submit_install", false);
+  await backend.hold("remote_host_connect");
+  await page.clock.install();
+  await page.getByRole("button", { name: "Install", exact: true }).click();
+  const region = page.getByRole("region", { name: "Installation progress" });
+  await expect(region).toContainText("Connection lost — checking result");
+  await page.clock.fastForward(12500);
+  await expect(region).toContainText("Outcome unknown");
+  await expect(page.getByRole("button", { name: "Install", exact: true })).toBeDisabled();
+  expect(
+    (await backend.calls("remote_invoke")).filter(
+      (c) => requestAction(c.args) === "submit_install",
+    ),
+  ).toHaveLength(1);
+  await backend.release("remote_host_connect");
+  await region.getByRole("button", { name: "Reconnect and check result" }).click();
+  await page.clock.fastForward(2500);
+  await expect(region).toContainText("Outcome unknown");
+  await expect(region.getByRole("button", { name: /Retry/ })).toHaveCount(0);
+
+  const reads = (await backend.calls("remote_invoke")).filter(
+    (c) => requestAction(c.args) === "reconcile",
+  );
+
+  expect(reads.length).toBeGreaterThan(0);
+
+  const submits = (await backend.calls("remote_invoke")).filter(
+    (c) => requestAction(c.args) === "submit_install",
+  );
+
+  const submitted = submits[0].args;
+
+  if (
+    !(submitted instanceof Object) ||
+    !("request" in submitted) ||
+    !(submitted.request instanceof Object) ||
+    !("operation_id" in submitted.request)
+  )
+    throw new Error("Missing submitted operation identity");
+  const submittedId = String(submitted.request.operation_id);
+
+  expect(reads.every((read) => JSON.stringify(read.args).includes(submittedId))).toBe(true);
+});
+
+for (const action of ["retry_failed", "confirm_install", "cancel"] as const) {
+  for (const afterAdmission of [false, true]) {
+    test(`lost ${action} response ${afterAdmission ? "after" : "before"} admission preserves correlation and review authority`, async ({
+      page,
+      backend,
+    }) => {
+      const source: InstallSource =
+        action === "confirm_install"
+          ? { kind: "git", url: "https://fixture.invalid/repo" }
+          : { kind: "local", path: "/sources/demo" };
+
+      const original: OperationSnapshot = {
+        ...installation("build"),
+        settled: action !== "cancel",
+        sources: [source],
+        preview:
+          action === "confirm_install"
+            ? [{ rel_path: "demo", name: "demo", description: null }]
+            : null,
+        items: [
+          {
+            ...installation("build").items[0],
+            source,
+            phase:
+              action === "retry_failed"
+                ? "failed"
+                : action === "confirm_install"
+                  ? "needs_review"
+                  : "queued",
+          },
+        ],
+      };
+
+      await backend.seed({
+        remoteHosts: hosts,
+        remoteStates: { build: { operations: [original], holdOperations: action === "cancel" } },
+      });
+      await page.goto(action === "confirm_install" ? "/install?tab=git" : "/install?tab=local");
+      await page.getByRole("button", { name: "Local", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: /build host/ }).click();
+      await backend.dropNext(`build:operation_request:${action}`, afterAdmission);
+      await backend.hold("remote_host_connect");
+      const region = page.getByRole("region", { name: "Installation progress" });
+
+      if (action === "confirm_install") {
+        await region.getByRole("button", { name: "Review selection" }).click();
+        await page.getByRole("button", { name: "Import Selected", exact: true }).click();
+      } else
+        await region
+          .getByRole("button", {
+            name: action === "cancel" ? "Cancel installation" : "Retry failed (1)",
+          })
+          .click();
+      await expect(region).toContainText("Connection lost — checking result");
+      await expect(
+        region.getByRole("button", { name: /Retry|Review selection|Cancel installation/ }),
+      ).toHaveCount(0);
+      await backend.release("remote_host_connect");
+
+      if (afterAdmission) {
+        await expect(region).toContainText(action === "cancel" ? "Canceled" : "Installed");
+        await expect(region).not.toContainText("Connection lost");
+      } else {
+        await expect(region).toContainText("Outcome unknown");
+        await expect(
+          region.getByRole("button", { name: "Reconnect and check result" }),
+        ).toBeVisible();
+        await expect(region.getByRole("button", { name: /Retry|Review selection/ })).toHaveCount(0);
+      }
+
+      expect(
+        (await backend.calls("remote_invoke")).filter((c) => requestAction(c.args) === action),
+      ).toHaveLength(1);
+    });
+  }
+}
+
+test("lost committed submit repairs the source result with no second installation", async ({
+  page,
+  backend,
+}) => {
+  await backend.seed({
+    remoteHosts: hosts,
+    market: [
+      { id: "demo", name: "demo", skill_id: "demo", source: "fixture/skills", installs: 10 },
+    ],
+  });
+  await page.goto("/install");
+  await page.getByRole("button", { name: "Local", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /build host/ }).click();
+  await backend.dropNext("build:operation_request:submit_install", true);
+  await backend.hold("remote_host_connect");
+  await page.getByRole("button", { name: "Install", exact: true }).click();
+  const region = page.getByRole("region", { name: "Installation progress" });
+  await expect(region).toContainText("Connection lost — checking result");
+  await backend.release("remote_host_connect");
+  await expect(region).toContainText("Installed");
+  await expect(region).not.toContainText("Outcome unknown");
+  expect(
+    (await backend.calls("remote_invoke")).filter(
+      (c) => requestAction(c.args) === "submit_install",
+    ),
+  ).toHaveLength(1);
+});
+
+test("lost project admission remains in its original project navigation and never repeats Update All", async ({
+  page,
+  backend,
+}) => {
+  const app = project("app", "Build app", 1);
+  await backend.seed({
+    remoteHosts: hosts,
+    projects: [project("app", "Local app", 1)],
+    remoteStates: {
+      build: {
+        projects: [app],
+        projectSkills: {
+          app: [
+            projectSkill("demo", "claude_code", {
+              in_center: true,
+              center_skill_id: "demo",
+              sync_status: "center_newer",
+            }),
+          ],
+        },
+        projectAgentTargets: { app: [agentTarget("claude_code", "Claude Code")] },
+      },
+    },
+  });
+  await page.goto("/project/app");
+  await page.getByRole("button", { name: "Local", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /build host/ }).click();
+  await expect(page.getByRole("button", { name: /^Update All/ })).toBeVisible();
+  await backend.dropNext("build:operation_request:submit_project_update", false);
+  await backend.hold("remote_host_connect");
+  await page.clock.install();
+  await page.getByRole("button", { name: /^Update All/ }).click();
+  const region = page.getByRole("region", { name: "Project update progress" });
+  await expect(region).toContainText("Connection lost — checking result");
+  await page.clock.fastForward(12500);
+  await expect(region).toContainText("Outcome unknown");
+  await expect(
+    page.getByRole("button", { name: /Build app.*Outcome unknown/ }).first(),
+  ).toBeVisible();
+  await expect(region.getByRole("button", { name: "Reconnect and check result" })).toBeVisible();
+  await page.getByRole("button", { name: /^Update All/ }).click();
+  expect(
+    (await backend.calls("remote_invoke")).filter(
+      (c) => requestAction(c.args) === "submit_project_update",
+    ),
+  ).toHaveLength(1);
+  await backend.release("remote_host_connect");
+});
+
+test("recovery rejects another attempt and host even at the captured receipt revision", async ({
+  page,
+  backend,
+}) => {
+  const original = { ...installation("build"), revision: 5 };
+  await backend.seed({
+    remoteHosts: hosts,
+    retainedHosts: ["build"],
+    remoteStates: { build: { operations: [original] } },
+  });
+  await page.goto("/my-skills");
+  await expect(page.getByRole("button", { name: /build host · Install Skills/ })).toBeVisible();
+  await backend.hold("remote_host_connect");
+  await backend.emit("remote-session-state", { host_id: "build", state: "disconnected" });
+
+  const checking = page.getByRole("button", {
+    name: /build host · Install Skills.*Connection lost — checking result/,
+  });
+
+  await expect(checking).toBeVisible();
+  await backend.patch({
+    remoteStates: {
+      build: {
+        operations: [
+          {
+            ...original,
+            attempt_id: "older-attempt",
+            settled: true,
+            items: [{ ...original.items[0], phase: "succeeded" }],
+          },
+          {
+            ...original,
+            host_id: "gpu",
+            revision: 100,
+            settled: true,
+            items: [{ ...original.items[0], phase: "succeeded" }],
+          },
+        ],
+      },
+    },
+  });
+  await backend.emit("operation-changed", { host_id: "build" });
+  await expect
+    .poll(
+      async () =>
+        (await backend.calls("remote_invoke")).filter(
+          (c) => c.hostId === "build" && requestAction(c.args) === "list",
+        ).length,
+    )
+    .toBeGreaterThan(1);
+  await expect(checking).toBeVisible();
+  await backend.patch({
+    remoteStates: {
+      build: {
+        operations: [
+          { ...original, settled: true, items: [{ ...original.items[0], phase: "unchanged" }] },
+        ],
+      },
+    },
+  });
+  await backend.release("remote_host_connect");
+  await expect.poll(() => backend.calls("remote_host_release")).toContainEqual({ hostId: "build" });
+  await expect(checking).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Local", exact: true })).toBeVisible();
+});
+
+test("an uncertain Git source cannot be cloned again with equivalent sanitized intent", async ({
+  page,
+  backend,
+}) => {
+  const source: InstallSource = { kind: "git", url: "https://fixture.invalid/repo" };
+
+  const unknown: OperationSnapshot = {
+    ...installation("build"),
+    settled: true,
+    sources: [source],
+    items: [{ ...installation("build").items[0], source, phase: "outcome_unknown" }],
+  };
+
+  await backend.seed({ remoteHosts: hosts, remoteStates: { build: { operations: [unknown] } } });
+  await page.goto("/install?tab=git");
+  await page.getByRole("button", { name: "Local", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /build host/ }).click();
+  await expect(page.getByRole("region", { name: "Installation progress" })).toContainText(
+    "Outcome unknown",
+  );
+  await page
+    .getByPlaceholder("https://github.com/user/repo.git or git@github.com...")
+    .fill("https://fixture.invalid/repo?ref=untrusted#selection");
+  await page
+    .getByPlaceholder("https://github.com/user/repo.git or git@github.com...")
+    .press("Enter");
+  await expect
+    .poll(
+      async () =>
+        (await backend.calls("remote_invoke")).filter(
+          (c) => requestAction(c.args) === "submit_install",
+        ).length,
+    )
+    .toBe(0);
+});

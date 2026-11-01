@@ -250,7 +250,7 @@ export const handlers = {
 
     return null;
   },
-  remote_host_connect: ({ hostId }: { hostId: string }, state) => {
+  remote_host_connect: ({ hostId }: { hostId: string; select?: boolean }, state) => {
     if (state.remoteHostNewer) {
       throw {
         kind: "remote_version_mismatch",

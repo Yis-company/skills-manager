@@ -192,7 +192,13 @@ export function Sidebar() {
   const installAttention = libraryOperations.reduce((count, operation) => {
     const counts = operationCounts(operation);
 
-    return count + counts.failed + counts.review + counts.unknown;
+    return (
+      count +
+      counts.failed +
+      counts.review +
+      counts.unknown +
+      (operation.recovery === "unknown" && counts.total === 0 ? 1 : 0)
+    );
   }, 0);
 
   const [projectsOpen, setProjectsOpen] = useState(true);
@@ -807,13 +813,18 @@ export function Sidebar() {
                           ) ??
                         projectOperations.at(-1);
 
-                      const progressKey = !progress?.settled
-                        ? "operations.navProgress"
-                        : progress.items.some((item) => item.phase === "outcome_unknown")
-                          ? "operations.navUnknown"
-                          : progress.items.some((item) => item.phase === "canceled")
-                            ? "operations.navCanceled"
-                            : "operations.navResult";
+                      const progressKey =
+                        progress?.recovery === "checking"
+                          ? "operations.connectionLost"
+                          : progress?.recovery === "unknown"
+                            ? "operations.phase.outcome_unknown"
+                            : !progress?.settled
+                              ? "operations.navProgress"
+                              : progress.items.some((item) => item.phase === "outcome_unknown")
+                                ? "operations.navUnknown"
+                                : progress.items.some((item) => item.phase === "canceled")
+                                  ? "operations.navCanceled"
+                                  : "operations.navResult";
 
                       const healthIndicator = getSyncHealthIndicator(
                         project.sync_health,

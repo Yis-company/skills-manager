@@ -411,7 +411,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (switchSeqRef.current !== seq) return;
 
         try {
-          const info = await api.remoteHostConnect(hostId);
+          const info = await api.remoteHostConnect(hostId, false);
 
           if (switchSeqRef.current !== seq) return;
           setHostSession({ info, lostMessage: null, reconnecting: false });

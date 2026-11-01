@@ -502,6 +502,8 @@ struct Connecting {
     host_id: String,
     attempt: u64,
     done: watch::Sender<Option<Outcome>>,
+    select: bool,
+    recovery: bool,
 }
 
 #[derive(Default)]
@@ -509,13 +511,20 @@ struct Slot {
     session: Option<Arc<RemoteSession>>,
     connecting: Option<Connecting>,
     calls: usize,
-    mutation_calls: usize,
+    mutation_calls: HashMap<String, (String, Option<String>)>,
     operations: HashMap<String, (u64, bool)>,
-    uncertain: bool,
+    uncertain: Vec<(String, Option<String>)>,
     awaiting_refresh: bool,
 }
 
 impl Slot {
+    fn unselect(&mut self) {
+        match self.connecting.as_mut() {
+            Some(connecting) if connecting.recovery => connecting.select = false,
+            _ => self.connecting = None,
+        }
+    }
+
     /// The session for `host_id`, if its link is up.
     fn live(&self, host_id: &str) -> Option<Arc<RemoteSession>> {
         self.session
@@ -543,16 +552,19 @@ struct Sessions {
 impl Slot {
     fn needed(&self) -> bool {
         self.calls > 0
-            || self.uncertain
+            || !self.uncertain.is_empty()
             || self.awaiting_refresh
             || self.operations.values().any(|(_, needed)| *needed)
     }
 
-    fn observe(&mut self, value: &Value) {
+    fn observe(&mut self, value: &Value, host_id: &str) {
         if let Some(snapshots) = value.as_array() {
             for snapshot in snapshots {
-                self.observe(snapshot);
+                self.observe(snapshot, host_id);
             }
+            return;
+        }
+        if value.get("host_id").is_some() && value["host_id"].as_str() != Some(host_id) {
             return;
         }
         let (Some(id), Some(revision), Some(settled)) = (
@@ -565,9 +577,21 @@ impl Slot {
         if self
             .operations
             .get(id)
-            .is_some_and(|(old, _)| *old >= revision)
+            .is_some_and(|(old, _)| *old > revision)
         {
             return;
+        }
+        if settled
+            && value["items"]
+                .as_array()
+                .is_some_and(|items| items.iter().all(|item| item["phase"] != "outcome_unknown"))
+        {
+            self.uncertain.retain(|(operation, attempt)| {
+                operation != id
+                    || attempt
+                        .as_deref()
+                        .is_some_and(|attempt| value["attempt_id"].as_str() != Some(attempt))
+            });
         }
         // Failed/review/unknown results and Git previews still own live retry evidence.
         let needed = !settled
@@ -579,6 +603,13 @@ impl Slot {
                     )
                 })
             });
+        // A read-only destination check may settle the intent's same revision.
+        // An old active reply at that revision cannot make verified work active again.
+        if self.operations.get(id).is_some_and(|(old, was_needed)| {
+            *old == revision && (!*was_needed || *was_needed == needed)
+        }) {
+            return;
+        }
         self.awaiting_refresh |= settled;
         self.operations.insert(id.to_owned(), (revision, needed));
     }
@@ -652,7 +683,7 @@ impl RemoteSessions {
             let mut slots = lock(&self.slots);
             for (id, slot) in &mut slots.hosts {
                 if id != host_id {
-                    slot.connecting = None;
+                    slot.unselect();
                 }
             }
             let slot = slots.hosts.entry(host_id.to_owned()).or_default();
@@ -662,8 +693,32 @@ impl RemoteSessions {
                 return Ok(session);
             }
             match slot.connecting_to(host_id) {
-                Some(done) => done,
-                None => self.start_connect(&mut slots, host_id),
+                Some(done) => {
+                    slot.connecting.as_mut().unwrap().select = true;
+                    done
+                }
+                None => self.start_connect(&mut slots, host_id, true),
+            }
+        };
+        outcome(done).await
+    }
+
+    /// Reconnect operation evidence on its original host without selecting it.
+    /// The observer releases the temporary refresh hold after reconciliation.
+    pub async fn reconnect(&self, host_id: &str) -> Result<Arc<RemoteSession>, AppError> {
+        let done = {
+            let mut slots = lock(&self.slots);
+            let slot = slots.hosts.entry(host_id.to_owned()).or_default();
+            slot.awaiting_refresh = true;
+            if let Some(session) = slot.live(host_id) {
+                return Ok(session);
+            }
+            match slot.connecting_to(host_id) {
+                Some(done) => {
+                    slot.connecting.as_mut().unwrap().recovery = true;
+                    done
+                }
+                None => self.start_connect(&mut slots, host_id, false),
             }
         };
         outcome(done).await
@@ -683,6 +738,14 @@ impl RemoteSessions {
                         | "cancel"
                 )
             );
+        let correlation = (
+            args["request"]["operation_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            args["request"]["attempt_id"].as_str().map(str::to_owned),
+        );
+        let call_id = uuid::Uuid::new_v4().to_string();
         let (live, connecting) = {
             let slots = lock(&self.slots);
             let slot = slots
@@ -711,7 +774,8 @@ impl RemoteSessions {
             }
             slot.calls += 1;
             if mutation {
-                slot.mutation_calls += 1;
+                slot.mutation_calls
+                    .insert(call_id.clone(), correlation.clone());
             }
         }
         let result = session.call(cmd, args).await;
@@ -724,13 +788,13 @@ impl RemoteSessions {
             slot.calls -= 1;
             if cmd == "operation_request" {
                 if mutation {
-                    slot.mutation_calls -= 1;
+                    slot.mutation_calls.remove(&call_id);
                 }
                 match &result {
-                    Ok(value) => slot.observe(value),
+                    Ok(value) => slot.observe(value, host_id),
                     // A missing response is not proof that admission or a write failed.
                     Err(error) if mutation && error.kind == super::error::ErrorKind::Network => {
-                        slot.uncertain = true
+                        slot.uncertain.push(correlation);
                     }
                     Err(_) => {}
                 }
@@ -744,6 +808,7 @@ impl RemoteSessions {
         &self,
         slots: &mut Sessions,
         host_id: &str,
+        select: bool,
     ) -> watch::Receiver<Option<Outcome>> {
         slots.attempts += 1;
         let attempt = slots.attempts;
@@ -756,6 +821,8 @@ impl RemoteSessions {
             host_id: host_id.to_string(),
             attempt,
             done,
+            select,
+            recovery: !select,
         });
         let store = self.store.clone();
         let events = self.events.clone();
@@ -779,14 +846,15 @@ impl RemoteSessions {
                     // Old futures may observe their failed replies after this hello.
                     // Their counts belong to the old connection; uncertain admissions
                     // remain retained for SKI-23 to reconcile, without replaying them.
-                    slot.uncertain |= slot.mutation_calls > 0;
+                    slot.uncertain
+                        .extend(std::mem::take(&mut slot.mutation_calls).into_values());
                     slot.calls = 0;
-                    slot.mutation_calls = 0;
+
                     slot.session.replace(session.clone())
                 }
                 Err(_) => None,
             };
-            if outcome.is_ok() {
+            if outcome.is_ok() && connecting.select {
                 slots.viewed = Some(host_id.clone());
             }
             let idle = slots.release_idle();
@@ -810,7 +878,7 @@ impl RemoteSessions {
         let mut slots = lock(&self.slots);
         slots.viewed = None;
         for slot in slots.hosts.values_mut() {
-            slot.connecting = None;
+            slot.unselect();
         }
         close_sessions(slots.release_idle());
     }
@@ -1267,6 +1335,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn switching_away_from_a_shared_connect_keeps_its_recovery_waiter() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+        let barrier = tempfile::tempdir().unwrap();
+        let release = barrier.path().join("hello");
+        let signal = release.clone();
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let entered = started.clone();
+        let (sessions, _events, _tmp) = sessions(move |host: &RemoteHostRecord, _: &[&str]| {
+            if host.id == "h1" {
+                entered.store(true, Ordering::SeqCst);
+                fake_server(
+                    &format!(
+                        r#"while ! test -e '{}'; do sleep 0.01; done; printf '%s\n' "$1"; cat >/dev/null"#,
+                        signal.display()
+                    ),
+                    &hello_line(VERSION),
+                )
+            } else {
+                fake_server(
+                    r#"printf '%s\n' "$1"; cat >/dev/null"#,
+                    &hello_line(VERSION),
+                )
+            }
+        });
+        let sessions = Arc::new(sessions);
+        let viewed = sessions.session_for("h2").await.unwrap();
+        let recovery = {
+            let sessions = sessions.clone();
+            tokio::spawn(async move { sessions.reconnect("h1").await })
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !started.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline);
+            tokio::task::yield_now().await;
+        }
+        let mut selection = Box::pin(sessions.session_for("h1"));
+        poll_fn(|cx| {
+            assert!(selection.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        sessions.session_for("h2").await.unwrap();
+        std::fs::write(release, "hello").unwrap();
+        let recovered = recovery.await.unwrap().unwrap();
+        selection.await.unwrap();
+        sessions.release_host("h1");
+        assert!(sessions.retained_hosts().is_empty());
+        assert!(viewed.is_alive());
+        assert_eq!(
+            sessions
+                .call("h1", "get_presets", json!({}))
+                .await
+                .unwrap_err()
+                .kind,
+            ErrorKind::Network
+        );
+        drop(recovered);
+    }
+
+    #[tokio::test]
+    async fn recovery_reconnect_preserves_the_view_and_shares_connections() {
+        let (sessions, _events, _tmp) = sessions(serving());
+        let viewed = sessions.session_for("h2").await.unwrap();
+        let (first, second) = tokio::join!(sessions.reconnect("h1"), sessions.reconnect("h1"));
+        let first = first.unwrap();
+        assert!(Arc::ptr_eq(&first, &second.unwrap()));
+        assert!(viewed.is_alive());
+        // Releasing recovered idle work must close h1, never the viewed h2.
+        sessions.release_host("h1");
+        assert_eq!(
+            sessions
+                .call("h1", "get_presets", json!({}))
+                .await
+                .unwrap_err()
+                .kind,
+            ErrorKind::Network
+        );
+        assert!(Arc::ptr_eq(
+            &viewed,
+            &sessions.session_for("h2").await.unwrap()
+        ));
+    }
+
+    #[tokio::test]
     async fn active_operations_keep_their_host_session_across_switches() {
         let cli = fake_cli(
             r#"printf '%s\n' "$1"
@@ -1477,6 +1630,134 @@ mod tests {
                 tokio::task::yield_now().await;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn verified_destination_evidence_can_settle_the_same_receipt_revision() {
+        let (sessions, _events, _tmp) = sessions(fake_cli(
+            r#"printf '%s\n' "$1"
+          read line; echo '{"id":1,"ok":true,"result":{"operation_id":"lost","revision":1,"settled":false,"items":[{"phase":"applying"}]}}'
+          read line; echo '{"id":2,"ok":true,"result":{"operation_id":"lost","revision":1,"settled":true,"items":[{"phase":"unchanged"}]}}'
+          read line; echo '{"id":3,"ok":true,"result":{"operation_id":"lost","revision":1,"settled":false,"items":[{"phase":"applying"}]}}'
+          cat >/dev/null"#,
+            &hello_line(VERSION),
+        ));
+        sessions.session_for("h1").await.unwrap();
+        sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"submit_install","operation_id":"lost"}}),
+            )
+            .await
+            .unwrap();
+        let viewed = sessions.session_for("h2").await.unwrap();
+        sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"reconcile","operation_id":"lost"}}),
+            )
+            .await
+            .unwrap();
+        sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"list"}}),
+            )
+            .await
+            .unwrap();
+        sessions.release_host("h1");
+        assert!(sessions.retained_hosts().is_empty());
+        assert!(viewed.is_alive());
+    }
+
+    #[tokio::test]
+    async fn only_a_correlated_verified_result_releases_a_lost_mutation() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+        let barrier = tempfile::tempdir().unwrap();
+        let release = barrier.path().join("drop");
+        let signal = release.clone();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let (sessions, _events, _tmp) = sessions(move |host: &RemoteHostRecord, _: &[&str]| {
+            let first = host.id == "h1" && runs.fetch_add(1, Ordering::SeqCst) == 0;
+            let dropping = format!(
+                r#"printf '%s\n' "$1"; read line; read line; while ! test -e '{}'; do sleep 0.01; done; exit 0"#,
+                signal.display()
+            );
+            fake_server(
+                if first {
+                    &dropping
+                } else {
+                    r#"printf '%s\n' "$1"
+              read line; echo '{"id":1,"ok":true,"result":{"operation_id":"lost","attempt_id":"old","revision":1,"settled":true,"items":[{"phase":"succeeded"}]}}'
+              read line; echo '{"id":2,"ok":true,"result":[]}'
+              read line; echo '{"id":3,"ok":true,"result":{"operation_id":"lost","attempt_id":"new","revision":2,"settled":true,"items":[{"phase":"succeeded"}]}}'
+              cat >/dev/null"#
+                },
+                &hello_line(VERSION),
+            )
+        });
+        sessions.session_for("h1").await.unwrap();
+        let mut retry = Box::pin(sessions.call(
+            "h1",
+            "operation_request",
+            json!({"request":{"action":"retry_failed","operation_id":"lost","attempt_id":"new"}}),
+        ));
+        let mut cancel = Box::pin(sessions.call(
+            "h1",
+            "operation_request",
+            json!({"request":{"action":"cancel","operation_id":"lost"}}),
+        ));
+        poll_fn(|cx| {
+            assert!(retry.as_mut().poll(cx).is_pending());
+            assert!(cancel.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        std::fs::write(release, "drop").unwrap();
+        retry.await.unwrap_err();
+        cancel.await.unwrap_err();
+        let viewed = sessions.session_for("h2").await.unwrap();
+        let recovered = sessions.reconnect("h1").await.unwrap();
+        sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"reconcile","operation_id":"other"}}),
+            )
+            .await
+            .unwrap();
+        sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"list"}}),
+            )
+            .await
+            .unwrap();
+        sessions.release_host("h1");
+        assert_eq!(sessions.retained_hosts(), ["h1"]);
+        assert!(
+            recovered.is_alive(),
+            "an unrelated receipt or empty list cannot clear uncertainty"
+        );
+        sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"reconcile","operation_id":"lost"}}),
+            )
+            .await
+            .unwrap();
+        sessions.release_host("h1");
+        assert!(
+            sessions.retained_hosts().is_empty(),
+            "verified original work should release its uncertainty hold"
+        );
+        assert!(viewed.is_alive());
     }
 
     /// The link drops after one request. Calls fail until the UI connects

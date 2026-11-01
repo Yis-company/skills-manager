@@ -17,9 +17,12 @@ import {
   queryKeys,
   refreshQuery,
 } from "../lib/appQueries";
+import { getErrorKind } from "../lib/error";
 import { invokeHost } from "../lib/hostCall";
 import {
+  checkingOperation,
   type InstallSource,
+  installSourceIdentity,
   isLibraryOperation,
   mergeOperations,
   operationIdentity,
@@ -29,7 +32,12 @@ import {
   type OperationSnapshot,
 } from "../lib/operations";
 import { groupProjectSkills } from "../lib/projectSkillGroups";
-import { type Project, remoteHostRelease, remoteHostRetained } from "../lib/tauri";
+import {
+  type Project,
+  remoteHostConnect,
+  remoteHostRelease,
+  remoteHostRetained,
+} from "../lib/tauri";
 
 interface OperationsState {
   operations: OperationSnapshot[];
@@ -40,6 +48,7 @@ interface OperationsState {
   submit: (projectId: string, paths?: string[]) => Promise<void>;
   act: (origin: null | string, request: OperationRequest) => Promise<void>;
   refresh: (operation: OperationSnapshot) => Promise<void>;
+  reconnect: (operation: OperationSnapshot) => Promise<void>;
 }
 
 const Context = createContext<null | OperationsState>(null);
@@ -64,6 +73,12 @@ export function OperationsProvider({
   const submitting = useRef(new Map<string, Promise<void>>());
 
   const [observedHosts, setObservedHosts] = useState<(null | string)[]>([null]);
+  const recovering = useRef(new Map<string, Promise<void>>());
+
+  const admissions = useRef(
+    new Map<string, { origin: null | string; request: OperationRequest }>(),
+  );
+
   const pending = useRef(new Map<null | string, number>());
 
   const observe = useCallback((origin: null | string) => {
@@ -107,6 +122,111 @@ export function OperationsProvider({
   const unavailableHosts = hosts.filter((_, index) => queries[index].isError);
   const allOperations = queries.flatMap((query) => query.data ?? EMPTY_OPERATIONS);
   const operations = allOperations.filter((operation) => operation.host_id === hostId);
+
+  const reconnect = useCallback(
+    (operation: OperationSnapshot, request?: OperationRequest) => {
+      const origin = operation.host_id;
+
+      if (origin === null) return Promise.resolve();
+      const id = JSON.stringify([origin, operation.operation_id]);
+      const existing = recovering.current.get(id);
+
+      if (existing) return existing;
+      const checking = checkingOperation(operation, request);
+
+      const update = (change: (current: OperationSnapshot) => OperationSnapshot) =>
+        client.setQueryData<OperationSnapshot[]>(key(origin), (current = []) => {
+          const found = current.some((o) => o.operation_id === operation.operation_id);
+
+          return found
+            ? current.map((o) => (o.operation_id === operation.operation_id ? change(o) : o))
+            : [...current, change(checking)];
+        });
+
+      update(() => checking);
+      let expired = false;
+      let timeout: ReturnType<typeof setTimeout>;
+
+      const work = async () => {
+        for (const delay of [0, 500, 1500]) {
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+
+          if (expired) return;
+
+          try {
+            await remoteHostConnect(origin, false);
+
+            if (expired) return;
+
+            const snapshot = await invokeHost<OperationSnapshot>(origin, "operation_request", {
+              request: { action: "reconcile", operation_id: operation.operation_id },
+            });
+
+            if (expired) return;
+            client.setQueryData<OperationSnapshot[]>(key(origin), (current = []) =>
+              mergeOperations(current, [snapshot], origin),
+            );
+
+            const result = client
+              .getQueryData<OperationSnapshot[]>(key(origin))
+              ?.find((o) => o.operation_id === operation.operation_id);
+
+            if (result && !result.recovery) return;
+          } catch {
+            /* Reconnect/read only: a missing receipt never permits a write. */
+          }
+        }
+      };
+
+      const promise = Promise.race([
+        work(),
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, 12000);
+        }),
+      ]).finally(() => {
+        expired = true;
+        clearTimeout(timeout);
+        update((current) =>
+          current.recovery
+            ? {
+                ...current,
+                recovery: "unknown",
+                settled: true,
+                preview: null,
+                items: current.items.map((item) =>
+                  [
+                    "queued",
+                    "preparing",
+                    "waiting",
+                    "applying",
+                    "stopping",
+                    "checking_result",
+                  ].includes(item.phase)
+                    ? { ...item, phase: "outcome_unknown", message: null }
+                    : item,
+                ),
+              }
+            : current,
+        );
+        recovering.current.delete(id);
+        void remoteHostRelease(origin).catch(console.error);
+      });
+
+      recovering.current.set(id, promise);
+
+      return promise;
+    },
+    [client],
+  );
+
+  useEffect(() => {
+    hosts.forEach((origin, index) => {
+      if (origin === null || getErrorKind(queries[index].error) !== "network") return;
+
+      for (const operation of queries[index].data ?? [])
+        if (!operation.settled && !operation.recovery) void reconnect(operation);
+    });
+  }, [hosts, queries, reconnect]);
 
   const releaseIfIdle = useCallback(
     (origin: null | string) => {
@@ -205,7 +325,7 @@ export function OperationsProvider({
     for (const operation of allOperations) {
       const identity = operationIdentity(operation);
 
-      if (operation.settled && !refreshed.current.has(identity)) {
+      if (operation.settled && !operation.recovery && !refreshed.current.has(identity)) {
         refreshed.current.add(identity);
         void refresh(operation);
       }
@@ -225,9 +345,98 @@ export function OperationsProvider({
     };
   }, [client, hosts]);
 
+  const recoverRequest = useCallback(
+    (origin: null | string, request: OperationRequest) => {
+      if (!("operation_id" in request)) return Promise.resolve();
+
+      const existing = client
+        .getQueryData<OperationSnapshot[]>(key(origin))
+        ?.find((o) => o.operation_id === request.operation_id);
+
+      const projectId = request.action === "submit_project_update" ? request.project_id : null;
+
+      const project = client
+        .getQueryData<Project[]>(queryKeys.projects(origin))
+        ?.find((p) => p.id === projectId);
+
+      return reconnect(
+        existing ?? {
+          operation_id: request.operation_id,
+          attempt_id: "",
+          host_id: origin,
+          project_id: projectId,
+          project_path: project?.path ?? null,
+          destination: projectId
+            ? { kind: "project", id: projectId, path: project?.path ?? "" }
+            : { kind: "library", path: "" },
+          sources: request.action === "submit_install" ? request.sources : [],
+          revision: 0,
+          settled: false,
+          cancel_requested: false,
+          items: [],
+        },
+        request,
+      );
+    },
+    [client, reconnect],
+  );
+
+  useEffect(() => {
+    const unlisten = listen<{ host_id: string; state: string }>(
+      "remote-session-state",
+      ({ payload }) => {
+        if (payload.state !== "disconnected") return;
+        const records = client.getQueryData<OperationSnapshot[]>(key(payload.host_id)) ?? [];
+
+        for (const { origin, request } of admissions.current.values())
+          if (origin === payload.host_id) void recoverRequest(origin, request);
+
+        for (const operation of records)
+          if (!operation.settled && !operation.recovery) void reconnect(operation);
+      },
+    );
+
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [client, reconnect, recoverRequest]);
+
   async function act(origin: null | string, request: OperationRequest) {
+    const records = client.getQueryData<OperationSnapshot[]>(key(origin)) ?? [];
+
+    const uncertain = records.filter(
+      (o) => o.recovery || o.items.some((i) => i.phase === "outcome_unknown"),
+    );
+
+    if (
+      request.action === "submit_project_update" &&
+      uncertain.some((o) => o.project_id === request.project_id)
+    )
+      return;
+
+    if (
+      request.action === "submit_install" &&
+      uncertain.some((o) =>
+        [...(o.sources ?? []), ...o.items.flatMap((i) => (i.source ? [i.source] : []))].some(
+          (source) =>
+            request.sources.some(
+              (selected) => installSourceIdentity(source) === installSourceIdentity(selected),
+            ),
+        ),
+      )
+    )
+      return;
+
+    if (
+      ["confirm_install", "retry_failed", "cancel"].includes(request.action) &&
+      "operation_id" in request &&
+      records.some((o) => o.operation_id === request.operation_id && o.recovery)
+    )
+      return;
     pending.current.set(origin, (pending.current.get(origin) ?? 0) + 1);
     observe(origin);
+    const admission = crypto.randomUUID();
+    admissions.current.set(admission, { origin, request });
 
     try {
       const snapshot = await invokeHost<OperationSnapshot>(origin, "operation_request", {
@@ -237,7 +446,12 @@ export function OperationsProvider({
       client.setQueryData<OperationSnapshot[]>(key(origin), (current) =>
         mergeOperations(current ?? [], [snapshot], origin),
       );
+    } catch (error) {
+      if (origin !== null && getErrorKind(error) === "network")
+        await recoverRequest(origin, request);
+      else throw error;
     } finally {
+      admissions.current.delete(admission);
       pending.current.set(origin, (pending.current.get(origin) ?? 1) - 1);
       releaseIfIdle(origin);
       void client.invalidateQueries({ queryKey: key(origin) });
@@ -300,6 +514,7 @@ export function OperationsProvider({
         install,
         act,
         refresh,
+        reconnect,
       }}
     >
       {children}

@@ -260,9 +260,15 @@ fn probe_result(version: String) -> RemoteProbe {
 #[tauri::command]
 pub async fn remote_host_connect(
     host_id: String,
+    select: Option<bool>,
     sessions: State<'_, RemoteSessions>,
 ) -> Result<HostSessionInfo, AppError> {
-    Ok(sessions.session_for(&host_id).await?.info().clone())
+    let session = if select.unwrap_or(true) {
+        sessions.session_for(&host_id).await?
+    } else {
+        sessions.reconnect(&host_id).await?
+    };
+    Ok(session.info().clone())
 }
 
 #[tauri::command]

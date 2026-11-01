@@ -24,6 +24,8 @@ export interface E2EControl {
   calls: RecordedCall[];
   /** The next `cmd` rejects with `message` instead of running. */
   failNext(cmd: string, message: string): void;
+  /** Lose the next operation response before admission or after the handler commits. */
+  dropNext(cmd: string, afterAdmission: boolean): void;
   /** Calls to `cmd` wait until `release(cmd)`. */
   hold(cmd: string): void;
   release(cmd: string): void;
@@ -61,6 +63,8 @@ save();
 const calls: RecordedCall[] = [];
 
 const failures = new Map<string, string[]>();
+
+const drops = new Map<string, boolean>();
 
 const holds = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 
@@ -114,6 +118,12 @@ mockIPC(
       throw failure;
     }
 
+    const drop = drops.get(boundary);
+    drops.delete(boundary);
+    const lost = { kind: "network", message: "Connection was lost" };
+
+    if (drop === false) throw lost;
+
     const handler = findHandler(cmd);
 
     if (!handler) {
@@ -134,6 +144,8 @@ mockIPC(
 
     save();
 
+    if (drop === true) throw lost;
+
     // A copy, so the app never holds a reference into the fake's state.
     return result === undefined ? null : structuredClone(result);
   },
@@ -142,6 +154,9 @@ mockIPC(
 
 window.__e2e = {
   calls,
+  dropNext: (cmd, afterAdmission) => {
+    drops.set(cmd, afterAdmission);
+  },
   failNext: (cmd, message) => failures.set(cmd, [...(failures.get(cmd) ?? []), message]),
   hold: (cmd) => {
     let resolve = () => {};

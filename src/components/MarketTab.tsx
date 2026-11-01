@@ -110,6 +110,18 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
     }),
   );
 
+  const recoveringSources = new Map(
+    operations
+      .filter((o) => o.recovery)
+      .flatMap((operation) =>
+        (operation.sources ?? []).flatMap((source) =>
+          source.kind === "marketplace"
+            ? [[String(`${source.source}/${source.skill_id}`), operation] as const]
+            : [],
+        ),
+      ),
+  );
+
   const queueStatus = new Map(
     [...marketEntries].flatMap(([key, entry]) =>
       isItemActive(entry.item)
@@ -145,6 +157,7 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
     const key = installKey(skill);
 
     return (
+      !recoveringSources.has(key) &&
       !installedSourceRefs.has(key) &&
       !queueStatus.has(key) &&
       marketEntries.get(key)?.item.phase !== "outcome_unknown"
@@ -379,7 +392,7 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
                             >
                               <Check className="h-3.5 w-3.5" />
                             </span>
-                          ) : status === "running" ? (
+                          ) : status === "running" && !recoveringSources.has(sourceRef) ? (
                             <button
                               onClick={() => cancel(sourceRef)}
                               className="inline-flex items-center gap-1 rounded-[5px] border border-red-500/30 bg-red-500/10 px-1.5 py-1 text-red-400 transition-colors hover:bg-red-500/20"
@@ -391,7 +404,7 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
                                 {t("install.cancel")}
                               </span>
                             </button>
-                          ) : status === "queued" ? (
+                          ) : status === "queued" && !recoveringSources.has(sourceRef) ? (
                             <span className="inline-flex items-center gap-1 rounded-[5px] border border-border-subtle bg-background py-0.5 pl-1.5 pr-0.5 text-[11px] font-medium leading-none text-muted">
                               {t("install.queue.queued")}
                               <button

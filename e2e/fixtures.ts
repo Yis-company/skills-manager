@@ -46,6 +46,15 @@ export class FakeBackend {
     return this.page.evaluate(([c, m]) => window.__e2e!.failNext(c, m), [cmd, message] as const);
   }
 
+  async dropNext(cmd: string, afterAdmission: boolean) {
+    await this.ready();
+
+    return this.page.evaluate(([c, after]) => window.__e2e!.dropNext(c, after), [
+      cmd,
+      afterAdmission,
+    ] as const);
+  }
+
   async hold(cmd: string) {
     await this.ready();
 

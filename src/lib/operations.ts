@@ -19,6 +19,35 @@ export type InstallSource =
   | { kind: "local"; path: string; name?: null | string; origin?: "discovered" | null }
   | { kind: "marketplace"; source: string; skill_id: string };
 
+/** Match host-captured intent, including nullable fields and sanitized Git URLs. */
+export function installSourceIdentity(source: InstallSource): string {
+  switch (source.kind) {
+    case "local":
+      return JSON.stringify([source.kind, source.path, source.name ?? null, source.origin ?? null]);
+    case "local_batch":
+      return JSON.stringify([source.kind, source.path]);
+    case "marketplace":
+      return JSON.stringify([source.kind, source.source, source.skill_id]);
+    case "git": {
+      let url = source.url;
+
+      try {
+        const parsed = new URL(url);
+
+        if (["http:", "https:"].includes(parsed.protocol)) parsed.username = "";
+        parsed.password = "";
+        parsed.search = "";
+        parsed.hash = "";
+        url = parsed.toString();
+      } catch {
+        /* SCP-style Git sources retain their original spelling. */
+      }
+
+      return JSON.stringify([source.kind, url]);
+    }
+  }
+}
+
 export type OperationDestination =
   | { kind: "library"; path: string }
   | { kind: "project"; id: string; path: string };
@@ -35,6 +64,9 @@ export interface OperationItem {
 
 export interface OperationSnapshot {
   operation_id: string;
+  /** App-session transport observation; never a host receipt or replay authority. */
+  recovery?: "checking" | "unknown";
+  recovery_attempt?: string;
   attempt_id: string;
   host_id: null | string;
   project_id: null | string;
@@ -106,6 +138,7 @@ export const operationIdentity = (operation: OperationSnapshot) =>
   JSON.stringify([operation.host_id, operation.operation_id, operation.attempt_id]);
 
 export const operationNeedsAttention = (operation: OperationSnapshot) =>
+  operation.recovery === "unknown" ||
   operation.items.some((item) =>
     ["failed", "needs_review", "outcome_unknown"].includes(item.phase),
   );
@@ -125,8 +158,79 @@ export function mergeOperations(
     const index = records.findIndex((old) => old.operation_id === snapshot.operation_id);
 
     if (index < 0) records.push(snapshot);
-    else if (snapshot.revision > records[index].revision) records[index] = snapshot;
+    else {
+      const old = records[index];
+
+      if (snapshot.revision < old.revision) continue;
+
+      if (old.recovery) {
+        if (old.recovery_attempt && snapshot.attempt_id !== old.recovery_attempt) continue;
+
+        // Silence, an empty list, or an unfinished unowned receipt cannot clear
+        // uncertainty. Equal-revision verified reads can repair a lost reply.
+        if (snapshot.settled && !snapshot.items.some((item) => item.phase === "outcome_unknown"))
+          records[index] = snapshot;
+        else {
+          const merged = {
+            ...snapshot,
+            recovery: old.recovery,
+            recovery_attempt: old.recovery_attempt,
+            settled: old.recovery === "unknown",
+            preview: null,
+            items: snapshot.items.map((item) => {
+              const prior = old.items.find((previous) => previous.id === item.id);
+
+              if (
+                prior &&
+                ["succeeded", "unchanged"].includes(prior.phase) &&
+                (isItemActive(item) || item.phase === "outcome_unknown")
+              )
+                return prior;
+
+              return isItemActive(item) || item.phase === "outcome_unknown"
+                ? {
+                    ...item,
+                    phase:
+                      old.recovery === "checking"
+                        ? ("checking_result" as const)
+                        : ("outcome_unknown" as const),
+                  }
+                : item;
+            }),
+          };
+
+          records[index] = merged;
+        }
+      } else if (snapshot.revision > old.revision) records[index] = snapshot;
+    }
   }
 
   return records;
+}
+
+/** Keep successful siblings; checking a response is observation, not execution. */
+export function checkingOperation(
+  operation: OperationSnapshot,
+  request?: OperationRequest,
+): OperationSnapshot {
+  const attempt =
+    request && "attempt_id" in request
+      ? request.attempt_id
+      : (operation.recovery_attempt ?? (operation.attempt_id || undefined));
+
+  return {
+    ...operation,
+    recovery: "checking",
+    recovery_attempt: attempt,
+    settled: false,
+    preview: null,
+    items: operation.items.map((item) =>
+      isItemActive(item) ||
+      item.phase === "outcome_unknown" ||
+      (request?.action === "retry_failed" && item.phase === "failed") ||
+      request?.action === "confirm_install"
+        ? { ...item, phase: "checking_result", message: null }
+        : item,
+    ),
+  };
 }

@@ -72,7 +72,12 @@ export function HostSwitcher() {
     const attention = work.filter(needsAttention).length;
 
     return [
-      active ? t("operations.installNav", { count: active }) : "",
+      work.some((o) => o.recovery === "checking")
+        ? t("operations.connectionLost")
+        : active
+          ? t("operations.installNav", { count: active })
+          : "",
+      work.some((o) => o.recovery === "unknown") ? t("operations.phase.outcome_unknown") : "",
       attention ? t("operations.installAttention", { count: attention }) : "",
       unavailableHosts.includes(hostId) ? t("operations.hostUnavailable") : "",
     ]

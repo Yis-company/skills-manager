@@ -809,6 +809,60 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_verifies_install_content_and_ownership_without_replaying() {
+        let host = test_host();
+        let source = host.tmp.path().join("source");
+        crate::core::test_support::write_skill(&source, "writing");
+        let held = crate::core::repo_lock::RepoLock::try_shared()
+            .unwrap()
+            .unwrap();
+        dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_install","operation_id":"lost-install","host_id":null,"sources":[{"kind":"local","path":source,"name":"writing"}]}})).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while read_operation(&host, "lost-install")["items"][0]["phase"] != "waiting" {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let intent = host
+            .ctx
+            .store
+            .resource_state_get("operation_receipt", "lost-install")
+            .unwrap()
+            .unwrap();
+        drop(held);
+        settled_operation(&host, "lost-install");
+        host.ctx
+            .store
+            .resource_state_put("operation_receipt", "lost-install", &intent)
+            .unwrap();
+        let reader = HostCtx::headless(host.ctx.store.clone());
+        let reconcile = || {
+            dispatch(
+                &reader,
+                "operation_request",
+                &json!({"request":{"action":"reconcile","operation_id":"lost-install"}}),
+            )
+            .unwrap()
+        };
+        assert_eq!(reconcile()["items"][0]["phase"], "unchanged");
+        let original_source = std::fs::read(source.join("SKILL.md")).unwrap();
+        std::fs::write(source.join("SKILL.md"), "source changed").unwrap();
+        assert_eq!(reconcile()["items"][0]["phase"], "outcome_unknown");
+        std::fs::write(source.join("SKILL.md"), original_source).unwrap();
+        let target = crate::core::central_repo::skills_dir().join("writing/SKILL.md");
+        std::fs::write(&target, "edited copy").unwrap();
+        assert_eq!(reconcile()["items"][0]["phase"], "outcome_unknown");
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "edited copy");
+        assert_eq!(
+            dispatch(&reader, "get_managed_skills", &json!({}))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     fn library_wait_yields_to_project_and_changed_local_source_requires_review() {
         let host = test_host();
         let project = operation_project(&host, "independent");
@@ -1548,6 +1602,97 @@ mod tests {
         )
         .unwrap();
         assert_eq!(response["items"][0]["phase"], "succeeded");
+    }
+
+    #[test]
+    fn reconciliation_repairs_a_live_unknown_after_result_storage_recovers() {
+        let host = test_host();
+        host.ctx.store.set_setting("sync_mode", "copy").unwrap();
+        let project = operation_project(&host, "storage-loss");
+        let database = rusqlite::Connection::open(host.tmp.path().join("repo/test.db")).unwrap();
+        database.execute_batch("CREATE TRIGGER lose_result BEFORE UPDATE ON resource_state WHEN NEW.kind = 'operation_receipt' AND json_extract(NEW.value, '$.snapshot.settled') = 1 BEGIN SELECT RAISE(FAIL, 'lost result storage'); END;").unwrap();
+        submit_operation(&host, "storage-loss", &project);
+        assert_eq!(
+            settled_operation(&host, "storage-loss")["items"][0]["phase"],
+            "outcome_unknown"
+        );
+        database.execute_batch("DROP TRIGGER lose_result").unwrap();
+        let recovered = dispatch(
+            &host.ctx,
+            "operation_request",
+            &json!({"request":{"action":"reconcile","operation_id":"storage-loss"}}),
+        )
+        .unwrap();
+        assert_eq!(recovered["items"][0]["phase"], "unchanged");
+        assert_eq!(
+            read_operation(&host, "storage-loss")["items"][0]["phase"],
+            "unchanged"
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                host.tmp
+                    .path()
+                    .join("storage-loss/.claude/skills/x/SKILL.md")
+            )
+            .unwrap(),
+            "library version"
+        );
+    }
+
+    #[test]
+    fn reconcile_verifies_a_project_destination_after_a_lost_result_receipt() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = test_host_with(Arc::new(HeldOperation {
+            entered_once: std::sync::atomic::AtomicBool::new(false),
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        host.ctx.store.set_setting("sync_mode", "copy").unwrap();
+        let project = operation_project(&host, "lost-result");
+        submit_operation(&host, "held", &project);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        // Storage/transport stand-in: the write finishes, but only its prior
+        // intent survives. Reconciliation must inspect actual files, not replay.
+        let intent = host
+            .ctx
+            .store
+            .resource_state_get("operation_receipt", "held")
+            .unwrap()
+            .unwrap();
+        drop(release);
+        settled_operation(&host, "held");
+        host.ctx
+            .store
+            .resource_state_put("operation_receipt", "held", &intent)
+            .unwrap();
+        let reader = HostCtx::headless(host.ctx.store.clone());
+        let reconcile = || {
+            dispatch(
+                &reader,
+                "operation_request",
+                &json!({"request":{"action":"reconcile","operation_id":"held"}}),
+            )
+            .unwrap()
+        };
+        assert_eq!(reconcile()["items"][0]["phase"], "unchanged");
+        let source = crate::core::central_repo::skills_dir().join("x/SKILL.md");
+        std::fs::write(&source, "source changed after write").unwrap();
+        assert_eq!(reconcile()["items"][0]["phase"], "outcome_unknown");
+        std::fs::write(source, "library version").unwrap();
+        let target = host
+            .tmp
+            .path()
+            .join("lost-result/.claude/skills/x/SKILL.md");
+        std::fs::write(&target, "edited after response loss").unwrap();
+        assert_eq!(reconcile()["items"][0]["phase"], "outcome_unknown");
+        assert_eq!(
+            std::fs::read_to_string(target).unwrap(),
+            "edited after response loss"
+        );
     }
 
     #[test]

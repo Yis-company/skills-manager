@@ -681,3 +681,67 @@ pub(crate) fn apply_captured_project_update(
     )?;
     Ok(Phase::Succeeded)
 }
+
+/// Read-only evidence check. Matching desired state does not establish which process
+/// wrote it, and a busy destination cannot establish that another owner stopped.
+pub(crate) fn verify_captured_project_update(
+    ctx: &HostCtx,
+    project_id: &str,
+    update: &CapturedProjectUpdate,
+) -> Result<bool, AppError> {
+    use crate::core::{content_hash, project_update_lock::ProjectUpdateLock};
+    let Some(_guard) = ProjectUpdateLock::try_acquire(&update.target)? else {
+        return Ok(false);
+    };
+    let Some(project) = ctx
+        .store
+        .get_project_by_id(project_id)
+        .map_err(AppError::db)?
+    else {
+        return Ok(false);
+    };
+    let Some(source) = ctx
+        .store
+        .get_skill_by_id(&update.source_id)
+        .map_err(AppError::db)?
+    else {
+        return Ok(false);
+    };
+    if PathBuf::from(&project.path).canonicalize()? != update.project_path
+        || project.deploy_mode != update.deploy_mode
+        || ctx.store.get_setting("sync_mode").map_err(AppError::db)? != update.sync_mode
+        || PathBuf::from(&source.central_path).canonicalize()? != update.source
+    {
+        return Ok(false);
+    }
+    let actual = update.target.canonicalize()?;
+    let mode = if is_copy_project(&project) {
+        sync_engine::SyncMode::Copy
+    } else {
+        sync_engine::sync_mode_for_tool(&update.agent, update.sync_mode.as_deref())
+    };
+    if actual != update.physical_target
+        && !(matches!(mode, sync_engine::SyncMode::Symlink) && actual == update.source)
+    {
+        return Ok(false);
+    }
+    let skills = super::query::get_project_skills_core(ctx, project_id.to_owned())?;
+    if !skills.iter().any(|skill| {
+        skill.relative_path == update.relative_path
+            && skill.agent == update.agent
+            && skill.center_skill_id.as_ref() == Some(&update.source_id)
+            && crate::core::project_update_lock::destination(Path::new(&skill.path))
+                .ok()
+                .as_ref()
+                == Some(&update.target)
+    }) {
+        return Ok(false);
+    }
+    let content = |path: &Path| {
+        content_hash::list_content_files_strict(path)
+            .map(|files| content_hash::hash_entries(&files))
+            .map_err(AppError::io)
+    };
+    Ok(content(&update.source)? == update.source_content
+        && content(&actual)? == update.source_content)
+}

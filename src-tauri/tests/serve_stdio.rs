@@ -548,3 +548,158 @@ async fn three_hosts_keep_colliding_operation_ids_and_libraries_isolated_over_re
                 && payload["operation_id"] == "same-operation"));
     }
 }
+
+/// Real shared CLI/filesystem/receipt behavior through a deliberately lossy pipe.
+/// Python is a transport stand-in, not an operation implementation.
+#[tokio::test]
+async fn lost_responses_reconcile_original_receipts_without_replaying_writes() {
+    use fs2::FileExt;
+    struct Release(std::path::PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.0, "release");
+        }
+    }
+    for mode in [
+        "before_admission",
+        "after_admission",
+        "applying",
+        "committed",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let base = tmp.path().join("base");
+        let source = tmp.path().join("source/demo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: demo\n---\nintended content\n",
+        )
+        .unwrap();
+        let held = if mode == "after_admission" {
+            let lock = std::fs::File::create(base.join(".skills-manager.lock")).unwrap();
+            FileExt::lock_shared(&lock).unwrap();
+            Some(lock)
+        } else {
+            None
+        };
+        let release = Release(tmp.path().join("release"));
+        let (transport_base, transport_home, release_path) =
+            (base.clone(), home.clone(), release.0.clone());
+        let transport = move |_: &RemoteHostRecord, _: &[&str]| {
+            let mut cmd = Command::new("python3");
+            cmd.arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/lost_response.py"
+            ))
+            .arg(CLI)
+            .arg(&transport_base)
+            .arg(mode)
+            .arg(&release_path)
+            .env("HOME", &transport_home)
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("XDG_DATA_HOME");
+            cmd
+        };
+        let lost = RemoteSession::spawn(
+            &transport,
+            &host("unused", None),
+            Arc::new(Recorded::default()),
+        )
+        .unwrap();
+        let err = lost
+            .call(
+                "operation_request",
+                json!({"request":{
+                    "action":"submit_install", "operation_id":"lost", "host_id":"test-host",
+                    "sources":[{"kind":"local", "path":source}]
+                }}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Network, "{mode}");
+        let (reconnect_base, reconnect_home) = (base.clone(), home.clone());
+        let reconnect = move |_: &RemoteHostRecord, args: &[&str]| {
+            let mut cmd = Command::new(CLI);
+            cmd.arg("--base-dir")
+                .arg(&reconnect_base)
+                .args(args)
+                .env("HOME", &reconnect_home)
+                .env_remove("XDG_CONFIG_HOME")
+                .env_remove("XDG_DATA_HOME");
+            cmd
+        };
+        let reader = RemoteSession::spawn(
+            &reconnect,
+            &host("unused", None),
+            Arc::new(Recorded::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            reader
+                .call("operation_request", json!({"request":{"action":"list"}}))
+                .await
+                .unwrap(),
+            json!([])
+        );
+        let request = json!({"request":{"action":"reconcile", "operation_id":"lost"}});
+        if mode == "before_admission" {
+            assert_eq!(
+                reader
+                    .call("operation_request", request)
+                    .await
+                    .unwrap_err()
+                    .kind,
+                ErrorKind::NotFound
+            );
+            assert!(!base.join("skills/demo").exists());
+        } else {
+            if mode == "after_admission" {
+                let unknown = reader
+                    .call("operation_request", request.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(unknown["items"][0]["phase"], "outcome_unknown");
+                assert!(!base.join("skills/demo").exists());
+            }
+            drop(held);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let result = reader
+                    .call("operation_request", request.clone())
+                    .await
+                    .unwrap();
+                if result["items"][0]["phase"] == "succeeded" {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "{mode}: {result}");
+                tokio::task::yield_now().await;
+            }
+            let target = base.join("skills/demo/SKILL.md");
+            let modified = std::fs::metadata(&target).unwrap().modified().unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&target).unwrap(),
+                "---\nname: demo\n---\nintended content\n"
+            );
+            reader.call("operation_request", request).await.unwrap();
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().modified().unwrap(),
+                modified
+            );
+            assert_eq!(
+                reader
+                    .call("get_managed_skills", json!({}))
+                    .await
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        drop(release);
+        drop(lost);
+    }
+}

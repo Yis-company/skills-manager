@@ -14,7 +14,7 @@ import {
 export function ProjectOperationProgress({ operation }: { operation: OperationSnapshot }) {
   const { t } = useTranslation();
   const progressRef = useRef<HTMLElement>(null);
-  const { act, refresh, refreshErrors } = useOperations();
+  const { act, refresh, refreshErrors, reconnect } = useOperations();
   const counts = operationCounts(operation);
 
   const perform = (action: "cancel" | "retry_failed") => {
@@ -39,18 +39,26 @@ export function ProjectOperationProgress({ operation }: { operation: OperationSn
         <div role="status" className="min-w-0 text-[13px]">
           <p className="font-medium text-primary">
             {t(
-              operation.settled
-                ? "operations.finished"
-                : operation.cancel_requested
-                  ? "operations.stopping"
-                  : "operations.updating",
+              operation.recovery === "checking"
+                ? "operations.connectionLost"
+                : operation.recovery === "unknown"
+                  ? "operations.phase.outcome_unknown"
+                  : operation.settled
+                    ? "operations.finished"
+                    : operation.cancel_requested
+                      ? "operations.stopping"
+                      : "operations.updating",
             )}
           </p>
-          <p className="tabular-nums text-secondary">
-            {operation.settled ? t("operations.result", counts) : t("operations.progress", counts)}
-          </p>
+          {!operation.recovery && (
+            <p className="tabular-nums text-secondary">
+              {operation.settled
+                ? t("operations.result", counts)
+                : t("operations.progress", counts)}
+            </p>
+          )}
         </div>
-        {!operation.settled && (
+        {!operation.settled && !operation.recovery && (
           <button
             className="app-toolbar-button app-toolbar-button-secondary"
             disabled={operation.cancel_requested}
@@ -59,7 +67,7 @@ export function ProjectOperationProgress({ operation }: { operation: OperationSn
             {t(operation.cancel_requested ? "operations.stopping" : "operations.cancel")}
           </button>
         )}
-        {operation.settled && counts.failed > 0 && (
+        {operation.settled && !operation.recovery && counts.failed > 0 && (
           <button
             className="app-toolbar-button app-toolbar-button-secondary"
             onClick={() => perform("retry_failed")}
@@ -67,7 +75,20 @@ export function ProjectOperationProgress({ operation }: { operation: OperationSn
             {t("operations.retry", { count: counts.failed })}
           </button>
         )}
+        {operation.host_id !== null && (operation.recovery === "unknown" || counts.unknown > 0) && (
+          <button
+            className="app-toolbar-button app-toolbar-button-secondary"
+            onClick={() => {
+              void reconnect(operation).then(() => progressRef.current?.focus());
+            }}
+          >
+            {t("operations.reconnect")}
+          </button>
+        )}
       </div>
+      {(operation.recovery === "unknown" || counts.unknown > 0) && (
+        <p className="text-[13px] text-secondary">{t("operations.unknownHelp")}</p>
+      )}
       {(counts.unknown > 0 || counts.unchanged > 0) && (
         <p className="text-[13px] text-secondary">{t("operations.otherResults", counts)}</p>
       )}

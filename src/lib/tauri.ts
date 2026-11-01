@@ -1211,8 +1211,10 @@ export interface HostSessionInfo {
  * Installs this app's CLI first when the host runs an older one. Rejects when
  * the host is unreachable, has no CLI, or cannot take this version.
  */
-export const remoteHostConnect = (hostId: string) =>
-  invoke<HostSessionInfo>("remote_host_connect", { hostId });
+export const remoteHostConnect = (hostId: string, select?: boolean) =>
+  select === undefined
+    ? invoke<HostSessionInfo>("remote_host_connect", { hostId })
+    : invoke<HostSessionInfo>("remote_host_connect", { hostId, select });
 
 export const remoteHostDisconnect = (hostId?: string) =>
   invoke<void>("remote_host_disconnect", { hostId: hostId ?? null });

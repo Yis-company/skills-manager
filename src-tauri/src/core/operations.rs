@@ -164,6 +164,7 @@ pub enum OperationRequest {
 }
 
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
+    let verify = request["action"] == "reconcile";
     let request: OperationRequest =
         serde_json::from_value(request).map_err(|e| AppError::invalid_input(e.to_string()))?;
     match request {
@@ -266,8 +267,8 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
             Ok(json!(snapshot))
         }
         OperationRequest::Read { operation_id } | OperationRequest::Reconcile { operation_id } => {
-            let state = ctx.operations.0.lock().unwrap();
-            let record = state
+            let mut state = ctx.operations.0.lock().unwrap();
+            let mut record = state
                 .records
                 .iter()
                 .find(|r| r.snapshot.operation_id == operation_id)
@@ -280,7 +281,7 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
                         .map(|v| serde_json::from_value::<Record>(v).map_err(AppError::db))
                         .unwrap_or_else(|| Err(AppError::not_found("Operation receipt not found")))
                 })?;
-            let mut snapshot = record.snapshot;
+            let mut snapshot = record.snapshot.clone();
             // A receipt proves recorded outcomes, not ownership of a worker
             // in another process/session. Never replay an unowned apply.
             if !state
@@ -289,6 +290,49 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
                 .any(|r| r.snapshot.operation_id == operation_id)
             {
                 snapshot = unowned_snapshot(snapshot);
+            }
+            if verify {
+                for (index, item) in snapshot.items.iter_mut().enumerate() {
+                    if item.phase != Phase::OutcomeUnknown {
+                        continue;
+                    }
+                    let verified = if let Some(Some(update)) = record.updates.get(index) {
+                        projects::verify_captured_project_update(
+                            ctx,
+                            snapshot.project_id.as_deref().unwrap_or_default(),
+                            update,
+                        )
+                        .unwrap_or(false)
+                    } else if let Some(work) = record.installs.get(index) {
+                        installation::verify(ctx, &snapshot.destination, work).unwrap_or(false)
+                    } else {
+                        false
+                    };
+                    if verified {
+                        item.phase = Phase::Unchanged;
+                        item.message = Some("Verified the original destination matches the intended content; no write repeated".into());
+                    }
+                }
+            }
+            if verify
+                && snapshot
+                    .items
+                    .iter()
+                    .zip(&record.snapshot.items)
+                    .any(|(new, old)| {
+                        new.phase == Phase::Unchanged && old.phase == Phase::OutcomeUnknown
+                    })
+            {
+                if let Some(index) = state
+                    .records
+                    .iter()
+                    .position(|r| r.snapshot.operation_id == operation_id)
+                {
+                    record.snapshot = snapshot;
+                    save(ctx, &mut record)?;
+                    snapshot = record.snapshot.clone();
+                    state.records[index] = record;
+                }
             }
             Ok(json!(snapshot))
         }
@@ -388,11 +432,13 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
 }
 
 fn unowned_snapshot(mut snapshot: OperationSnapshot) -> OperationSnapshot {
+    snapshot.preview = None;
     for item in &mut snapshot.items {
         if !item.phase.settled() {
             item.phase = Phase::OutcomeUnknown;
-            item.message =
-                Some("No live operation owner; the recorded result needs reconciliation".into());
+            item.message = Some(
+                "Result not verified; work may still be running in its original session".into(),
+            );
         }
     }
     snapshot.settled = true;

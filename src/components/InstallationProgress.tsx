@@ -22,7 +22,7 @@ export function InstallationProgress({
 }) {
   const { t } = useTranslation();
   const { remoteHosts } = useApp();
-  const { act, install, refresh, refreshErrors } = useOperations();
+  const { act, install, refresh, refreshErrors, reconnect } = useOperations();
   const region = useRef<HTMLElement>(null);
   const counts = operationCounts(operation);
 
@@ -48,15 +48,19 @@ export function InstallationProgress({
           <p className="font-medium text-primary">{t("operations.installDestination", { host })}</p>
           <p className="text-secondary">
             {t(
-              operation.preview?.length
-                ? "operations.installPreviewReady"
-                : operation.settled && counts.review > 0
-                  ? "operations.installNeedsReview"
-                  : operation.settled
-                    ? "operations.installFinished"
-                    : "operations.installRunning",
+              operation.recovery === "checking"
+                ? "operations.connectionLost"
+                : operation.recovery === "unknown"
+                  ? "operations.phase.outcome_unknown"
+                  : operation.preview?.length
+                    ? "operations.installPreviewReady"
+                    : operation.settled && counts.review > 0
+                      ? "operations.installNeedsReview"
+                      : operation.settled
+                        ? "operations.installFinished"
+                        : "operations.installRunning",
             )}
-            {!operation.preview?.length && (
+            {!operation.preview?.length && !operation.recovery && (
               <>
                 {" "}
                 ·{" "}
@@ -67,7 +71,7 @@ export function InstallationProgress({
             )}
           </p>
         </div>
-        {!operation.settled && (
+        {!operation.settled && !operation.recovery && (
           <button
             className="app-button-secondary"
             disabled={operation.cancel_requested}
@@ -76,7 +80,7 @@ export function InstallationProgress({
             {t(operation.cancel_requested ? "operations.stopping" : "operations.installCancel")}
           </button>
         )}
-        {operation.settled && counts.failed > 0 && (
+        {operation.settled && !operation.recovery && counts.failed > 0 && (
           <button
             className="app-button-secondary"
             onClick={() =>
@@ -90,36 +94,50 @@ export function InstallationProgress({
             {t("operations.retry", { count: counts.failed })}
           </button>
         )}
-        {operation.preview?.length ? (
-          <button
-            className="app-button-secondary"
-            onClick={() => {
-              region.current?.focus();
-              onReview?.();
-            }}
-          >
-            {t("operations.reviewInstall")}
-          </button>
-        ) : (
-          operation.settled &&
-          counts.review > 0 && (
+        {!operation.recovery &&
+          (operation.preview?.length ? (
             <button
               className="app-button-secondary"
               onClick={() => {
-                const sources = operation.items
-                  .filter((i) => i.phase === "needs_review")
-                  .flatMap((i) => (i.source ? [i.source] : []));
-
-                void install(sources, operation.host_id).catch((e) =>
-                  toast.error(getErrorMessage(e, t("common.error"))),
-                );
+                region.current?.focus();
+                onReview?.();
               }}
             >
-              {t("operations.prepareAgain")}
+              {t("operations.reviewInstall")}
             </button>
-          )
+          ) : (
+            operation.settled &&
+            counts.review > 0 && (
+              <button
+                className="app-button-secondary"
+                onClick={() => {
+                  const sources = operation.items
+                    .filter((i) => i.phase === "needs_review")
+                    .flatMap((i) => (i.source ? [i.source] : []));
+
+                  void install(sources, operation.host_id).catch((e) =>
+                    toast.error(getErrorMessage(e, t("common.error"))),
+                  );
+                }}
+              >
+                {t("operations.prepareAgain")}
+              </button>
+            )
+          ))}
+        {operation.host_id !== null && (operation.recovery === "unknown" || counts.unknown > 0) && (
+          <button
+            className="app-button-secondary"
+            onClick={() => {
+              void reconnect(operation).then(() => region.current?.focus());
+            }}
+          >
+            {t("operations.reconnect")}
+          </button>
         )}
       </div>
+      {(operation.recovery === "unknown" || counts.unknown > 0) && (
+        <p className="text-[13px] text-secondary">{t("operations.unknownHelp")}</p>
+      )}
       <div className="space-y-1 text-[13px] text-secondary" role="status">
         {operation.items.map((item) => (
           <p key={item.id} className="break-words">
