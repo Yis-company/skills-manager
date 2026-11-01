@@ -1,15 +1,18 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../context/AppContext";
+import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import { invokeHost } from "../lib/hostCall";
 import { cn } from "../utils";
 import { InstructionFileTree } from "./InstructionFileTree";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { ResourceMatrix } from "./ResourceMatrix";
+import { WorkspaceHeader } from "./WorkspaceHeader";
 
 type ResourceTab = "instructions" | "mcps" | "skills";
 
-type Scope = {
+export type WorkspaceScope = {
   kind: "global" | "library" | "project";
   projectId?: string;
   agentKey?: string;
@@ -43,7 +46,7 @@ type McpInput = {
   id?: string;
 } & Omit<McpDefinition, "id" | "revision" | "updatedAt">;
 
-type McpTarget = { agentKey: string; projectId?: string };
+export type McpTarget = { agentKey: string; projectId?: string };
 
 type McpConflict = "keep" | "rename" | "replace";
 
@@ -58,7 +61,7 @@ type McpDeployOperation = {
 };
 
 /** What `mcps_request` accepts, for the actions this workspace sends. */
-type McpRequest =
+export type McpRequest =
   | { action: "apply"; previewId: string }
   | { action: "capabilities" | "list" }
   | { action: "catalog"; query: string; cursor?: string }
@@ -71,7 +74,7 @@ type McpRequest =
   | { action: "save"; definition: McpInput; expectedRevision?: string }
   | { action: "undeploy"; target: McpTarget; definitionId: string; serverName: string };
 
-type InstructionTarget = {
+export type InstructionTarget = {
   agent_key: string;
   project_id?: string;
   worktree?: string;
@@ -79,14 +82,14 @@ type InstructionTarget = {
 };
 
 /** What `instructions_request` accepts, for the actions this workspace sends. */
-type InstructionsRequest =
+export type InstructionsRequest =
   | {
       action: "apply";
       preview_id: string;
       resolutions: Record<string, "keep_local" | "take_library">;
     }
+  | { action: "deployments" | "list" | "recover" }
   | { action: "get"; id: string }
-  | { action: "list" | "recover" }
   | { action: "preview"; target: InstructionTarget; instruction_id: string }
   | { action: "read"; target: InstructionTarget; path: string }
   | { action: "remove"; id: string; detach: boolean }
@@ -99,6 +102,7 @@ type InstructionsRequest =
       expected_revision?: string;
     }
   | { action: "scan"; target: InstructionTarget; include_dirs?: string[] }
+  | { action: "undeploy"; deployment_id: string }
   | {
       action: "write";
       target: InstructionTarget;
@@ -145,7 +149,7 @@ export function ResourceWorkspace({
   skills,
   allowResources = true,
 }: {
-  scope: Scope;
+  scope: WorkspaceScope;
   skills: ReactNode;
   allowResources?: boolean;
 }) {
@@ -172,10 +176,12 @@ function ResourceWorkspaceBody({
 }: {
   hostId: null | string;
   tools: ReturnType<typeof useApp>["tools"];
-  scope: Scope;
+  scope: WorkspaceScope;
   skills: ReactNode;
   allowResources: boolean;
 }) {
+  const workspaceChanges = useWorkspaceChanges();
+  const [editorOpen, setEditorOpen] = useState(false);
   const search = useSearch({ strict: false });
   const navigate = useNavigate();
 
@@ -227,11 +233,36 @@ function ResourceWorkspaceBody({
   const tabs: ResourceTab[] = allowResources ? ["skills", "instructions", "mcps"] : ["skills"];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border-faint pb-2">
+    <div className="app-page gap-4">
+      <WorkspaceHeader scope={scope} />
+      <div
+        role="tablist"
+        aria-label="Resource type"
+        className="flex flex-wrap items-center gap-2 border-b border-border-faint pb-2"
+      >
         {tabs.map((key) => (
           <button
             key={key}
+            role="tab"
+            aria-label={key === "mcps" ? "MCPs" : key[0].toUpperCase() + key.slice(1)}
+            aria-selected={tab === key}
+            tabIndex={tab === key ? 0 : -1}
+            onKeyDown={(event) => {
+              if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+              event.preventDefault();
+              const index = tabs.indexOf(key);
+
+              const next =
+                event.key === "Home"
+                  ? tabs[0]
+                  : event.key === "End"
+                    ? tabs[tabs.length - 1]
+                    : tabs[
+                        (index + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length
+                      ];
+
+              setTab(next);
+            }}
             type="button"
             onClick={() => setTab(key)}
             className={cn(
@@ -249,14 +280,18 @@ function ResourceWorkspaceBody({
             )}
           </button>
         ))}
-        {tab !== "skills" && !scopedAgent && (
+        {tab !== "skills" && !scopedAgent && editorOpen && (
           <label className="ml-auto flex items-center gap-2 text-[12px] text-muted">
             Agent
             <select
               aria-label="Agent"
               className="app-input py-1"
               value={agentKey || supportedTools[0]?.key || ""}
-              onChange={(event) => setAgentKey(event.target.value)}
+              onChange={async (event) => {
+                const value = event.target.value;
+
+                if (await workspaceChanges.confirmLeave()) setAgentKey(value);
+              }}
             >
               {supportedTools.map((tool) => (
                 <option key={tool.key} value={tool.key}>
@@ -273,7 +308,11 @@ function ResourceWorkspaceBody({
               aria-label="Target scope"
               className="app-input py-1"
               value={targetProjectId}
-              onChange={(event) => setTargetProjectId(event.target.value)}
+              onChange={async (event) => {
+                const value = event.target.value;
+
+                if (await workspaceChanges.confirmLeave()) setTargetProjectId(value);
+              }}
             >
               <option value="">Global workspace</option>
               {projects
@@ -291,22 +330,38 @@ function ResourceWorkspaceBody({
         skills
       ) : (
         <>
-          {tab === "mcps" ? (
-            <McpLibrary
-              key={`${hostId ?? "local"}:${scope.kind}:${target.projectId ?? "global"}:${target.agentKey}`}
-              hostId={hostId}
-              target={target}
-              unavailable={unavailable}
-            />
-          ) : (
-            <InstructionsLibrary
-              key={`${hostId ?? "local"}:${scope.kind}:${target.projectId ?? "global"}:${target.agentKey}`}
-              hostId={hostId}
-              scope={scope}
-              target={target}
-              unavailable={unavailable}
-            />
-          )}
+          <ResourceMatrix
+            key={`${hostId ?? "local"}:${tab}:${target.projectId ?? "global"}:${scope.agentKey ?? "all"}`}
+            kind={tab}
+            onEditingChange={setEditorOpen}
+            scope={scope}
+            projectId={target.projectId}
+            agents={
+              scopedAgent
+                ? supportedTools.filter((tool) => tool.key === scopedAgent)
+                : supportedTools
+            }
+            editor={(initialId) =>
+              tab === "mcps" ? (
+                <McpLibrary
+                  hostId={hostId}
+                  target={target}
+                  unavailable={unavailable}
+                  initialId={initialId ?? ""}
+                />
+              ) : (
+                <InstructionsLibrary
+                  hostId={hostId}
+                  scope={scope}
+                  create={initialId === null}
+                  target={target}
+                  unavailable={unavailable}
+                  initialId={initialId ?? ""}
+                />
+              )
+            }
+          />
+
           {scope.kind === "library" && <ResourceBackupConflicts hostId={hostId} kind={tab} />}
         </>
       )}
@@ -412,10 +467,13 @@ function ResourceBackupConflicts({
             ))}
           </div>
           <div className="mt-2 flex gap-2">
-            <button className="app-button" onClick={() => void resolve(item.id, "local")}>
+            <button className="app-button-secondary" onClick={() => void resolve(item.id, "local")}>
               Keep {item.this_host}'s version
             </button>
-            <button className="app-button" onClick={() => void resolve(item.id, "remote")}>
+            <button
+              className="app-button-secondary"
+              onClick={() => void resolve(item.id, "remote")}
+            >
               Keep {item.other_host}'s version
             </button>
           </div>
@@ -431,10 +489,12 @@ function ResourceBackupConflicts({
 }
 
 function McpLibrary({
+  initialId,
   hostId,
   target,
   unavailable,
 }: {
+  initialId: string;
   hostId: null | string;
   target: McpTarget;
   unavailable: boolean;
@@ -1023,6 +1083,13 @@ function McpLibrary({
     }
   };
 
+  const initialOpened = useRef(false);
+  useEffect(() => {
+    if (initialOpened.current || !initialId || !items.some((item) => item.id === initialId)) return;
+    initialOpened.current = true;
+    edit(items.find((item) => item.id === initialId)!);
+  }, [initialId, items]);
+
   return (
     <section className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
       <div className="app-panel overflow-hidden">
@@ -1229,7 +1296,7 @@ function McpLibrary({
           {selected && (
             <>
               <button
-                className="app-button"
+                className="app-button-secondary"
                 disabled={busy || unavailable || !deploymentSupported}
                 onClick={() => void createPreview()}
               >
@@ -1274,7 +1341,7 @@ function McpLibrary({
           <div key={recovery.id} className="rounded-lg border border-border-faint p-3 text-[12px]">
             <p>{recovery.message}</p>
             <button
-              className="app-button mt-2"
+              className="app-button-secondary mt-2"
               disabled={busy}
               onClick={() => void recoverMcp(recovery.id)}
             >
@@ -1346,7 +1413,7 @@ function McpLibrary({
             >
               Apply reviewed changes
             </button>
-            <button className="app-button ml-2 mt-3" onClick={() => setPreview(null)}>
+            <button className="app-button-secondary ml-2 mt-3" onClick={() => setPreview(null)}>
               Cancel
             </button>
           </div>
@@ -1409,7 +1476,7 @@ function McpLibrary({
                 onChange={(e) => setCatalogQuery(e.target.value)}
               />
               <button
-                className="app-button"
+                className="app-button-secondary"
                 disabled={busy}
                 onClick={() => {
                   setCatalog([]);
@@ -1442,7 +1509,7 @@ function McpLibrary({
             ))}
             {catalogCursor && (
               <button
-                className="app-button mt-2"
+                className="app-button-secondary mt-2"
                 disabled={busy}
                 onClick={() => void browseCatalog(catalogCursor)}
               >
@@ -1489,13 +1556,17 @@ function McpLibrary({
 }
 
 function InstructionsLibrary({
+  initialId,
+  create,
   hostId,
   scope,
   target,
   unavailable,
 }: {
+  initialId: string;
+  create: boolean;
   hostId: null | string;
-  scope: Scope;
+  scope: WorkspaceScope;
   target: McpTarget;
   unavailable: boolean;
 }) {
@@ -1581,7 +1652,7 @@ function InstructionsLibrary({
   const [busy, setBusy] = useState(false);
 
   const [libraryTab, setLibraryTab] = useState<"files" | "library">(
-    scope.kind === "library" ? "library" : "files",
+    create || initialId || scope.kind === "library" ? "library" : "files",
   );
 
   const [worktrees, setWorktrees] = useState<
@@ -1936,6 +2007,28 @@ function InstructionsLibrary({
     ["cursor", "Cursor project instructions are managed as files."],
   ]);
 
+  useEffect(() => {
+    if (!initialId) return;
+    let current = true;
+    void invokeHost<{
+      item: { name: string; description?: string; files: Record<string, string> };
+    }>(hostId, "instructions_request", { request: { action: "get", id: initialId } })
+      .then((result) => {
+        if (!current) return;
+        setSelected(initialId);
+        setName(result.item.name);
+        setDescription(result.item.description ?? "");
+        setFiles(result.item.files);
+      })
+      .catch((error) => {
+        if (current) setNotice(String(error));
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [hostId, initialId]);
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1945,7 +2038,11 @@ function InstructionsLibrary({
             Save reusable instruction bundles, review changes, or edit files in this workspace.
           </p>
         </div>
-        <button className="app-button" onClick={() => void scan()} disabled={busy || unavailable}>
+        <button
+          className="app-button-secondary"
+          onClick={() => void scan()}
+          disabled={busy || unavailable}
+        >
           Refresh workspace
         </button>
       </div>
@@ -1967,7 +2064,7 @@ function InstructionsLibrary({
       )}
       <div className="space-y-2 text-[12px] text-muted">
         <p>Interrupted changes can be recovered while preserving newer edits.</p>
-        <button className="app-button" disabled={busy} onClick={() => void recover()}>
+        <button className="app-button-secondary" disabled={busy} onClick={() => void recover()}>
           Recover interrupted changes
         </button>
         {recoveries.map((item) => (
@@ -2185,7 +2282,7 @@ function InstructionsLibrary({
                 onChange={(e) => setPath(e.target.value)}
               />
               <button
-                className="app-button"
+                className="app-button-secondary"
                 onClick={() => {
                   if (path.trim() && !files[path.trim()])
                     setFiles((old) => ({ ...old, [path.trim()]: "" }));
@@ -2205,7 +2302,7 @@ function InstructionsLibrary({
               {selected && (
                 <>
                   <button
-                    className="app-button"
+                    className="app-button-secondary"
                     disabled={busy || !!scopeRestriction || !!worktree}
                     title={
                       worktree
@@ -2257,7 +2354,7 @@ function InstructionsLibrary({
                   Save file
                 </button>
                 <button
-                  className="app-button"
+                  className="app-button-secondary"
                   disabled={busy || !path || !loadedRevision}
                   onClick={() => {
                     setSelected("");
@@ -2416,7 +2513,7 @@ function InstructionsLibrary({
           >
             Apply reviewed changes
           </button>
-          <button className="app-button ml-2" onClick={() => setPreview(null)}>
+          <button className="app-button-secondary ml-2" onClick={() => setPreview(null)}>
             Cancel
           </button>
         </div>
@@ -2431,7 +2528,7 @@ function LibraryRemoveButton({ busy, onRemove }: { busy: boolean; onRemove: () =
 
   if (!confirming)
     return (
-      <button className="app-button" disabled={busy} onClick={() => setConfirming(true)}>
+      <button className="app-button-secondary" disabled={busy} onClick={() => setConfirming(true)}>
         Remove from library
       </button>
     );
@@ -2443,10 +2540,18 @@ function LibraryRemoveButton({ busy, onRemove }: { busy: boolean; onRemove: () =
         configuration will stay in place.
       </p>
       <div className="mt-2 flex gap-2">
-        <button className="app-button text-danger" disabled={busy} onClick={() => void onRemove()}>
+        <button
+          className="app-button-secondary text-danger"
+          disabled={busy}
+          onClick={() => void onRemove()}
+        >
           Remove and detach
         </button>
-        <button className="app-button" disabled={busy} onClick={() => setConfirming(false)}>
+        <button
+          className="app-button-secondary"
+          disabled={busy}
+          onClick={() => setConfirming(false)}
+        >
           Cancel
         </button>
       </div>
@@ -2534,7 +2639,11 @@ function InstructionDeployments({
             {names[item.instruction_id] ?? item.instruction_id} ·{" "}
             {item.target.relative_dir || "Scope root"} · {item.files.length} file(s)
           </span>
-          <button className="app-button" disabled={busy} onClick={() => void undeploy(item.id)}>
+          <button
+            className="app-button-secondary"
+            disabled={busy}
+            onClick={() => void undeploy(item.id)}
+          >
             Remove unchanged files and detach
           </button>
         </div>

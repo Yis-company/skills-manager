@@ -28,6 +28,7 @@ async function topOf(page: Page, name: string) {
 test.beforeEach(async ({ page, backend }) => {
   await backend.seed(seed);
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
 });
 
 test("shows the seeded skills, sorted by name", async ({ page }) => {

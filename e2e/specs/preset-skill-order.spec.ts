@@ -32,6 +32,7 @@ async function drag(page: Page, name: string, onto: string) {
 test.beforeEach(async ({ page, backend }) => {
   await backend.seed(seed);
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(skillNames(page)).toHaveText(["alpha", "beta", "gamma"]);
 });
 

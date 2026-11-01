@@ -24,6 +24,7 @@
     --color-accent: #047857;
     --color-accent-light: #047857;
     --color-accent-dark: #047857;
+    --color-action-hover: #065f46;
     --color-accent-bg: rgba(5, 150, 105, 0.08);
     --color-accent-border: rgba(5, 150, 105, 0.25);
     --color-danger: #dc2626;
@@ -49,7 +50,8 @@
     --color-text-faint: #8e8e96;
     --color-accent: #10b981;
     --color-accent-light: #34d399;
-    --color-accent-dark: #059669;
+    --color-accent-dark: #047857;
+    --color-action-hover: #065f46;
     --color-accent-bg: rgba(16, 185, 129, 0.08);
     --color-accent-border: rgba(16, 185, 129, 0.25);
     --color-danger: #ef4444;
@@ -134,7 +136,7 @@
   }
 
   .app-toolbar-button-primary {
-    @apply border border-accent-border bg-accent-dark px-3 text-white hover:bg-accent;
+    @apply border border-accent-border bg-accent-dark px-3 text-white hover:bg-[var(--color-action-hover)];
   }
 
   .app-input {
@@ -154,7 +156,7 @@
   }
 
   .app-button-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-accent-border bg-accent-dark px-4 py-2.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-accent-border bg-accent-dark px-4 py-2.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-[var(--color-action-hover)] disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .app-button-secondary {
@@ -209,4 +211,95 @@ select:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 3px;
+}
+
+.workspace-matrix-scroll {
+  overflow-x: auto;
+  isolation: isolate;
+  border-block: 1px solid var(--color-border-subtle);
+}
+.workspace-matrix {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  text-align: left;
+}
+.workspace-matrix th,
+.workspace-matrix td {
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.workspace-matrix thead th {
+  background: var(--color-bg-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+.workspace-matrix th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 230px;
+  overflow-wrap: anywhere;
+  background: var(--color-bg);
+  width: 100%;
+}
+.workspace-matrix thead th:first-child {
+  background: var(--color-bg-secondary);
+}
+.workspace-matrix td,
+.workspace-matrix th:not(:first-child) {
+  text-align: center;
+  min-width: 90px;
+  max-width: 130px;
+}
+.workspace-matrix tr:last-child > * {
+  border-bottom: 0;
+}
+.workspace-matrix-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+.workspace-matrix-cell:hover {
+  background: var(--color-surface-hover);
+}
+.workspace-matrix-cell-present {
+  background: var(--color-accent-bg);
+  color: var(--color-accent-light);
+  border-color: transparent;
+}
+.workspace-matrix-cell-staged {
+  border: 2px dashed var(--color-accent-light);
+}
+.workspace-matrix-cell:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.workspace-change-tray {
+  position: fixed;
+  z-index: 60;
+  bottom: 16px;
+  left: 240px;
+  right: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-accent-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: 0 6px 24px #0002;
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+body:has(.workspace-change-tray) .app-page {
+  padding-bottom: 120px;
 }

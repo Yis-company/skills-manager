@@ -1,13 +1,13 @@
-import { Check, Loader2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { useApp } from "../context/AppContext";
+import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import { getErrorMessage } from "../lib/error";
-import { getPresetIconOption } from "../lib/presetIcons";
 import { computePresetStatus, type PresetStatusMode } from "../lib/presetStatus";
 import type { ManagedSkill, Preset } from "../lib/tauri";
-import { cn } from "../utils";
+import { Modal } from "./Modal";
 
 export interface PresetBarProps {
   presets: Preset[];
@@ -24,6 +24,7 @@ export interface PresetBarProps {
    *  instead of adding its skills. */
   onSwitch?: (preset: Preset) => Promise<void>;
   activePresetId?: null | string;
+  projectName?: string;
 }
 
 export function PresetBar({
@@ -38,8 +39,18 @@ export function PresetBar({
   statusMode = "agent-pair",
   onSwitch,
   activePresetId,
+  projectName,
 }: PresetBarProps) {
   const { t } = useTranslation();
+  const workspaceChanges = useWorkspaceChanges();
+  const { activeHost } = useApp();
+  const [choosing, setChoosing] = useState(false);
+  const [chosen, setChosen] = useState("");
+
+  const [projectReview, setProjectReview] = useState<{ preset: Preset; remove: boolean } | null>(
+    null,
+  );
+
   const [loadingKey, setLoadingKey] = useState<null | string>(null);
 
   const statuses = useMemo(() => {
@@ -173,74 +184,142 @@ export function PresetBar({
   );
 
   if (visiblePresets.length === 0) return null;
-
   const busy = loadingKey !== null;
+  const current = presets.find((preset) => preset.id === activePresetId);
+  const selected = visiblePresets.find((preset) => preset.id === chosen) ?? visiblePresets[0];
+
+  const affected = projectReview
+    ? managedSkills
+        .filter((skill) => skill.preset_ids.includes(projectReview.preset.id))
+        .flatMap((skill) =>
+          agentKeys
+            .filter((key) =>
+              projectReview.remove ? existsInWorkspace(skill, key) : !existsInWorkspace(skill, key),
+            )
+            .map((key) => ({ skill, key })),
+        )
+    : [];
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <span className="shrink-0 text-[12px] text-muted">
-        {t(onSwitch ? "presetActions.sharedScope" : "presetActions.projectScope")}
-      </span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-        {visiblePresets.map((preset) => {
-          const coverage = statuses.get(preset.id)!;
-          // Switch mode: exactly one preset is active, whatever is on the agents.
-          const switchStatus = preset.id === activePresetId ? "active" : "inactive";
-          const s = onSwitch ? { ...coverage, status: switchStatus } : coverage;
-          const presetIcon = getPresetIconOption(preset);
-          const Icon = presetIcon.icon;
-          const isLoading = loadingKey?.startsWith(preset.id) ?? false;
-
-          return (
-            <button
-              key={preset.id}
-              onClick={() => {
-                if (busy) return;
-
-                if (onSwitch) {
-                  if (preset.id === activePresetId) return;
-                  setLoadingKey(`${preset.id}-switch`);
-                  onSwitch(preset)
-                    .catch((error) => toast.error(getErrorMessage(error, t("common.error"))))
-                    .finally(() => setLoadingKey(null));
-                } else if (s.status === "active") handleDeactivate(preset);
-                else handleActivate(preset);
-              }}
-              disabled={busy}
-              aria-label={t(
-                onSwitch
-                  ? "presetActions.switchNamed"
-                  : s.status === "active"
-                    ? "presetActions.removeProjectNamed"
-                    : "presetActions.addProjectNamed",
-                { name: preset.name },
-              )}
-              title={preset.description || undefined}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-0.5 text-[12px] font-medium transition-colors disabled:opacity-50",
-                s.status === "active"
-                  ? `${presetIcon.activeClass} ${presetIcon.colorClass}`
-                  : s.status === "partial"
-                    ? "border-amber-400/50 bg-amber-500/8 text-amber-700 dark:text-amber-400 hover:bg-amber-500/12"
-                    : "border-border-subtle text-faint hover:border-border hover:text-muted",
-              )}
-            >
-              {isLoading ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Icon className="h-3 w-3" />
-              )}
-              <span className="max-w-[140px] truncate">{preset.name}</span>
-              {s.status === "active" && <Check className="h-3 w-3 shrink-0" />}
-              {s.status === "partial" && (
-                <span className="rounded-full bg-amber-500/20 px-1.5 py-px text-[10px] font-semibold">
-                  {s.installed}/{s.total}
-                </span>
-              )}
-            </button>
-          );
-        })}
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-bg-secondary p-3">
+      <div className="text-[13px]">
+        <p className="font-medium">
+          {onSwitch
+            ? t("workspace.sharedActive", { name: current?.name ?? t("common.none") })
+            : t("workspace.projectDestination", { name: projectName })}
+        </p>
+        <p className="mt-1 text-[12px] text-muted">
+          {t(onSwitch ? "presetActions.firstSwitchMessage" : "workspace.projectPresetScope")}
+        </p>
       </div>
+      <button
+        className="app-button-secondary"
+        disabled={busy}
+        onClick={async () => {
+          if (await workspaceChanges.confirmLeave()) {
+            setChosen(current?.id ?? visiblePresets[0].id);
+            setChoosing(true);
+          }
+        }}
+      >
+        {t(onSwitch ? "workspace.switchShared" : "workspace.addPresetProject")}
+      </button>
+      <Modal
+        open={choosing}
+        title={t(onSwitch ? "workspace.switchShared" : "workspace.addPresetProject")}
+        onClose={() => setChoosing(false)}
+      >
+        <label className="block text-[13px]">
+          {t("workspace.choosePreset")}
+          <select
+            aria-label={t("workspace.choosePreset")}
+            className="app-input mt-2 w-full"
+            value={selected.id}
+            onChange={(event) => setChosen(event.target.value)}
+          >
+            {visiblePresets.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="my-4 text-[13px] text-muted">{selected.description}</p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button className="app-button-secondary" onClick={() => setChoosing(false)}>
+            {t("common.cancel")}
+          </button>
+          {!onSwitch && (
+            <button
+              className="app-button-secondary text-danger"
+              onClick={() => {
+                setChoosing(false);
+                setProjectReview({ preset: selected, remove: true });
+              }}
+            >
+              {t("presetActions.removeProjectNamed", { name: selected.name })}
+            </button>
+          )}
+          <button
+            className="app-button-primary"
+            disabled={Boolean(onSwitch && selected.id === activePresetId)}
+            onClick={() => {
+              setChoosing(false);
+
+              if (onSwitch) {
+                setLoadingKey(selected.id);
+                void onSwitch(selected)
+                  .catch((error) => toast.error(getErrorMessage(error, t("common.error"))))
+                  .finally(() => setLoadingKey(null));
+              } else setProjectReview({ preset: selected, remove: false });
+            }}
+          >
+            {t("workspace.reviewPreset")}
+          </button>
+        </div>
+      </Modal>
+      <Modal
+        open={projectReview !== null}
+        title={t("workspace.projectPresetReview")}
+        locked={busy}
+        onClose={() => setProjectReview(null)}
+      >
+        <p className="mb-3 text-[13px]">
+          {activeHost?.name ?? t("hostSwitcher.local")} · {projectName} ·{" "}
+          {projectReview?.preset.name}
+        </p>
+        <p className="text-[13px] text-muted">{t("workspace.projectPresetScope")}</p>
+        <ul className="my-4 max-h-60 overflow-auto text-[13px]">
+          {affected.map(({ skill, key }) => (
+            <li className="py-1" key={`${skill.id}:${key}`}>
+              {skill.name} · {key} ·{" "}
+              {t(projectReview?.remove ? "workspace.removeFromAgent" : "workspace.addToAgent")}
+            </li>
+          ))}
+        </ul>
+        <div className="flex justify-end gap-2">
+          <button
+            className="app-button-secondary"
+            disabled={busy}
+            onClick={() => setProjectReview(null)}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            className="app-button-primary"
+            disabled={busy || !affected.length}
+            onClick={async () => {
+              if (!projectReview) return;
+
+              if (projectReview.remove) await handleDeactivate(projectReview.preset);
+              else await handleActivate(projectReview.preset);
+              setProjectReview(null);
+            }}
+          >
+            {busy ? t("common.loading") : t("workspace.applyReviewed")}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

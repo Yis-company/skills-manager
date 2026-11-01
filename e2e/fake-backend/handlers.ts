@@ -19,6 +19,7 @@ import {
   type McpOperation,
   type McpServerDefinition,
   type McpTarget,
+  projectSkill,
   type RemoteSeed,
   type State,
 } from "./state";
@@ -55,6 +56,7 @@ type InstructionsRequest =
       expected_revision?: string;
     }
   | { action: "scan"; target: InstructionTarget; include_dirs?: string[] }
+  | { action: "undeploy"; deployment_id: string }
   | {
       action: "write";
       target: InstructionTarget;
@@ -299,6 +301,7 @@ export const handlers = {
       tools: remoteState.tools,
       settings: remoteState.settings,
       instructionBundles: remoteState.instructionBundles,
+      instructionDeployments: remoteState.instructionDeployments,
       instructionFiles: remoteState.instructionFiles,
       instructionWorktrees: remoteState.instructionWorktrees,
       mcpDefinitions: remoteState.mcpDefinitions,
@@ -434,6 +437,8 @@ export const handlers = {
       state.resourcePreviews[preview_id] = {
         kind: "instructions",
         payload: changes,
+        instruction_id: item.id,
+        target: request.target,
       };
 
       return {
@@ -465,6 +470,23 @@ export const handlers = {
         applied.push(change.path);
       }
 
+      if (preview.target && preview.instruction_id) {
+        const target = preview.target;
+        const id = `${preview.instruction_id}:${target.agent_key}:${target.project_id ?? "global"}:${target.relative_dir ?? ""}`;
+
+        const deployment = {
+          id,
+          instruction_id: preview.instruction_id,
+          target,
+          files: changes.map((change) => ({ path: change.path, content: change.content })),
+        };
+
+        const index = state.instructionDeployments.findIndex((item) => item.id === id);
+
+        if (index >= 0) state.instructionDeployments[index] = deployment;
+        else state.instructionDeployments.push(deployment);
+      }
+
       delete state.resourcePreviews[String(request.preview_id)];
 
       return {
@@ -475,7 +497,30 @@ export const handlers = {
       };
     }
 
-    if (request.action === "deployments" || request.action === "recover") return { items: [] };
+    if (request.action === "deployments") return { items: state.instructionDeployments };
+
+    if (request.action === "undeploy") {
+      const deployment = state.instructionDeployments.find(
+        (item) => item.id === request.deployment_id,
+      );
+
+      const removed: string[] = [];
+
+      for (const file of deployment?.files ?? []) {
+        if (state.instructionFiles[file.path]?.content === file.content) {
+          delete state.instructionFiles[file.path];
+          removed.push(file.path);
+        }
+      }
+
+      state.instructionDeployments = state.instructionDeployments.filter(
+        (item) => item.id !== request.deployment_id,
+      );
+
+      return { removed };
+    }
+
+    if (request.action === "recover") return { items: [] };
     throw new Error(`unknown instructions action: ${String(action)}`);
   },
   mcps_request: ({ request }: { request: McpsRequest }, state) => {
@@ -673,6 +718,35 @@ export const handlers = {
   get_tool_status: (_args, state) => state.tools,
   get_global_local_skills: ({ agent }: { agent: string }, state) =>
     state.globalLocalSkills[agent] ?? [],
+  sync_skill_to_tool: ({ skillId, tool }: { skillId: string; tool: string }, state) => {
+    const skill = state.skills.find((item) => item.id === skillId);
+
+    if (!skill) throw new Error("skill missing");
+
+    if (!skill.targets.some((target) => target.tool === tool))
+      skill.targets.push({
+        id: `${skillId}-${tool}`,
+        skill_id: skillId,
+        tool,
+        target_path: `/home/e2e/.${tool}/skills/${skill.name}`,
+        mode: "link",
+        status: "ok",
+        synced_at: 1,
+      });
+
+    if (!(state.globalLocalSkills[tool] ?? []).some((copy) => copy.center_skill_id === skillId)) {
+      state.globalLocalSkills[tool] = [
+        ...(state.globalLocalSkills[tool] ?? []),
+        projectSkill(skill.name, tool, {
+          center_skill_id: skillId,
+          in_center: true,
+          sync_status: "in_sync",
+        }),
+      ];
+    }
+
+    return null;
+  },
   unsync_skill_from_tool: ({ skillId, tool }: { skillId: string; tool: string }, state) => {
     const skill = state.skills.find((item) => item.id === skillId);
 
@@ -888,6 +962,37 @@ export const handlers = {
   },
   preview_project_retired_links: () => [],
   apply_project_retired_links: () => [],
+  set_project_skill_agents: (
+    {
+      projectId,
+      skillRelativePath,
+      agentKeys,
+    }: { projectId: string; skillRelativePath: string; agentKeys: string[] },
+    state,
+  ) => {
+    const copies = state.projectSkills[projectId] ?? [];
+    const existing = copies.filter((copy) => copy.relative_path === skillRelativePath);
+    const source = existing[0];
+
+    if (!source) throw new Error("project skill missing");
+    const added = agentKeys.filter((agent) => !existing.some((copy) => copy.agent === agent));
+
+    const removed = existing
+      .filter((copy) => !agentKeys.includes(copy.agent))
+      .map((copy) => copy.agent);
+
+    state.projectSkills[projectId] = [
+      ...copies.filter((copy) => copy.relative_path !== skillRelativePath),
+      ...agentKeys.map((agent) => ({
+        ...source,
+        agent,
+        agent_display_name: state.tools.find((tool) => tool.key === agent)?.display_name ?? agent,
+        agents_overridden: true,
+      })),
+    ];
+
+    return { added, removed, failed: [] };
+  },
   get_project_agent_targets: ({ projectId }: { projectId: string }, state) =>
     state.projectAgentTargets[projectId] ?? [],
   get_project_skill_document: ({ skillRelativePath }: ProjectSkillArgs) => ({

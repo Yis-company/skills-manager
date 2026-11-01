@@ -44,6 +44,7 @@ async function topOf(page: Page, name: string) {
 test.beforeEach(async ({ page, backend }) => {
   await backend.seed(seed);
   await page.goto("/project/p1");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(page.getByRole("heading", { name: "webapp", level: 1 })).toBeVisible();
   await expect(page.getByRole("heading", { level: 3 })).toHaveText([
     "deploy",

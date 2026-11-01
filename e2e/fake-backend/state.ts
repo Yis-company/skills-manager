@@ -99,6 +99,12 @@ export interface Seed {
     updated_at: string;
     files: Record<string, string>;
   }[];
+  instructionDeployments?: {
+    id: string;
+    instruction_id: string;
+    target: { agent_key: string; project_id?: string; relative_dir?: string };
+    files: { path: string; content?: string }[];
+  }[];
   instructionFiles?: Record<
     string,
     {
@@ -126,7 +132,12 @@ export interface Seed {
   >;
   resourcePreviews?: Record<
     string,
-    | { kind: "instructions"; payload: InstructionChange[] }
+    | {
+        kind: "instructions";
+        payload: InstructionChange[];
+        instruction_id?: string;
+        target?: { agent_key: string; project_id?: string; relative_dir?: string };
+      }
     | { kind: "mcps"; payload: { target: McpTarget; operations: McpOperation[] } }
   >;
 }
@@ -213,6 +224,7 @@ export function createState({ settings, ...seed }: Seed): State {
     rejectBatchDeleteAfterPartialWrite: false,
     deleteFailedIds: [],
     instructionBundles: [],
+    instructionDeployments: [],
     instructionFiles: {},
     instructionWorktrees: [],
     mcpDefinitions: [],

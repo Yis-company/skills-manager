@@ -30,6 +30,7 @@ import {
   Search,
   Share2,
   SquareCheck,
+  Table2,
   Tag,
   Trash2,
   Wrench,
@@ -54,9 +55,11 @@ import { LibrarySkillRow } from "../components/LibrarySkillRow";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import { ResourceWorkspace } from "../components/ResourceWorkspace";
 import { SkillDetailPanel } from "../components/SkillDetailPanel";
+import { SkillMatrix } from "../components/SkillMatrix";
 import { TagContextMenu, type TagMenuState } from "../components/TagContextMenu";
 import { TagRenameDialog } from "../components/TagRenameDialog";
 import { useApp } from "../context/AppContext";
+import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import { useGitToolbarStatus } from "../hooks/useGitToolbarStatus";
 import {
   isLibraryGroupBy,
@@ -110,10 +113,12 @@ function getToolDisplayName(toolKey: string, tools: ToolInfo[]) {
 }
 
 export function MySkills() {
+  const workspaceChanges = useWorkspaceChanges();
   const { t } = useTranslation();
   const navigate = useNavigate();
 
   const {
+    setViewedPresetId,
     viewedPreset,
     activePreset,
     presets,
@@ -131,6 +136,16 @@ export function MySkills() {
     activeHostId,
   } = useApp();
 
+  useEffect(() => {
+    const refresh = () => {
+      void refreshManagedSkills();
+      void refreshTools();
+    };
+
+    window.addEventListener("workspace-targets-changed", refresh);
+
+    return () => window.removeEventListener("workspace-targets-changed", refresh);
+  }, [refreshManagedSkills, refreshTools]);
   // Async delete handlers check the detail that is open when they finish.
   const detailSkillIdRef = useRef(detailSkillId);
   useEffect(() => {
@@ -159,7 +174,7 @@ export function MySkills() {
   // Backup is this computer's (it never follows a host), so its status and
   // conflicts don't describe a remote library.
   const onRemote = activeHost !== null;
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list" | "matrix">("matrix");
   const [filterMode, setFilterMode] = useState<"all" | "available" | "enabled">("all");
   const [sourceFilters, setSourceFilters] = useState<Set<string>>(new Set());
   const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
@@ -407,7 +422,7 @@ export function MySkills() {
 
   // Reordering only makes sense in the flat preset view: grouped cards can
   // show one skill several times, and there is no single position to save.
-  const canDrag = !!viewedPreset && groupBy === "none";
+  const canDrag = viewMode !== "matrix" && !!viewedPreset && groupBy === "none";
 
   useEffect(() => {
     let cancelled = false;
@@ -1192,23 +1207,70 @@ export function MySkills() {
     },
   ];
 
+  const skillItemProps = (skill: ManagedSkill): LibrarySkillItemProps => {
+    return {
+      skill,
+      hideCreator: groupBy === "creator",
+      displayName: displayNames.get(skill.id) || skill.name,
+      enabledInPreset: viewedPreset ? skill.preset_ids.includes(viewedPreset.id) : false,
+      hasViewedPreset: !!viewedPreset,
+      viewedPresetName,
+      tools,
+      allTags,
+      isMultiSelect,
+      selected: selectedIds.has(skill.id),
+      canDrag,
+      deleting: deletingIds.has(skill.id),
+      hasConflict: conflictIds.has(skill.id),
+      checking: checkingSkillId === skill.id,
+      updating: updatingSkillId === skill.id,
+      menuOpen: menuSkillId === skill.id,
+      pendingTool: togglingTarget?.skillId === skill.id ? togglingTarget.tool : null,
+      onToggleSelect: toggleSelect,
+      onOpenDetail: openSkillDetailById,
+      onOpenBackup: () => navigate({ to: "/backup" }),
+      onMenuSkillChange: setMenuSkillId,
+      onCheckUpdate: handleCheckUpdate,
+      onRefresh: handleRefreshSkill,
+      onRelinkSource: handleRelinkSource,
+      onDetachSource: handleDetachSource,
+      onDelete: setSkillToDelete,
+      onTogglePreset: (s) => {
+        if (viewedPreset) void handleTogglePreset(s, viewedPreset.id);
+      },
+      onToggleTarget: handleToggleSkillTarget,
+    };
+  };
+
   return (
     <ResourceWorkspace
       scope={{ kind: "library" }}
       skills={
-        <div className="app-page">
-          <div className="app-page-header flex items-center justify-between gap-3 pb-1 pr-2">
-            <h1 className="app-page-title flex items-center gap-2">
-              {t("mySkills.title")}
-              <span className="app-badge">{skills.length}</span>
-            </h1>
-          </div>
-
+        <div className="app-page gap-4">
           <p
             className="flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-secondary"
             aria-live="polite"
           >
-            <span>
+            <label className="flex items-center gap-2">
+              {t("workspace.browsePreset")}
+              <select
+                className="app-input"
+                aria-label={t("workspace.browsePreset")}
+                value={viewedPreset?.id ?? ""}
+                onChange={async (event) => {
+                  const value = event.target.value;
+
+                  if (await workspaceChanges.confirmLeave()) setViewedPresetId(value);
+                }}
+              >
+                {presets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="sr-only">
               {t("mySkills.viewingPreset", { name: viewedPreset?.name ?? t("common.none") })}
             </span>
             <span>
@@ -1292,6 +1354,18 @@ export function MySkills() {
                 <div className="app-segmented flex-wrap">
                   {" "}
                   <button
+                    type="button"
+                    onClick={() => setViewMode("matrix")}
+                    aria-label={t("workspace.matrixView")}
+                    aria-pressed={viewMode === "matrix"}
+                    className={cn(
+                      "rounded-md p-2",
+                      viewMode === "matrix" ? "bg-surface-active text-secondary" : "text-muted",
+                    )}
+                  >
+                    <Table2 className="h-4 w-4" />
+                  </button>
+                  <button
                     onClick={() => setViewMode("grid")}
                     data-testid="view-grid"
                     aria-label={t("mySkills.view.grid")}
@@ -1339,53 +1413,58 @@ export function MySkills() {
                   </button>
                 </div>
               </div>
-              <div
-                role="group"
-                aria-label={t("mySkills.libraryActions")}
-                className="app-segmented flex-wrap"
-              >
-                {" "}
-                {!onRemote &&
-                  (() => {
-                    const mode = gitBackupMode(gitStatus, gitRemoteConfig);
-                    const meta = getGitStatusMeta(mode);
-                    const Icon = meta.icon;
+              <details className="relative">
+                <summary className="app-button-secondary cursor-pointer">
+                  {t("mySkills.libraryActions")}
+                </summary>
+                <div
+                  role="group"
+                  aria-label={t("mySkills.libraryActions")}
+                  className="absolute right-0 z-30 mt-2 flex w-max flex-wrap gap-2 rounded-lg border border-border bg-surface p-2 shadow-lg"
+                >
+                  {" "}
+                  {!onRemote &&
+                    (() => {
+                      const mode = gitBackupMode(gitStatus, gitRemoteConfig);
+                      const meta = getGitStatusMeta(mode);
+                      const Icon = meta.icon;
 
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => navigate({ to: "/backup" })}
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium transition-colors hover:bg-surface-hover hover:text-secondary",
-                          meta.className,
-                        )}
-                        title={t("sidebar.backup")}
-                      >
-                        <Icon className={cn("h-3.5 w-3.5", meta.iconClassName)} />
-                        {meta.label}
-                      </button>
-                    );
-                  })()}
-                <button
-                  onClick={handleCheckAllUpdates}
-                  disabled={checkingAll}
-                  className={cn(
-                    "mr-2 inline-flex items-center gap-1 rounded-md pr-3 py-2 text-[13px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50",
-                    onRemote ? "pl-3" : "ml-2 border-l border-border-subtle pl-4",
-                  )}
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", checkingAll && "animate-spin")} />
-                  {t("mySkills.updateActions.checkAll")}
-                </button>
-                <button
-                  onClick={handleUpdateAvailableSkills}
-                  disabled={batchUpdating || availableUpdateCount === 0}
-                  className="mr-2 inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium text-accent-light transition-colors hover:bg-accent-bg disabled:opacity-50"
-                >
-                  <RotateCcw className={cn("h-3.5 w-3.5", batchUpdating && "animate-spin")} />
-                  {t("mySkills.updateActions.updateAvailable", { count: availableUpdateCount })}
-                </button>
-              </div>
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => navigate({ to: "/backup" })}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium transition-colors hover:bg-surface-hover hover:text-secondary",
+                            meta.className,
+                          )}
+                          title={t("sidebar.backup")}
+                        >
+                          <Icon className={cn("h-3.5 w-3.5", meta.iconClassName)} />
+                          {meta.label}
+                        </button>
+                      );
+                    })()}
+                  <button
+                    onClick={handleCheckAllUpdates}
+                    disabled={checkingAll}
+                    className={cn(
+                      "mr-2 inline-flex items-center gap-1 rounded-md pr-3 py-2 text-[13px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50",
+                      onRemote ? "pl-3" : "ml-2 border-l border-border-subtle pl-4",
+                    )}
+                  >
+                    <RefreshCw className={cn("h-3.5 w-3.5", checkingAll && "animate-spin")} />
+                    {t("mySkills.updateActions.checkAll")}
+                  </button>
+                  <button
+                    onClick={handleUpdateAvailableSkills}
+                    disabled={batchUpdating || availableUpdateCount === 0}
+                    className="mr-2 inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium text-accent-light transition-colors hover:bg-accent-bg disabled:opacity-50"
+                  >
+                    <RotateCcw className={cn("h-3.5 w-3.5", batchUpdating && "animate-spin")} />
+                    {t("mySkills.updateActions.updateAvailable", { count: availableUpdateCount })}
+                  </button>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -1505,70 +1584,66 @@ export function MySkills() {
                           <span className="font-normal text-faint">{group.skills.length}</span>
                         </h3>
                       )}
-                      <div
-                        style={
-                          viewMode === "grid"
-                            ? {
-                                gridTemplateColumns:
-                                  "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
-                              }
-                            : undefined
-                        }
-                        className={cn(viewMode === "grid" ? "grid gap-3" : "flex flex-col gap-0.5")}
-                      >
-                        {group.skills.map((skill) => {
-                          const itemProps: LibrarySkillItemProps = {
-                            skill,
-                            hideCreator: groupBy === "creator",
-                            displayName: displayNames.get(skill.id) || skill.name,
-                            enabledInPreset: viewedPreset
-                              ? skill.preset_ids.includes(viewedPreset.id)
-                              : false,
-                            hasViewedPreset: !!viewedPreset,
-                            viewedPresetName,
-                            tools,
-                            allTags,
-                            isMultiSelect,
-                            selected: selectedIds.has(skill.id),
-                            canDrag,
-                            deleting: deletingIds.has(skill.id),
-                            hasConflict: conflictIds.has(skill.id),
-                            checking: checkingSkillId === skill.id,
-                            updating: updatingSkillId === skill.id,
-                            menuOpen: menuSkillId === skill.id,
-                            pendingTool:
-                              togglingTarget?.skillId === skill.id ? togglingTarget.tool : null,
-                            onToggleSelect: toggleSelect,
-                            onOpenDetail: openSkillDetailById,
-                            onOpenBackup: () => navigate({ to: "/backup" }),
-                            onMenuSkillChange: setMenuSkillId,
-                            onCheckUpdate: handleCheckUpdate,
-                            onRefresh: handleRefreshSkill,
-                            onRelinkSource: handleRelinkSource,
-                            onDetachSource: handleDetachSource,
-                            onDelete: setSkillToDelete,
-                            onTogglePreset: (s) => {
-                              if (viewedPreset) void handleTogglePreset(s, viewedPreset.id);
-                            },
-                            onToggleTarget: handleToggleSkillTarget,
-                          };
+                      {viewMode === "matrix" ? (
+                        <SkillMatrix
+                          library={group.skills}
+                          agents={tools.filter((tool) => tool.installed && tool.enabled)}
+                          inspect={(id) =>
+                            isMultiSelect ? toggleSelect(id) : openSkillDetailById(id)
+                          }
+                          selection={
+                            isMultiSelect ? { ids: selectedIds, toggle: toggleSelect } : undefined
+                          }
+                          details={(id) => {
+                            const skill = group.skills.find((item) => item.id === id)!;
 
-                          return viewMode === "grid" ? (
-                            <LibrarySkillCard
-                              key={skill.id}
-                              {...itemProps}
-                              tagEditing={tagEditSkillId === skill.id}
-                              tagInput={tagInput}
-                              onTagInputChange={setTagInput}
-                              onTagEditSkillChange={setTagEditSkillId}
-                              onAddTag={handleAddTag}
-                              onRemoveTag={handleRemoveTag}
-                            />
-                          ) : (
-                            <LibrarySkillRow key={skill.id} {...itemProps} />
-                          );
-                        })}
-                      </div>
+                            return (
+                              <LibrarySkillCard
+                                {...skillItemProps(skill)}
+                                tagEditing={tagEditSkillId === id}
+                                tagInput={tagInput}
+                                onTagInputChange={setTagInput}
+                                onTagEditSkillChange={setTagEditSkillId}
+                                onAddTag={handleAddTag}
+                                onRemoveTag={handleRemoveTag}
+                              />
+                            );
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={
+                            viewMode === "grid"
+                              ? {
+                                  gridTemplateColumns:
+                                    "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
+                                }
+                              : undefined
+                          }
+                          className={cn(
+                            viewMode === "grid" ? "grid gap-3" : "flex flex-col gap-0.5",
+                          )}
+                        >
+                          {group.skills.map((skill) => {
+                            const itemProps = skillItemProps(skill);
+
+                            return viewMode === "grid" ? (
+                              <LibrarySkillCard
+                                key={skill.id}
+                                {...itemProps}
+                                tagEditing={tagEditSkillId === skill.id}
+                                tagInput={tagInput}
+                                onTagInputChange={setTagInput}
+                                onTagEditSkillChange={setTagEditSkillId}
+                                onAddTag={handleAddTag}
+                                onRemoveTag={handleRemoveTag}
+                              />
+                            ) : (
+                              <LibrarySkillRow key={skill.id} {...itemProps} />
+                            );
+                          })}
+                        </div>
+                      )}
                     </section>
                   ))}
                 </div>
