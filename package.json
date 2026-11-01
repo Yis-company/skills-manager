@@ -5,9 +5,11 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "prepare": "node scripts/install-hooks.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "typecheck": "tsc -b",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
