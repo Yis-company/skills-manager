@@ -6,6 +6,7 @@ use tauri::{Emitter, Manager};
 
 pub mod commands;
 pub mod core;
+pub mod shutdown;
 
 /// Shared flag: when true, CloseRequested should NOT be prevented.
 pub static QUITTING: AtomicBool = AtomicBool::new(false);
@@ -48,7 +49,7 @@ fn is_tray_icon_enabled(store: &Arc<core::skill_store::SkillStore>) -> bool {
     parse_bool_setting(value, true)
 }
 
-fn restore_main_window(app: &tauri::AppHandle) {
+fn restore_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let app_for_main = app.clone();
     if let Err(err) = app.run_on_main_thread(move || {
         #[cfg(target_os = "macos")]
@@ -82,14 +83,26 @@ fn restore_main_window(app: &tauri::AppHandle) {
     }
 }
 
-fn request_quit(app: &tauri::AppHandle) {
-    let app_for_main = app.clone();
-    if let Err(err) = app.run_on_main_thread(move || {
-        quit_app(&app_for_main);
-    }) {
-        log::error!("Failed to schedule quit on main thread: {err}");
-        // Fallback: attempt quit anyway.
-        quit_app(app);
+fn request_quit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    quit_app(app);
+}
+
+pub fn request_shutdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>, target: shutdown::Target) {
+    let pending = app.state::<Arc<shutdown::Shutdown>>().request(target);
+    restore_main_window(app);
+    if let Err(error) = app.emit("shutdown-requested", pending) {
+        log::error!("Could not present shutdown request: {error}");
+    }
+}
+
+fn handle_native_exit<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    _code: Option<i32>,
+    prevent: impl FnOnce(),
+) {
+    if !app.state::<Arc<shutdown::Shutdown>>().committed() {
+        prevent();
+        request_shutdown(app, shutdown::Target::Quit);
     }
 }
 
@@ -753,7 +766,8 @@ pub fn set_tray_icon_enabled(app: &tauri::AppHandle, enabled: bool) -> Result<()
         .map_err(|e| format!("Failed to receive tray update result: {e}"))?
 }
 
-/// Quit the application cleanly: destroy the main window, then exit.
+/// Request a clean quit. The shared boundary decides, settles and saves
+/// before destroying the main window or closing retained host sessions.
 ///
 /// Do NOT signal our process group here (e.g. `kill(-pgid, SIGTERM)`).
 /// On Linux the app inherits the launcher's pgid — that may be the user's
@@ -761,12 +775,11 @@ pub fn set_tray_icon_enabled(app: &tauri::AppHandle, enabled: bool) -> Result<()
 /// (terminating the parent terminal and its sibling jobs). Either is
 /// catastrophic and not worth the convenience of auto-cleaning a stray
 /// `tauri dev` vite process.
-pub fn quit_app(app: &tauri::AppHandle) {
-    teardown_before_exit(app);
-    app.exit(0);
+pub fn quit_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    request_shutdown(app, shutdown::Target::Quit);
 }
 
-/// Restart the process, running the same teardown `quit_app` does.
+/// Request a restart through the same decision and teardown as quit.
 ///
 /// Called after an in-app update has replaced the bundle on disk. Reuses
 /// `teardown_before_exit` rather than restarting outright: skipping it would
@@ -781,12 +794,11 @@ pub fn quit_app(app: &tauri::AppHandle) {
 /// — but nothing enforces that ordering, and losing the race means the new
 /// instance sees a live singleton and exits immediately, taking the app down
 /// instead of restarting it. Going through the exit event closes the window.
-pub fn restart_app(app: &tauri::AppHandle) {
-    teardown_before_exit(app);
-    app.request_restart();
+pub fn restart_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    request_shutdown(app, shutdown::Target::Restart);
 }
 
-fn teardown_before_exit(app: &tauri::AppHandle) {
+fn teardown_before_exit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     QUITTING.store(true, Ordering::SeqCst);
     if let Some(w) = app.get_webview_window("main") {
         if let Err(err) = w.destroy() {
@@ -814,6 +826,7 @@ pub fn run() {
     let builder_start = Instant::now();
     tauri::Builder::default()
         .manage(store)
+        .manage(Arc::new(shutdown::Shutdown::default()))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             restore_main_window(app);
         }))
@@ -1015,6 +1028,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            shutdown::shutdown_request,
+            shutdown::install_app_update,
             commands::resources::operation_request,
             commands::resources::operation_results_request,
             commands::resources::instructions_request,
@@ -1187,6 +1202,11 @@ pub fn run() {
             commands::remote_hosts::remote_host_release,
             commands::remote_hosts::remote_invoke,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                handle_native_exit(app, code, || api.prevent_exit());
+            }
+        });
 }

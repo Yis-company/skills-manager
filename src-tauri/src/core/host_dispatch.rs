@@ -736,6 +736,111 @@ mod tests {
     }
 
     #[test]
+    fn a_late_remote_seal_or_resume_cannot_override_a_newer_shutdown_decision() {
+        let host = test_host();
+        let project = operation_project(&host, "late-seal");
+        let request = |action, epoch| {
+            dispatch(
+                &host.ctx,
+                "operation_request",
+                &json!({"request":{"action":action,"epoch":epoch}}),
+            )
+            .unwrap()
+        };
+        assert_eq!(request("shutdown_seal", 1)["ready"], true);
+        request("shutdown_resume", 2);
+        assert_eq!(request("shutdown_seal", 1)["ready"], false);
+        submit_operation(&host, "after-late-seal", &project);
+        settled_operation(&host, "after-late-seal");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while request("shutdown_seal", 3)["ready"] != true {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        request("shutdown_resume", 2);
+        assert!(dispatch(&host.ctx,"operation_request", &json!({"request":{"action":"submit_project_update","operation_id":"after-late-resume","project_id":project["id"]}})).is_err());
+        request("shutdown_resume", 4);
+    }
+
+    #[test]
+    fn shutdown_cancel_drops_waiting_work_and_retains_completed_changes() {
+        let host = test_host();
+        let done = operation_project(&host, "done");
+        submit_operation(&host, "done", &done);
+        settled_operation(&host, "done");
+        let held = crate::core::repo_lock::RepoLock::try_exclusive("shutdown fixture")
+            .unwrap()
+            .unwrap();
+        let next = operation_project(&host, "next");
+        submit_operation(&host, "next", &next);
+        let result = dispatch(
+            &host.ctx,
+            "operation_request",
+            &json!({"request":{"action":"shutdown_cancel"}}),
+        )
+        .unwrap();
+        let snapshots = result["snapshots"].as_array().unwrap();
+        assert_eq!(snapshots[0]["items"][0]["phase"], "succeeded");
+        assert_eq!(snapshots[1]["items"][0]["phase"], "canceled");
+        assert_eq!(
+            std::fs::read_to_string(host.tmp.path().join("done/.claude/skills/x/SKILL.md"))
+                .unwrap(),
+            "library version"
+        );
+        assert_eq!(
+            std::fs::read_to_string(host.tmp.path().join("next/.claude/skills/x/SKILL.md"))
+                .unwrap(),
+            "old copy"
+        );
+        drop(held);
+        settled_operation(&host, "next");
+    }
+
+    #[test]
+    fn shutdown_seal_waits_for_real_work_and_blocks_later_admission_until_resumed() {
+        let (entered, receiver) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = test_host_with(Arc::new(HeldOperation {
+            entered_once: std::sync::atomic::AtomicBool::new(false),
+            entered,
+            release: release.clone(),
+        }));
+        let release = ReleaseOnDrop(release);
+        let project = operation_project(&host, "shutdown");
+        submit_operation(&host, "held", &project);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let shutdown = |action| {
+            dispatch(
+                &host.ctx,
+                "operation_request",
+                &json!({"request":{"action":action}}),
+            )
+            .unwrap()
+        };
+        assert_eq!(shutdown("shutdown_seal")["ready"], false);
+        // Automatic quit must include work admitted after the first idle check.
+        let second = operation_project(&host, "later");
+        submit_operation(&host, "later", &second);
+        drop(release);
+        assert_eq!(
+            settled_operation(&host, "held")["items"][0]["phase"],
+            "succeeded"
+        );
+        settled_operation(&host, "later");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while shutdown("shutdown_seal")["ready"] != true {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_project_update","operation_id":"after-seal","project_id":project["id"]}})).is_err());
+        shutdown("shutdown_resume");
+        assert!(dispatch(&host.ctx, "operation_request", &json!({"request":{"action":"submit_project_update","operation_id":"after-resume","project_id":project["id"]}})).is_ok());
+        settled_operation(&host, "after-resume");
+    }
+
+    #[test]
     fn project_operation_captures_scope_and_reports_real_updates() {
         let host = test_host();
         let project = host.tmp.path().join("project");

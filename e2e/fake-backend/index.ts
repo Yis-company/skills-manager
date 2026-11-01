@@ -134,6 +134,9 @@ mockIPC(
     }
 
     let result = handler(args ?? {}, state);
+
+    if (["app_exit", "restart_app", "install_app_update"].includes(cmd))
+      await emit("shutdown-requested", result);
     const responseHold = responseHolds.get(boundary) ?? responseHolds.get(cmd);
 
     if (responseHold && !responseHold.claimed) {

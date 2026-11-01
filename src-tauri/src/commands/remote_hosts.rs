@@ -261,8 +261,10 @@ fn probe_result(version: String) -> RemoteProbe {
 pub async fn remote_host_connect(
     host_id: String,
     select: Option<bool>,
+    boundary: State<'_, Arc<crate::shutdown::Shutdown>>,
     sessions: State<'_, RemoteSessions>,
 ) -> Result<HostSessionInfo, AppError> {
+    let _call = boundary.enter(false)?;
     let session = if select.unwrap_or(true) {
         sessions.session_for(&host_id).await?
     } else {
@@ -302,8 +304,16 @@ pub async fn remote_invoke(
     host_id: String,
     command: String,
     args: Value,
+    boundary: State<'_, Arc<crate::shutdown::Shutdown>>,
     sessions: State<'_, RemoteSessions>,
 ) -> Result<Value, AppError> {
+    let _call = boundary.enter(
+        command == "operation_request"
+            && !matches!(
+                args["request"]["action"].as_str(),
+                Some("read" | "list" | "reconcile")
+            ),
+    )?;
     sessions.call(&host_id, &command, args).await
 }
 

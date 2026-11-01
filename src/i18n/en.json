@@ -1669,5 +1669,24 @@
     "installNothing": "No new skills to install",
     "installNeedsReview": "Needs review",
     "installPreviewReady": "Ready to select skills"
+  },
+  "shutdown": {
+    "title": "Quit with unfinished work?",
+    "description": "Work stays on its original host. Canceling keeps completed changes and waits for current writes to finish safely. An unreachable host may still be working. Unresolved results are saved before quitting.",
+    "keepOpen": "Keep app open",
+    "cancelQuit": "Cancel unfinished work and quit",
+    "autoQuit": "Quit automatically when all work finishes",
+    "pending": "Pending quit",
+    "draining": "Waiting for all work, including new work. {{count}} unfinished.",
+    "canceling": "Stopping unfinished work safely. Completed changes are kept.",
+    "saving": "Saving results before closing…",
+    "saveError": "Could not save results. The app is still open. Retry saving to quit.",
+    "retry": "Retry saving and quit",
+    "savingDescription": "Unresolved results will be available next launch. Keep the app open to continue working.",
+    "willQuit": "The app will quit when work finishes.",
+    "willRestart": "The app will restart when work finishes.",
+    "willUpdate": "The app will install the update and close when work finishes.",
+    "retryRestart": "Retry saving and restart",
+    "retryUpdate": "Retry saving and install update"
   }
 }

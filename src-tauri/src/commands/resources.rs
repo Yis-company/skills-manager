@@ -30,10 +30,21 @@ pub async fn resource_sync_request(
 }
 
 #[tauri::command]
-pub async fn operation_request(ctx: State<'_, HostCtx>, request: Value) -> Result<Value, AppError> {
+pub async fn operation_request(
+    ctx: State<'_, HostCtx>,
+    boundary: State<'_, std::sync::Arc<crate::shutdown::Shutdown>>,
+    request: Value,
+) -> Result<Value, AppError> {
+    let call = boundary.enter(!matches!(
+        request["action"].as_str(),
+        Some("read" | "list" | "reconcile")
+    ))?;
     let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || crate::core::operations::dispatch(&ctx, request))
-        .await?
+    tauri::async_runtime::spawn_blocking(move || {
+        let _call = call;
+        crate::core::operations::dispatch(&ctx, request)
+    })
+    .await?
 }
 
 /// Always called locally by the desktop, including results from offline SSH hosts.

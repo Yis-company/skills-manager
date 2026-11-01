@@ -35,6 +35,7 @@ import {
   sameOperationContext,
 } from "../lib/operations";
 import { groupProjectSkills } from "../lib/projectSkillGroups";
+import { type ShutdownPrepared, shutdownRequest } from "../lib/shutdown";
 import {
   type Project,
   type RemoteHost,
@@ -45,6 +46,8 @@ import {
 import { useOperationPersistence } from "./useOperationPersistence";
 
 interface OperationsState {
+  prepareShutdown: (id: number, cancel: boolean) => Promise<ShutdownPrepared>;
+  releaseShutdown: () => void;
   persistenceStatus: "error" | "loading" | "saved" | "saving";
   flush: () => Promise<void>;
   dismiss: (operation: OperationSnapshot) => void;
@@ -76,6 +79,8 @@ export function OperationsProvider({
   children: ReactNode;
 }) {
   const client = useQueryClient();
+  const shutdownSealed = useRef(false);
+  const pendingActions = useRef(0);
   const [refreshErrors, setRefreshErrors] = useState<Record<string, string>>({});
   const dismissed = useRef(new Set<string>());
   const refreshed = useRef(new Set<string>());
@@ -164,6 +169,8 @@ export function OperationsProvider({
   const reconnect = useCallback(
     (operation: OperationSnapshot, request?: OperationRequest) => {
       const origin = operation.host_id;
+
+      if (shutdownSealed.current) return Promise.resolve();
 
       if (!operationHostMatches(operation, remoteHosts))
         return Promise.reject(
@@ -455,6 +462,18 @@ export function OperationsProvider({
   }, [client, reconnect, recoverRequest]);
 
   async function act(origin: null | string, request: OperationRequest) {
+    if (shutdownSealed.current)
+      throw new Error("The app is closing; keep it open before starting more work");
+    pendingActions.current += 1;
+
+    try {
+      await performAction(origin, request);
+    } finally {
+      pendingActions.current -= 1;
+    }
+  }
+
+  async function performAction(origin: null | string, request: OperationRequest) {
     const records = (client.getQueryData<OperationSnapshot[]>(key(origin)) ?? []).filter((o) =>
       operationHostMatches(o, remoteHosts),
     );
@@ -654,9 +673,74 @@ export function OperationsProvider({
     releaseIfIdle(operation.host_id);
   }
 
+  const releaseShutdown = useCallback(() => {
+    shutdownSealed.current = false;
+  }, []);
+
+  async function prepareShutdown(id: number, cancel: boolean): Promise<ShutdownPrepared> {
+    const records = client
+      .getQueriesData<OperationSnapshot[]>({
+        predicate: (q) =>
+          q.queryKey.length === 3 && q.queryKey[0] === "host" && q.queryKey[2] === "operations",
+      })
+      .flatMap(([, records]) => records ?? []);
+
+    if (
+      !observationReady ||
+      (!cancel && pendingActions.current > 0) ||
+      recovering.current.size > 0 ||
+      records.some((o) => o.recovery === "checking" || (!cancel && (o.admission || !o.settled)))
+    )
+      return { ready: false, snapshots: [] };
+    // Synchronous observer seal closes the gap before its next RPC. The backend
+    // then checks its actual workers/sessions and seals their admission as well.
+    shutdownSealed.current = true;
+
+    try {
+      const result = await shutdownRequest<ShutdownPrepared>({ action: "prepare", id });
+
+      for (const snapshot of result.snapshots) {
+        observe(snapshot.host_id);
+        client.setQueryData<OperationSnapshot[]>(key(snapshot.host_id), (current = []) =>
+          snapshot.recovery === "unknown"
+            ? mergeOperations(
+                current.map((o) =>
+                  sameOperationContext(o, snapshot) && o.attempt_id === snapshot.attempt_id
+                    ? { ...o, recovery: "unknown", settled: true }
+                    : o,
+                ),
+                [captureOrigin(snapshot)],
+                snapshot.host_id,
+                dismissed.current,
+              )
+            : mergeOperations(
+                current,
+                [captureOrigin(snapshot)],
+                snapshot.host_id,
+                dismissed.current,
+              ),
+        );
+      }
+
+      if (result.ready && pendingActions.current > 0) {
+        await shutdownRequest({ action: "resume", id });
+        result.ready = false;
+      }
+
+      if (!result.ready) shutdownSealed.current = false;
+
+      return result;
+    } catch (error) {
+      shutdownSealed.current = false;
+      throw error;
+    }
+  }
+
   return (
     <Context.Provider
       value={{
+        prepareShutdown,
+        releaseShutdown,
         persistenceStatus,
         flush,
         dismiss,

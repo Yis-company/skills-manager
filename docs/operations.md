@@ -1,4 +1,4 @@
-# Interactive operations (SKI-20 through SKI-24)
+# Interactive operations (SKI-20 through SKI-25)
 
 Desktop `operation_request({ request })` and the host dispatcher run the same
 backend-owned `OperationService` on `HostCtx`. React observes authoritative
@@ -313,3 +313,66 @@ automatic quit/resume, detached worker or run-after-exit support is implemented 
 Real contract/CLI tests use temporary stores, libraries/projects and local Git fixtures.
 Browser fixtures return controlled snapshots and are not a second scheduler or proof of
 filesystem or SSH safety. Supported native/platform behavior still requires platform CI.
+
+## Shared shutdown boundary (SKI-25)
+
+Real quit and restart enter `shutdown_request`, a desktop-local decision shared by
+native `RunEvent::ExitRequested`, tray/menu Quit, `app_exit`, `restart_app`, and
+window-close paths configured to quit (including the disabled-tray fallback).
+Closing to tray/minimizing keeps operations and sessions running. There is no
+process plugin installed or permitted; no alternate process-plugin exit/relaunch
+route is introduced.
+
+`shutdown-requested` carries `{id,target,mode}`; `read` repairs missed notification
+or observer remount. Targets are `quit`, `restart`, and `install_update` (the Windows
+installer exits the process). `inspect` conservatively checks actual local work and
+retained sessions before presenting the three choices. The existing staged-work
+confirmation runs for native/app/restart requests and again at final settlement.
+
+- Keep app open invalidates the request ID and resumes admission. Late RPC/save
+  replies cannot authorize that canceled request. It does not undo cancellations
+  already requested by an earlier Cancel-and-quit choice.
+- `choose {id,mode:"cancel"}` refuses new mutation admission. The next preparation
+  cancels owned queued/waiting work and requests safe stopping of workers, including
+  owned work whose admission reply is still outstanding. Completed changes stay.
+- `choose {id,mode:"drain"}` accepts subsequent work until the final idle seal.
+  Failed, needs-review, canceled and unknown settled outcomes do not veto quitting.
+
+The observer captures pending intent before storage/RPC, counts pending actions and
+bounded recovery, then calls `prepare {id}`. The desktop IPC boundary counts requests
+before spawning/awaiting them. Preparation checks the real `OperationService` worker,
+request and coordinator state under its existing lock, and asks each retained original
+host process to seal its own service. It never infers safety from an idle frontend
+snapshot, a gap between queue items, or an empty replacement-process list. A partial
+seal is resumed when another host/call is busy. The service remains the only scheduler.
+
+Host operation requests `shutdown_status`, `shutdown_cancel`, `shutdown_seal` and
+`shutdown_resume` return `{ready,snapshots}`. Remote seals/resumes carry monotonically
+ordered `epoch` values, so a deadline-expired RPC cannot override a newer Keep open or
+seal. Checking a host has a 12-second overall deadline even if keepalives continue.
+Unreachable original work remains explicitly unknown, preserving completed siblings;
+unknown does not assert stopped, canceled, or permission to replay. Cancellation only
+addresses the receiving service's owned records, never an unowned receipt.
+
+A ready preparation seals frontend admission and backend calls/connections, merges
+fresh original-host snapshots, and **awaits `OperationsProvider.flush()`** before
+`finish {id}`. Rendered `saved` status is never exit authority. A focused saving dialog
+protects the final unsaved-work check and flush; Keep open still revokes the request.
+Storage failure/conflict retains memory, resumes the boundary, and exposes retry or
+Keep app open. Sessions, windows and exit-time backup remain intact until final
+worker settlement and persistence have succeeded.
+
+Only `finish` authorizes teardown and the native exit/restart call. Restart retains
+`request_restart` so the singleton's Exit cleanup runs before relaunch. Windows
+installation uses a guarded backend updater command because the upstream installer
+calls `process::exit` directly; it preserves local proxy, updater verification,
+cleanup and exit-time backup. Keep open during the download invalidates the final
+installation check; no late download completion authorizes that canceled request.
+Other incumbent update/platform restrictions remain.
+The process-group safety rule is unchanged: no parent/developer process group is
+signaled. No detached service, run-after-exit support or automatic replay is added.
+
+Native adapter checks use Tauri's mock runtime, not a shipped GUI. Actual host tests
+use temporary libraries and real CLI stdio processes with externally held repository
+locks. Browser scenarios prove controlled IPC/UI behavior only. These tests do not
+establish Windows/Linux native installer, shipped desktop, or live SSH behavior.

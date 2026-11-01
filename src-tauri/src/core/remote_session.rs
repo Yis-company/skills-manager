@@ -251,6 +251,10 @@ impl RemoteSession {
             }
             calls.pending.insert(id, tx);
         }
+        let _pending = PendingReply {
+            calls: self.calls.clone(),
+            id,
+        };
         if let Err(err) = self.send(&json!({ "id": id, "cmd": cmd, "args": args })) {
             log::warn!("Cannot send {cmd} to {}: {err}", self.host_name);
             lock(&self.calls).pending.remove(&id);
@@ -383,6 +387,17 @@ fn drain_stderr(stderr: impl Read + Send + 'static, host_name: &str) -> thread::
     })
 }
 
+// An overall shutdown/recovery deadline may drop a call before its reply.
+struct PendingReply {
+    calls: Arc<Mutex<Calls>>,
+    id: u64,
+}
+impl Drop for PendingReply {
+    fn drop(&mut self) {
+        lock(&self.calls).pending.remove(&self.id);
+    }
+}
+
 struct Reader {
     calls: Arc<Mutex<Calls>>,
     events: Arc<dyn HostEvents>,
@@ -513,6 +528,7 @@ struct Slot {
     calls: usize,
     mutation_calls: HashMap<String, (String, Option<String>)>,
     operations: HashMap<String, (u64, bool)>,
+    snapshots: HashMap<String, Value>,
     uncertain: Vec<(String, Option<String>)>,
     awaiting_refresh: bool,
 }
@@ -544,9 +560,11 @@ impl Slot {
 
 #[derive(Default)]
 struct Sessions {
+    sealed: bool,
     hosts: HashMap<String, Slot>,
     viewed: Option<String>,
     attempts: u64,
+    shutdown_epoch: u64,
 }
 
 impl Slot {
@@ -611,6 +629,7 @@ impl Slot {
             return;
         }
         self.awaiting_refresh |= settled;
+        self.snapshots.insert(id.to_owned(), value.clone());
         self.operations.insert(id.to_owned(), (revision, needed));
     }
 }
@@ -649,6 +668,7 @@ pub struct RemoteSessions {
     cli: Arc<CliCommand>,
     install: Arc<InstallCli>,
     slots: Arc<Mutex<Sessions>>,
+    shutdown_timeout: Duration,
 }
 
 impl RemoteSessions {
@@ -673,6 +693,7 @@ impl RemoteSessions {
             cli,
             install,
             slots: Arc::default(),
+            shutdown_timeout: Duration::from_secs(12),
         }
     }
 
@@ -681,6 +702,11 @@ impl RemoteSessions {
     pub async fn session_for(&self, host_id: &str) -> Result<Arc<RemoteSession>, AppError> {
         let done = {
             let mut slots = lock(&self.slots);
+            if slots.sealed {
+                return Err(AppError::invalid_input(
+                    "The app is closing; keep it open before connecting",
+                ));
+            }
             for (id, slot) in &mut slots.hosts {
                 if id != host_id {
                     slot.unselect();
@@ -708,6 +734,11 @@ impl RemoteSessions {
     pub async fn reconnect(&self, host_id: &str) -> Result<Arc<RemoteSession>, AppError> {
         let done = {
             let mut slots = lock(&self.slots);
+            if slots.sealed {
+                return Err(AppError::invalid_input(
+                    "The app is closing; keep it open before connecting",
+                ));
+            }
             let slot = slots.hosts.entry(host_id.to_owned()).or_default();
             slot.awaiting_refresh = true;
             if let Some(session) = slot.live(host_id) {
@@ -735,6 +766,7 @@ impl RemoteSessions {
                         | "submit_project_update"
                         | "confirm_install"
                         | "retry_failed"
+                        | "prepare_review"
                         | "cancel"
                 )
             );
@@ -761,6 +793,14 @@ impl RemoteSessions {
         };
         {
             let mut slots = lock(&self.slots);
+            if slots.sealed
+                && !(cmd == "operation_request"
+                    && matches!(args["request"]["action"].as_str(), Some("read" | "list")))
+            {
+                return Err(AppError::invalid_input(
+                    "The app is closing; keep it open before starting more work",
+                ));
+            }
             let slot = slots
                 .hosts
                 .get_mut(host_id)
@@ -918,6 +958,123 @@ impl RemoteSessions {
             .filter(|(_, slot)| slot.needed())
             .map(|(id, _)| id.clone())
             .collect()
+    }
+
+    pub fn has_unfinished(&self) -> bool {
+        lock(&self.slots).hosts.values().any(|slot| {
+            slot.calls > 0
+                || slot.connecting.is_some()
+                || slot
+                    .snapshots
+                    .values()
+                    .any(|o| o["settled"] != true && o["recovery"] != "unknown")
+        })
+    }
+
+    /// Ask each retained original process, never a replacement receipt, to
+    /// cancel/seal its own workers. Unknown transport outcomes are evidence,
+    /// not a claim that an original remote write stopped.
+    pub async fn shutdown(&self, action: &str) -> Result<Value, AppError> {
+        let (hosts, epoch) = {
+            let mut slots = lock(&self.slots);
+            if action == "shutdown_seal"
+                && slots
+                    .hosts
+                    .values()
+                    .any(|s| s.calls > 0 || s.connecting.is_some())
+            {
+                return Ok(json!({"ready":false,"snapshots":[]}));
+            }
+            slots.sealed = action != "shutdown_resume";
+            slots.shutdown_epoch += 1;
+            let hosts = slots
+                .hosts
+                .iter()
+                .map(|(id, slot)| {
+                    (
+                        id.clone(),
+                        slot.session.clone(),
+                        slot.snapshots.values().cloned().collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (hosts, slots.shutdown_epoch)
+        };
+        let mut ready = true;
+        let mut snapshots = Vec::new();
+        for (host, session, known) in hosts {
+            let result = match session {
+                Some(session) if session.is_alive() => tokio::time::timeout(
+                    self.shutdown_timeout,
+                    session.call(
+                        "operation_request",
+                        json!({"request":{"action":action,"epoch":epoch}}),
+                    ),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err(AppError::network(
+                        "The original host could not be verified before closing",
+                    ))
+                }),
+                _ => Err(AppError::network("The original host is unreachable")),
+            };
+            match result {
+                Ok(value) => {
+                    let records = value["snapshots"]
+                        .as_array()
+                        .filter(|_| value["ready"].is_boolean())
+                        .ok_or_else(|| {
+                            AppError::invalid_input(
+                                "The host did not provide a valid shutdown status",
+                            )
+                        })?;
+                    ready &= value["ready"] == true;
+                    for record in records {
+                        let snapshot = tag_host(record.clone(), &host);
+                        if let Some(slot) = lock(&self.slots).hosts.get_mut(&host) {
+                            slot.observe(&snapshot, &host);
+                        }
+                        snapshots.push(snapshot);
+                    }
+                }
+                Err(_) => {
+                    for mut record in known {
+                        record["settled"] = json!(true);
+                        record["recovery"] = json!("unknown");
+                        record["preview"] = Value::Null;
+                        if let Some(items) = record["items"].as_array_mut() {
+                            for item in items {
+                                if matches!(
+                                    item["phase"].as_str(),
+                                    Some(
+                                        "queued"
+                                            | "preparing"
+                                            | "waiting"
+                                            | "applying"
+                                            | "stopping"
+                                            | "checking_result"
+                                    )
+                                ) {
+                                    item["phase"] = json!("outcome_unknown");
+                                    item["message"] =
+                                        json!("Work may still be running on the original host");
+                                }
+                            }
+                        }
+                        snapshots.push(tag_host(record, &host));
+                    }
+                }
+            }
+        }
+        ready &= !lock(&self.slots)
+            .hosts
+            .values()
+            .any(|s| s.calls > 0 || s.connecting.is_some());
+        if !ready || action == "shutdown_resume" {
+            lock(&self.slots).sealed = false;
+        }
+        Ok(json!({"ready":ready,"snapshots":snapshots}))
     }
 
     /// App exit remains a separate lifecycle boundary (SKI-25).
@@ -1417,6 +1574,139 @@ mod tests {
             &viewed,
             &sessions.session_for("h2").await.unwrap()
         ));
+    }
+
+    #[tokio::test]
+    async fn shutdown_cannot_commit_while_the_authoritative_seal_rpc_is_pending() {
+        use std::future::Future;
+        let (sessions, _, _tmp) = sessions(serving());
+        sessions.session_for("h1").await.unwrap();
+        let ctx = crate::core::host::HostCtx::headless(sessions.store.clone());
+        let boundary = Arc::new(crate::shutdown::Shutdown::default());
+        let pending = boundary.request(crate::shutdown::Target::Quit);
+        boundary
+            .choose(pending.id, crate::shutdown::Mode::Drain)
+            .unwrap();
+        let mut preparing = Box::pin(boundary.prepare(pending.id, &ctx, &sessions));
+        std::future::poll_fn(|cx| {
+            assert!(preparing.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert!(
+            boundary.finish(pending.id).is_err(),
+            "an in-flight seal is not exit permission"
+        );
+        boundary.keep_open(pending.id);
+        drop(preparing);
+        sessions.close_now();
+    }
+
+    #[tokio::test]
+    async fn shutdown_bounds_an_unreachable_original_host_without_claiming_it_stopped() {
+        let cli = fake_cli(
+            r#"printf '%s\n' "$1"
+            read line; echo '{"id":1,"ok":true,"result":{"operation_id":"lost","attempt_id":"first","revision":1,"settled":false,"items":[{"id":"x","phase":"applying"}]}}'
+            cat >/dev/null"#,
+            &hello_line(VERSION),
+        );
+        let (mut sessions, _, _tmp) = sessions(cli);
+        sessions.shutdown_timeout = Duration::from_millis(25);
+        let original = sessions.session_for("h1").await.unwrap();
+        sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"submit_install","operation_id":"lost"}}),
+            )
+            .await
+            .unwrap();
+        let result =
+            tokio::time::timeout(Duration::from_secs(1), sessions.shutdown("shutdown_seal"))
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(result["ready"], true);
+        assert_eq!(
+            result["snapshots"][0]["items"][0]["phase"],
+            "outcome_unknown"
+        );
+        assert_eq!(result["snapshots"][0]["recovery"], "unknown");
+        assert!(
+            original.is_alive(),
+            "unknown is not stopped and the session stays until evidence is saved"
+        );
+        sessions.close_now();
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancel_reaches_owned_work_even_before_its_admission_reply_arrives() {
+        use std::future::Future;
+        let cli = fake_cli(
+            r#"printf '%s\n' "$1"
+            read line
+            read line; echo '{"id":2,"ok":true,"result":{"ready":true,"snapshots":[{"operation_id":"pending","attempt_id":"first","revision":2,"settled":true,"cancel_requested":true,"items":[{"phase":"canceled"}]}]}}'
+            echo '{"id":1,"ok":true,"result":{"operation_id":"pending","attempt_id":"first","revision":1,"settled":false,"items":[{"phase":"queued"}]}}'
+            cat >/dev/null"#,
+            &hello_line(VERSION),
+        );
+        let (sessions, _, _tmp) = sessions(cli);
+        let original = sessions.session_for("h1").await.unwrap();
+        let mut admission = Box::pin(sessions.call(
+            "h1",
+            "operation_request",
+            json!({"request":{"action":"submit_install","operation_id":"pending"}}),
+        ));
+        std::future::poll_fn(|cx| {
+            assert!(admission.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let canceled = sessions.shutdown("shutdown_cancel").await.unwrap();
+        assert_eq!(
+            canceled["ready"], false,
+            "an outstanding admission reply still holds the desktop boundary"
+        );
+        assert_eq!(canceled["snapshots"][0]["cancel_requested"], true);
+        admission.await.unwrap();
+        assert!(original.is_alive());
+        sessions.close_now();
+    }
+
+    #[tokio::test]
+    async fn shutdown_checks_actual_host_work_and_keeps_the_session_until_teardown() {
+        let cli = fake_cli(
+            r#"printf '%s\n' "$1"
+            read line; echo '{"id":1,"ok":true,"result":{"ready":false,"snapshots":[]}}'
+            read line; echo '{"id":2,"ok":true,"result":{"ready":true,"snapshots":[]}}'
+            cat >/dev/null"#,
+            &hello_line(VERSION),
+        );
+        let (sessions, _, _tmp) = sessions(cli);
+        let original = sessions.session_for("h1").await.unwrap();
+        assert_eq!(
+            sessions.shutdown("shutdown_seal").await.unwrap()["ready"],
+            false
+        );
+        assert!(original.is_alive());
+        assert_eq!(
+            sessions.shutdown("shutdown_seal").await.unwrap()["ready"],
+            true
+        );
+        assert!(sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"submit_install"}})
+            )
+            .await
+            .is_err());
+        assert!(
+            original.is_alive(),
+            "a seal must not tear down transport before persistence"
+        );
+        sessions.close_now();
+        assert!(!original.is_alive());
     }
 
     #[tokio::test]

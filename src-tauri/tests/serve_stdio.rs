@@ -703,3 +703,87 @@ async fn lost_responses_reconcile_original_receipts_without_replaying_writes() {
         drop(lost);
     }
 }
+
+#[tokio::test]
+async fn real_host_shutdown_drains_or_cancels_a_held_library_and_seals_admission() {
+    use fs2::FileExt;
+    for cancel in [false, true] {
+        let server = start();
+        let held =
+            std::fs::File::create(server.tmp.path().join("base/.skills-manager.lock")).unwrap();
+        FileExt::lock_shared(&held).unwrap();
+        for id in ["first", "later"] {
+            let source = server.tmp.path().join(id);
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::write(
+                source.join("SKILL.md"),
+                format!("---\nname: {id}\n---\ncontent\n"),
+            )
+            .unwrap();
+            server.session.call("operation_request", json!({"request":{"action":"submit_install","operation_id":id,"host_id":"test-host","sources":[{"kind":"local","path":source}]}})).await.unwrap();
+            let status = server
+                .session
+                .call(
+                    "operation_request",
+                    json!({"request":{"action":"shutdown_seal","epoch":1}}),
+                )
+                .await
+                .unwrap();
+            assert_eq!(status["ready"], false, "a waiting item is unfinished");
+        }
+        let action = if cancel {
+            "shutdown_cancel"
+        } else {
+            "shutdown_seal"
+        };
+        if !cancel {
+            FileExt::unlock(&held).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let settled = loop {
+            let result = server
+                .session
+                .call(
+                    "operation_request",
+                    json!({"request":{"action":action,"epoch":2}}),
+                )
+                .await
+                .unwrap();
+            if result["ready"] == true {
+                break result;
+            }
+            assert!(Instant::now() < deadline, "{result}");
+            tokio::task::yield_now().await;
+        };
+        let snapshots = settled["snapshots"].as_array().unwrap();
+        assert_eq!(snapshots.len(), 2);
+        for record in snapshots {
+            assert_eq!(
+                record["items"][0]["phase"],
+                if cancel { "canceled" } else { "succeeded" }
+            );
+        }
+        let library = server
+            .session
+            .call("get_managed_skills", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            library.as_array().unwrap().len(),
+            if cancel { 0 } else { 2 }
+        );
+        assert!(server
+            .session
+            .call(
+                "operation_request",
+                json!({"request":{"action":"submit_install","operation_id":"sealed","sources":[]}})
+            )
+            .await
+            .is_err());
+        assert!(
+            server.session.is_alive(),
+            "the native app still needs to persist results before teardown"
+        );
+        server.session.close();
+    }
+}

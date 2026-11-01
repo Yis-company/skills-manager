@@ -104,6 +104,10 @@ struct Record {
 struct State {
     records: Vec<Record>,
     running: usize,
+    requests: usize,
+    sealed: bool,
+    canceling: bool,
+    shutdown_epoch: u64,
     driving: bool,
     next_record: usize,
 }
@@ -121,6 +125,15 @@ impl OperationService {
     }
 }
 
+// Counts an admission/reconciliation before it can inspect external evidence.
+// The final seal and the real worker count use the same service lock.
+struct RequestGuard<'a>(&'a OperationService);
+impl Drop for RequestGuard<'_> {
+    fn drop(&mut self) {
+        self.0 .0.lock().unwrap().requests -= 1;
+    }
+}
+
 impl Drop for OperationService {
     fn drop(&mut self) {
         if let Ok(state) = self.0.get_mut() {
@@ -134,6 +147,16 @@ impl Drop for OperationService {
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum OperationRequest {
+    ShutdownCancel {
+        epoch: Option<u64>,
+    },
+    ShutdownStatus,
+    ShutdownSeal {
+        epoch: Option<u64>,
+    },
+    ShutdownResume {
+        epoch: Option<u64>,
+    },
     PrepareReview {
         operation_id: String,
         attempt_id: String,
@@ -175,7 +198,91 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
     let verify = request["action"] == "reconcile";
     let request: OperationRequest =
         serde_json::from_value(request).map_err(|e| AppError::invalid_input(e.to_string()))?;
+    if matches!(
+        request,
+        OperationRequest::ShutdownCancel { .. }
+            | OperationRequest::ShutdownStatus
+            | OperationRequest::ShutdownSeal { .. }
+            | OperationRequest::ShutdownResume { .. }
+    ) {
+        let mut state = ctx.operations.0.lock().unwrap();
+        let epoch = match &request {
+            OperationRequest::ShutdownCancel { epoch }
+            | OperationRequest::ShutdownSeal { epoch }
+            | OperationRequest::ShutdownResume { epoch } => *epoch,
+            _ => None,
+        };
+        // A response deadline may expire while a host waits for its service
+        // lock. An older seal/resume cannot overtake a newer Keep open or seal.
+        if let Some(epoch) = epoch {
+            if epoch < state.shutdown_epoch {
+                return Ok(json!({"ready":false,"snapshots":[]}));
+            }
+            state.shutdown_epoch = epoch;
+        }
+        if matches!(request, OperationRequest::ShutdownResume { .. }) {
+            state.sealed = false;
+            state.canceling = false;
+        }
+        if matches!(request, OperationRequest::ShutdownCancel { .. }) {
+            state.canceling = true;
+            for record in &mut state.records {
+                if record.snapshot.settled {
+                    continue;
+                }
+                cancel_record(ctx, record)?;
+            }
+        }
+        let ready = state.requests == 0
+            && state.running == 0
+            && !state.driving
+            && state.records.iter().all(|r| r.snapshot.settled);
+        if ready
+            && matches!(
+                request,
+                OperationRequest::ShutdownSeal { .. } | OperationRequest::ShutdownCancel { .. }
+            )
+        {
+            state.sealed = true;
+        }
+        return Ok(
+            json!({"ready":ready,"snapshots":state.records.iter().map(|r| &r.snapshot).collect::<Vec<_>>() }),
+        );
+    }
+    {
+        let mut state = ctx.operations.0.lock().unwrap();
+        if state.sealed
+            && !matches!(
+                request,
+                OperationRequest::List | OperationRequest::Read { .. }
+            )
+        {
+            return Err(AppError::invalid_input(
+                "The app is closing; keep it open before starting more work",
+            ));
+        }
+        if state.canceling
+            && matches!(
+                request,
+                OperationRequest::SubmitInstall { .. }
+                    | OperationRequest::SubmitProjectUpdate { .. }
+                    | OperationRequest::ConfirmInstall { .. }
+                    | OperationRequest::RetryFailed { .. }
+                    | OperationRequest::PrepareReview { .. }
+            )
+        {
+            return Err(AppError::invalid_input(
+                "The app is stopping unfinished work; keep it open before starting more",
+            ));
+        }
+        state.requests += 1;
+    }
+    let _request = RequestGuard(&ctx.operations);
     match request {
+        OperationRequest::ShutdownCancel { .. }
+        | OperationRequest::ShutdownStatus
+        | OperationRequest::ShutdownSeal { .. }
+        | OperationRequest::ShutdownResume { .. } => unreachable!(),
         OperationRequest::PrepareReview {
             operation_id,
             attempt_id,
@@ -357,19 +464,7 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
                 .iter_mut()
                 .find(|r| r.snapshot.operation_id == operation_id)
                 .ok_or_else(|| AppError::not_found("Operation not found"))?;
-            record.snapshot.cancel_requested = true;
-            ctx.cancel.cancel(&operation_id);
-            for item in &mut record.snapshot.items {
-                match item.phase {
-                    Phase::Queued | Phase::Waiting => {
-                        item.phase = Phase::Canceled;
-                        item.message = None;
-                    }
-                    Phase::Applying | Phase::Preparing => item.phase = Phase::Stopping,
-                    _ => {}
-                }
-            }
-            save(ctx, record)?;
+            cancel_record(ctx, record)?;
             let snapshot = record.snapshot.clone();
             drop(state);
             notify(ctx, &snapshot);
@@ -473,6 +568,22 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
             .map(|r| &r.snapshot)
             .collect::<Vec<_>>())),
     }
+}
+
+fn cancel_record(ctx: &HostCtx, record: &mut Record) -> Result<(), AppError> {
+    record.snapshot.cancel_requested = true;
+    ctx.cancel.cancel(&record.snapshot.operation_id);
+    for item in &mut record.snapshot.items {
+        match item.phase {
+            Phase::Queued | Phase::Waiting => {
+                item.phase = Phase::Canceled;
+                item.message = None;
+            }
+            Phase::Applying | Phase::Preparing => item.phase = Phase::Stopping,
+            _ => {}
+        }
+    }
+    save(ctx, record)
 }
 
 fn unowned_snapshot(mut snapshot: OperationSnapshot) -> OperationSnapshot {

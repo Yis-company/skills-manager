@@ -558,6 +558,9 @@ export const updateInstallBlocker = () => invoke<null | string>("update_install_
 
 export const restartApp = () => invoke<void>("restart_app");
 
+/** Windows installation exits the process; use the shared shutdown boundary first. */
+export const installAppUpdate = () => invoke<void>("install_app_update");
+
 export interface DiagnosticInfo {
   app_version: string;
   os: string;

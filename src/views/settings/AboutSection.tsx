@@ -107,6 +107,14 @@ export function AboutSection({ reportingIssue, onReportIssue }: AboutSectionProp
         return;
       }
 
+      // Windows' installer exits directly, so it must run behind the backend
+      // shutdown boundary rather than the plugin's frontend install command.
+      if (IS_WINDOWS) {
+        await api.installAppUpdate();
+
+        return;
+      }
+
       // The updater plugin does not inherit the app's proxy setting the way
       // `check_app_update` does. Without this, a user behind a proxy is told a
       // new version exists and then cannot install it. The proxy given to

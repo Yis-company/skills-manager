@@ -5,7 +5,9 @@ import type {
   ProjectGitPushReview,
   ProjectGitStatus,
 } from "../../src/lib/projectGit";
+import type { ShutdownRequest } from "../../src/lib/shutdown";
 import type {
+  AppUpdateInfo,
   GitBackupStatus,
   GithubBackupConnectResult,
   GithubDeviceFlowStart,
@@ -28,7 +30,11 @@ export type RemoteSeed = Omit<Seed, "remoteHosts" | "remoteStates">;
 
 /** What a test starts from. Every field is optional; a missing one is empty. */
 export interface Seed {
+  appUpdate?: AppUpdateInfo;
+  shutdown?: null | ShutdownRequest;
+  shutdownReady?: boolean;
   operationResultsReadError?: boolean;
+  operationResultsWriteError?: boolean;
   operationResults?: { version: number; results: OperationSnapshot[] };
   operations?: OperationSnapshot[];
   holdOperations?: boolean;
@@ -196,7 +202,16 @@ export type State = Required<Seed>;
 
 export function createState({ settings, ...seed }: Seed): State {
   return structuredClone({
+    appUpdate: {
+      has_update: false,
+      current_version: "1.40.0",
+      latest_version: "1.40.0",
+      release_url: "",
+    },
+    shutdown: null,
+    shutdownReady: true,
     operationResultsReadError: false,
+    operationResultsWriteError: false,
     operationResults: { version: 0, results: [] },
     operations: [],
     holdOperations: false,

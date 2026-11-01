@@ -5,6 +5,7 @@ import { FirstRunRestoreDialog } from "./components/FirstRunRestoreDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { Layout } from "./components/Layout";
 import { RemotePickerHost } from "./components/RemoteDirectoryPicker";
+import { ShutdownGuard } from "./components/ShutdownGuard";
 import { AppProvider } from "./context/AppContext";
 import { WorkspaceChangesProvider } from "./context/WorkspaceChangesContext";
 import { Dashboard } from "./views/Dashboard";
@@ -24,6 +25,7 @@ const rootRoute = createRootRoute({
         <Layout />
         <HelpDialog />
         <CloseActionGuard />
+        <ShutdownGuard />
         <FirstRunRestoreDialog />
         <RemotePickerHost />
       </AppProvider>
