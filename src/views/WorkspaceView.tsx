@@ -14,6 +14,7 @@ import {
   Search,
   Square,
   SquareCheck,
+  Table2,
   Trash2,
   Unlink,
   Upload,
@@ -40,6 +41,7 @@ import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import { PresetBar } from "../components/PresetBar";
 import { ResourceWorkspace } from "../components/ResourceWorkspace";
 import { SkillMarkdown } from "../components/SkillMarkdown";
+import { SkillMatrix } from "../components/SkillMatrix";
 import { useApp } from "../context/AppContext";
 import { useMultiSelect } from "../hooks/useMultiSelect";
 import { usePresetSwitch } from "../hooks/usePresetSwitch";
@@ -56,7 +58,7 @@ import {
 import { matchesTagFilter } from "../lib/tagFilter";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectSkill } from "../lib/tauri";
-import { cn, compactHomePath } from "../utils";
+import { cn } from "../utils";
 import {
   CODING_WORKSPACE_CONFIG,
   LOBSTER_WORKSPACE_CONFIG,
@@ -298,7 +300,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
 
   const queryClient = useQueryClient();
 
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list" | "matrix">("matrix");
   const [search, setSearch] = useState("");
   const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -1016,13 +1018,31 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     [],
   );
 
-  const handlePresetAdd = useCallback(async (skill: ManagedSkill, agentK: string) => {
-    await api.syncSkillToTool(skill.id, agentK);
-  }, []);
+  useEffect(() => {
+    const refresh = () => {
+      void loadLocalSkills();
+      void refreshManagedSkills();
+      void refreshTools();
+    };
 
-  const handlePresetRemove = useCallback(async (skill: ManagedSkill, agentK: string) => {
-    await api.unsyncSkillFromTool(skill.id, agentK);
-  }, []);
+    window.addEventListener("workspace-targets-changed", refresh);
+
+    return () => window.removeEventListener("workspace-targets-changed", refresh);
+  }, [loadLocalSkills, refreshManagedSkills, refreshTools]);
+
+  const handlePresetAdd = useCallback(
+    async (skill: ManagedSkill, agentK: string) => {
+      await invokeHost(activeHostId, "sync_skill_to_tool", { skillId: skill.id, tool: agentK });
+    },
+    [activeHostId],
+  );
+
+  const handlePresetRemove = useCallback(
+    async (skill: ManagedSkill, agentK: string) => {
+      await invokeHost(activeHostId, "unsync_skill_from_tool", { skillId: skill.id, tool: agentK });
+    },
+    [activeHostId],
+  );
 
   const handlePresetComplete = useCallback(async () => {
     await Promise.all([refreshManagedSkills(), refreshTools(), loadLocalSkills()]);
@@ -1131,7 +1151,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       <ResourceWorkspace
         scope={{ kind: "global", category: config.category }}
         skills={
-          <div className="app-page">
+          <div className="app-page gap-4">
             <div className="app-panel flex flex-col items-center justify-center py-16 text-center">
               <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-surface-hover">
                 <Globe className="h-5 w-5 text-muted" />
@@ -1154,18 +1174,8 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       <ResourceWorkspace
         scope={{ kind: "global", category: config.category }}
         skills={
-          <div className="app-page">
+          <div className="app-page gap-4">
             <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <h1 className="app-page-title flex items-center gap-2.5">
-                    <Globe className="h-5 w-5 text-accent" />
-                    {t(config.i18nKeys.title)}
-                    <span className="app-badge">{installedTools.length}</span>
-                  </h1>
-                </div>
-              </div>
-
               {presets.length > 0 && (
                 <PresetBar
                   presets={presets}
@@ -1182,6 +1192,11 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
               {presetSwitch.dialog}
             </div>
 
+            <SkillMatrix
+              category={config.category}
+              library={managedSkills}
+              agents={installedTools}
+            />
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {installedTools.map((tool) => {
                 const count = localCountByAgent[tool.key] ?? skillCountByAgent[tool.key] ?? 0;
@@ -1222,31 +1237,17 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     <ResourceWorkspace
       scope={{ kind: "global", agentKey: currentTool.key, category: config.category }}
       skills={
-        <div className="app-page">
+        <div className="app-page gap-4">
+          <p className="text-[12px] text-muted">
+            {t("globalWorkspace.localSkills.summary", {
+              total: localSkills.length,
+              managed: managedLocalCount,
+              synced: inSyncLocalCount,
+            })}
+          </p>
           {/* Header */}
           <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0 flex-[1_1_360px]">
-                <h1 className="app-page-title flex items-center gap-2.5">
-                  <AgentIcon
-                    agentKey={currentTool.key}
-                    displayName={currentTool.display_name}
-                    className="h-7 w-7 rounded-lg"
-                  />
-                  {currentTool.display_name}
-                  <span className="app-badge">{localSkills.length}</span>
-                </h1>
-                <p className="mt-1 truncate text-[13px] text-muted" title={currentTool.skills_dir}>
-                  {compactHomePath(currentTool.skills_dir)}
-                  <span className="px-1.5">·</span>
-                  {t("globalWorkspace.localSkills.summary", {
-                    total: localSkills.length,
-                    managed: managedLocalCount,
-                    synced: inSyncLocalCount,
-                  })}
-                </p>
-              </div>
-
               <div className="flex min-w-0 flex-[2_1_520px] flex-wrap items-center justify-end gap-2">
                 <div className="relative w-full min-w-[220px] max-w-[320px]">
                   <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
@@ -1273,7 +1274,21 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                     <RefreshCw className={cn("h-4 w-4", localSkillsLoading && "animate-spin")} />
                   </button>
                   <button
+                    type="button"
+                    onClick={() => setViewMode("matrix")}
+                    aria-label={t("workspace.matrixView")}
+                    aria-pressed={viewMode === "matrix"}
+                    className={cn(
+                      "rounded-md p-2",
+                      viewMode === "matrix" ? "bg-surface-active text-secondary" : "text-muted",
+                    )}
+                  >
+                    <Table2 className="h-4 w-4" />
+                  </button>
+                  <button
                     onClick={() => setViewMode("grid")}
+                    aria-label={t("mySkills.view.grid")}
+                    aria-pressed={viewMode === "grid"}
                     className={cn(
                       "rounded-md p-2 transition-colors outline-none",
                       viewMode === "grid"
@@ -1285,6 +1300,8 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                   </button>
                   <button
                     onClick={() => setViewMode("list")}
+                    aria-label={t("mySkills.view.list")}
+                    aria-pressed={viewMode === "list"}
                     className={cn(
                       "rounded-md p-2 transition-colors outline-none",
                       viewMode === "list"
@@ -1530,49 +1547,92 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                   )}
                 </div>
               )}
-              <div
-                className={cn(
-                  "pb-8",
-                  viewMode === "grid"
-                    ? "grid grid-cols-2 gap-3 lg:grid-cols-3"
-                    : "flex flex-col gap-0.5",
-                )}
-              >
-                {visibleLocalSkills.map((skill) => {
-                  const statusMeta = getLocalStatusMeta(t, skill.sync_status);
+              {viewMode === "matrix" ? (
+                <SkillMatrix
+                  local={visibleLocalSkills}
+                  agentKey={currentTool.key}
+                  agents={[currentTool]}
+                  inspect={(key) => {
+                    const skill = visibleLocalSkills.find(
+                      (item) => `${item.agent}:${item.relative_path}` === key,
+                    )!;
 
-                  const isManaged =
-                    !!skill.center_skill_id && managedLocalIds.has(skill.center_skill_id);
+                    if (isMultiSelect) toggleSelect(localSkillKey(skill));
+                    else void openLocalDetail(skill);
+                  }}
+                  selection={
+                    isMultiSelect
+                      ? {
+                          ids: new Set(
+                            visibleLocalSkills
+                              .filter((skill) => selectedIds.has(localSkillKey(skill)))
+                              .map((skill) => `${skill.agent}:${skill.relative_path}`),
+                          ),
+                          toggle: (key) => {
+                            const skill = visibleLocalSkills.find(
+                              (item) => `${item.agent}:${item.relative_path}` === key,
+                            );
 
-                  const key = localSkillKey(skill);
+                            if (skill) toggleSelect(localSkillKey(skill));
+                          },
+                        }
+                      : undefined
+                  }
+                  details={(key) => {
+                    const skill = visibleLocalSkills.find(
+                      (item) => `${item.agent}:${item.relative_path}` === key,
+                    )!;
 
-                  return (
-                    <WorkspaceSkillCard
-                      key={key}
-                      viewMode={viewMode}
-                      title={skill.name}
-                      description={skill.description || skill.relative_path}
-                      tags={skill.tags.map((tag) => ({
-                        label: tag,
-                        className: getTagColor(tag, allLocalTags),
-                      }))}
-                      status={statusMeta}
-                      creator={creatorOf(skill)}
-                      fileCount={skill.files.length}
-                      active={isManaged}
-                      actions={isMultiSelect ? undefined : renderLocalSkillActions(skill, viewMode)}
-                      actionsHover={viewMode === "list"}
-                      selectable={isMultiSelect}
-                      selected={selectedIds.has(key)}
-                      onClick={() =>
-                        isMultiSelect
-                          ? !batchSelectionLocked && toggleSelect(key)
-                          : void openLocalDetail(skill)
-                      }
-                    />
-                  );
-                })}
-              </div>
+                    return renderLocalSkillActions(skill, "list");
+                  }}
+                />
+              ) : (
+                <div
+                  className={cn(
+                    "pb-8",
+                    viewMode === "grid"
+                      ? "grid grid-cols-2 gap-3 lg:grid-cols-3"
+                      : "flex flex-col gap-0.5",
+                  )}
+                >
+                  {visibleLocalSkills.map((skill) => {
+                    const statusMeta = getLocalStatusMeta(t, skill.sync_status);
+
+                    const isManaged =
+                      !!skill.center_skill_id && managedLocalIds.has(skill.center_skill_id);
+
+                    const key = localSkillKey(skill);
+
+                    return (
+                      <WorkspaceSkillCard
+                        key={key}
+                        viewMode={viewMode}
+                        title={skill.name}
+                        description={skill.description || skill.relative_path}
+                        tags={skill.tags.map((tag) => ({
+                          label: tag,
+                          className: getTagColor(tag, allLocalTags),
+                        }))}
+                        status={statusMeta}
+                        creator={creatorOf(skill)}
+                        fileCount={skill.files.length}
+                        active={isManaged}
+                        actions={
+                          isMultiSelect ? undefined : renderLocalSkillActions(skill, viewMode)
+                        }
+                        actionsHover={viewMode === "list"}
+                        selectable={isMultiSelect}
+                        selected={selectedIds.has(key)}
+                        onClick={() =>
+                          isMultiSelect
+                            ? !batchSelectionLocked && toggleSelect(key)
+                            : void openLocalDetail(skill)
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
 

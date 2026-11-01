@@ -36,6 +36,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { useApp } from "../context/AppContext";
+import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import { type PresetsData, queryKeys } from "../lib/appQueries";
 import { getPresetIconOption } from "../lib/presetIcons";
 import { applyStoredOrder } from "../lib/storedOrder";
@@ -117,6 +118,7 @@ function useStateFrom<S, T>(source: S, init: (source: S) => T) {
 }
 
 export function Sidebar() {
+  const workspaceChanges = useWorkspaceChanges();
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
@@ -281,7 +283,8 @@ export function Sidebar() {
     { name: t("sidebar.backup"), path: "/backup", icon: CloudUpload },
   ] as const;
 
-  const handleSwitchPreset = (id: string) => {
+  const handleSwitchPreset = async (id: string) => {
+    if (id !== viewedPreset?.id && !(await workspaceChanges.confirmLeave())) return;
     closeSkillDetail();
     setViewedPresetId(id);
 

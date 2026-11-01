@@ -40,6 +40,7 @@ import * as api from "../lib/tauri";
 import { applyTextSize } from "../lib/textScale";
 import { settingsLink } from "../views/settings/categories";
 import { useInstallQueueControl } from "./InstallQueueContext";
+import { useWorkspaceChanges } from "./WorkspaceChangesContext";
 
 /** The live link to the active remote host. */
 export interface HostSession {
@@ -143,6 +144,7 @@ function storeViewedPresetId(id: string) {
 const AppContext = createContext<AppState | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const { confirmLeave: confirmWorkspaceLeave } = useWorkspaceChanges();
   const SKILL_UPDATE_TOAST_ID = "skill-update-available";
   const APP_UPDATE_TOAST_ID = "app-update-available";
   const navigate = useNavigate();
@@ -331,6 +333,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const switchHost = useCallback(
     async (hostId: null | string, allowDuringRemoteUpdate = false): Promise<boolean> => {
       if (updatingRemoteCliHostId !== null && !allowDuringRemoteUpdate) return false;
+
+      if (hostId !== getActiveHostId() && !(await confirmWorkspaceLeave())) return false;
       // Only the latest switch decides where the app ends up.
       const seq = ++switchSeqRef.current;
       const isLatest = () => switchSeqRef.current === seq;
@@ -406,7 +410,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (isLatest()) setConnectingHostId(null);
       }
     },
-    [enterHost, installQueue, refreshAppDataForHost, remoteHosts, updatingRemoteCliHostId],
+    [
+      enterHost,
+      installQueue,
+      refreshAppDataForHost,
+      remoteHosts,
+      updatingRemoteCliHostId,
+      confirmWorkspaceLeave,
+    ],
   );
 
   useEffect(() => {

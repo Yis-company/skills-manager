@@ -47,13 +47,7 @@ export function usePresetSwitch(onSwitched: () => Promise<void>) {
 
     if (getActiveHostId() !== hostId) return;
 
-    if (review.removals.length > 0) {
-      setPending({ preset, review, hostId });
-
-      return;
-    }
-
-    await apply(preset, review, hostId);
+    setPending({ preset, review, hostId });
   };
 
   const dialog = (

@@ -16,18 +16,22 @@ test.beforeEach(async ({ page, backend }) => {
 });
 
 test("resource tabs follow browser history and survive a reload", async ({ page }) => {
-  await page.getByRole("button", { name: "Instructions" }).click();
+  await page.getByRole("tab", { name: "Instructions", exact: true }).click();
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await expect(page).toHaveURL(/resource=instructions/);
   await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
 
-  await page.getByRole("button", { name: "MCPs" }).click();
+  await page.getByRole("tab", { name: "MCPs", exact: true }).click();
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await expect(page).toHaveURL(/resource=mcps/);
   await expect(page.getByRole("heading", { name: "MCP library" })).toBeVisible();
 
   await page.goBack();
   await expect(page).toHaveURL(/resource=instructions/);
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
   await page.reload();
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
 });
 
@@ -35,7 +39,8 @@ test("an instruction bundle can be saved, reviewed, applied, and loaded again", 
   page,
   backend,
 }) => {
-  await page.getByRole("button", { name: "Instructions" }).click();
+  await page.getByRole("tab", { name: "Instructions", exact: true }).click();
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByLabel("Agent", { exact: true }).selectOption("codex");
   await page.getByRole("button", { name: "New", exact: true }).click();
@@ -61,7 +66,8 @@ test("an instruction bundle can be saved, reviewed, applied, and loaded again", 
 });
 
 test("an MCP definition uses an explicit preview before apply", async ({ page, backend }) => {
-  await page.getByRole("button", { name: "MCPs" }).click();
+  await page.getByRole("tab", { name: "MCPs", exact: true }).click();
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("textbox", { name: "Name", exact: true }).fill("Local docs");
   await page.getByRole("textbox", { name: "Command" }).fill("node");
@@ -81,6 +87,7 @@ test("an MCP definition uses an explicit preview before apply", async ({ page, b
 
   await page.reload();
   await expect(page.getByText("Local docs", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await expect(page.getByText("Local docs · managed", { exact: true }).first()).toBeVisible();
 });
 
@@ -104,6 +111,7 @@ test("a delayed remote preview cannot appear after switching back to the local h
   });
   await page.reload();
   await page.goto("/my-skills?resource=mcps");
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await page.getByRole("button", { name: "Local", exact: true }).click();
   await page.getByRole("menuitemradio", { name: /Resource host/ }).click();
   await page.getByText("Remote docs", { exact: true }).click();
@@ -123,7 +131,7 @@ test("a delayed remote preview cannot appear after switching back to the local h
   await page.getByRole("menuitemradio", { name: /Local This computer/ }).click();
   await backend.releaseResponse("remote_invoke");
 
-  await expect(page.getByRole("heading", { name: "MCP library" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "On agents" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review deployment" })).toHaveCount(0);
   await expect(page.getByText("Remote docs", { exact: true })).toHaveCount(0);
 });
@@ -149,6 +157,7 @@ test("MCP import opens a draft and removal explicitly detaches without changing 
     },
   });
   await page.goto("/my-skills?resource=mcps");
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await page.getByText("Import from this agent or browse the catalog", { exact: true }).click();
   await page.getByRole("button", { name: "Review import", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(
@@ -167,6 +176,7 @@ test("MCP import opens a draft and removal explicitly detaches without changing 
     request: expect.objectContaining({ action: "remove", detach: true }),
   });
   await page.reload();
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await expect(page.getByText("Imported docs · unmanaged", { exact: true }).first()).toBeVisible();
 });
 
@@ -186,6 +196,7 @@ test("project resources can select every assigned agent and nested edits retain 
     },
   });
   await page.goto("/project/repo?resource=instructions");
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await page.getByLabel("Agent", { exact: true }).selectOption("codex");
   await page.getByRole("tree", { name: "Instruction files" }).getByTitle("docs/AGENTS.md").click();
   await expect(page.getByRole("textbox", { name: "Instruction file content" })).toHaveText(
@@ -225,6 +236,7 @@ test("project worktrees get their own tabs and scope file scans", async ({ page,
     ],
   });
   await page.goto("/project/repo?resource=instructions");
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   const tabs = page.getByRole("tablist", { name: "Worktrees" });
   await expect(tabs.getByRole("tab", { name: "main (main)" })).toHaveAttribute(
     "aria-selected",
@@ -257,6 +269,7 @@ test("files the rich editor would reformat open in source mode unchanged", async
     },
   });
   await page.goto("/project/repo?resource=instructions");
+  await page.getByRole("button", { name: "Manage definitions and content" }).click();
   await page.getByRole("tree", { name: "Instruction files" }).getByTitle("CLAUDE.md").click();
 
   const editor = page.getByRole("textbox", {

@@ -90,18 +90,19 @@ test("every preset switch that removes skills requires review even after the old
   });
   await page.goto("/global-workspace");
 
-  const switchButton = page.getByRole("button", {
-    name: "Switch shared preset to New",
-    exact: true,
-  });
+  const switchButton = async () => {
+    await page.getByRole("button", { name: "Switch shared preset…", exact: true }).click();
+    await page.getByLabel("Preset", { exact: true }).selectOption("new-p");
+    await page.getByRole("button", { name: "Review preset changes" }).click();
+  };
 
-  await switchButton.click();
+  await switchButton();
   let dialog = page.getByRole("dialog", { name: "Switch to New?" });
   await expect(dialog).toContainText("/fixture/agents/old");
   await expect(dialog).toContainText("including direct additions");
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(await backend.calls("apply_preset_to_default")).toHaveLength(0);
-  await switchButton.click();
+  await switchButton();
   dialog = page.getByRole("dialog", { name: "Switch to New?" });
   await dialog.getByRole("button", { name: "Switch", exact: true }).click();
   await expect(dialog).toHaveCount(0);
@@ -114,7 +115,7 @@ test("every preset switch that removes skills requires review even after the old
     ],
   });
   await page.reload();
-  await switchButton.click();
+  await switchButton();
   await expect(page.getByRole("dialog", { name: "Switch to New?" })).toBeVisible();
 });
 
@@ -292,7 +293,7 @@ test("Help is reachable from the command palette and closes from the keyboard", 
   await expect(help).toHaveCount(0);
 });
 
-test("a named shared switch without removals applies once without an extra confirmation", async ({
+test("a shared switch without removals still requires its explicit impact review", async ({
   page,
   backend,
 }) => {
@@ -302,7 +303,13 @@ test("a named shared switch without removals applies once without an extra confi
     tools: [tool("codex", "Codex")],
   });
   await page.goto("/global-workspace");
-  await page.getByRole("button", { name: "Switch shared preset to Writing", exact: true }).click();
+  await page.getByRole("button", { name: "Switch shared preset…", exact: true }).click();
+  await page.getByRole("button", { name: "Review preset changes" }).click();
+  expect(await backend.calls("apply_preset_to_default")).toHaveLength(0);
+  await page
+    .getByRole("dialog", { name: "Switch to Writing?" })
+    .getByRole("button", { name: "Switch", exact: true })
+    .click();
   await expect.poll(async () => (await backend.calls("apply_preset_to_default")).length).toBe(1);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect((await backend.calls("apply_preset_to_default"))[0].review).toContain('"removals":[]');

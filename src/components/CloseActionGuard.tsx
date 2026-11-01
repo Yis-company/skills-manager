@@ -1,10 +1,12 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 
+import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import * as api from "../lib/tauri";
 import { CloseActionDialog } from "./CloseActionDialog";
 
 export function CloseActionGuard() {
+  const { confirmLeave } = useWorkspaceChanges();
   const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -23,7 +25,7 @@ export function CloseActionGuard() {
       })();
 
       if (!trayEnabled) {
-        api.appExit();
+        if (await confirmLeave()) api.appExit();
 
         return;
       }
@@ -31,7 +33,7 @@ export function CloseActionGuard() {
       const pref = await api.getSettings("close_action");
 
       if (pref === "close") {
-        api.appExit();
+        if (await confirmLeave()) api.appExit();
       } else if (pref === "hide") {
         await api.hideToTray();
       } else {
@@ -42,9 +44,10 @@ export function CloseActionGuard() {
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [confirmLeave]);
 
   const handleClose = async (remember: boolean) => {
+    if (!(await confirmLeave())) return;
     setDialogOpen(false);
 
     if (remember) await api.setSettings("close_action", "close");

@@ -5,7 +5,6 @@ import {
   Circle,
   CircleSlash,
   Download,
-  FolderOpen,
   GitBranch,
   Layers,
   LayoutGrid,
@@ -15,6 +14,7 @@ import {
   Search,
   SlidersHorizontal,
   SquareCheck,
+  Table2,
   Tag,
   Trash2,
   Upload,
@@ -38,6 +38,7 @@ import type { ProjectSkillItemProps } from "../components/projectSkillItem";
 import { ProjectSkillRow } from "../components/ProjectSkillRow";
 import { ResourceWorkspace } from "../components/ResourceWorkspace";
 import { RetiredLinksBanner } from "../components/RetiredLinksBanner";
+import { SkillMatrix } from "../components/SkillMatrix";
 import { useApp } from "../context/AppContext";
 import { useLastUsedExportAgents } from "../hooks/useLastUsedExportAgents";
 import { useMultiSelect } from "../hooks/useMultiSelect";
@@ -129,7 +130,7 @@ export function ProjectDetail() {
       mountedRef.current = false;
     };
   }, []);
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list" | "matrix">("matrix");
   const [filterMode, setFilterMode] = useState<"all" | "disabled" | "enabled">("all");
   const [search, setSearch] = useState("");
   const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
@@ -728,6 +729,17 @@ export function ProjectDetail() {
     }
   };
 
+  useEffect(() => {
+    const refresh = () => {
+      void loadSkills();
+      void refreshProjects();
+    };
+
+    window.addEventListener("workspace-targets-changed", refresh);
+
+    return () => window.removeEventListener("workspace-targets-changed", refresh);
+  }, [loadSkills, refreshProjects]);
+
   const handleToggleSkill = async (skill: ProjectSkillGroup) => {
     if (!id) return;
     setTogglingSkill(getSkillKey(skill));
@@ -1135,9 +1147,13 @@ export function ProjectDetail() {
   const handleAddPresetSkillToProject = useCallback(
     async (skill: ManagedSkill, agentKey: string) => {
       if (!id) return;
-      await api.exportSkillToProject(skill.id, id, [agentKey]);
+      await invokeHost(activeHostId, "export_skill_to_project", {
+        skillId: skill.id,
+        projectId: id,
+        agents: [agentKey],
+      });
     },
-    [id],
+    [id, activeHostId],
   );
 
   const handleRemovePresetSkillFromProject = useCallback(
@@ -1146,9 +1162,14 @@ export function ProjectDetail() {
       const projectVariant = findProjectPresetVariant(skill, agentKey);
 
       if (!projectVariant) throw new Error(t("project.skillDirectoryNotFound"));
-      await api.deleteProjectSkill(id, projectVariant.relative_path, agentKey);
+      await invokeHost(activeHostId, "delete_project_skill", {
+        projectId: id,
+        skillRelativePath: projectVariant.relative_path,
+        agent: agentKey,
+        wholeSkill: false,
+      });
     },
-    [findProjectPresetVariant, id, t],
+    [findProjectPresetVariant, id, t, activeHostId],
   );
 
   const confirmPresetRemoval = useCallback(
@@ -1174,23 +1195,13 @@ export function ProjectDetail() {
       scope={{ kind: "project", projectId: id, agentKeys: project.agent_keys }}
       allowResources={project.workspace_type !== "linked"}
       skills={
-        <div className="app-page">
+        <div className="app-page gap-4">
           <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
+            <p className="text-[12px] text-muted">
+              {enabledCount} / {groupedSkills.length} {t("project.enabled")} ·{" "}
+              {isCopyMode ? t("project.settings.mode.copy") : "Link"}
+            </p>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0 flex-[1_1_260px]">
-                <h1 className="app-page-title flex items-center gap-2.5">
-                  <FolderOpen className="h-5 w-5 text-accent" />
-                  {project.name}
-                  <span className="app-badge">{groupedSkills.length}</span>
-                </h1>
-                <p className="mt-1 truncate text-[12px] leading-5 text-muted" title={project.path}>
-                  {project.path}
-                  {groupedSkills.length > 0 &&
-                    ` \u00B7 ${enabledCount} / ${groupedSkills.length} ${t("project.enabled")}`}
-                  {isCopyMode && ` \u00B7 ${t("project.settings.mode.copy")}`}
-                </p>
-              </div>
-
               <div className="flex min-w-0 flex-[2_1_560px] flex-wrap items-center justify-end gap-2">
                 <div className="relative w-full min-w-[220px] max-w-[300px]">
                   <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
@@ -1232,7 +1243,21 @@ export function ProjectDetail() {
                     <RefreshCw className={cn("h-4 w-4", fetching && "animate-spin")} />
                   </button>
                   <button
+                    type="button"
+                    onClick={() => setViewMode("matrix")}
+                    aria-label={t("workspace.matrixView")}
+                    aria-pressed={viewMode === "matrix"}
+                    className={cn(
+                      "rounded-md p-2",
+                      viewMode === "matrix" ? "bg-surface-active text-secondary" : "text-muted",
+                    )}
+                  >
+                    <Table2 className="h-4 w-4" />
+                  </button>
+                  <button
                     onClick={() => setViewMode("grid")}
+                    aria-label={t("mySkills.view.grid")}
+                    aria-pressed={viewMode === "grid"}
                     data-testid="view-grid"
                     className={cn(
                       "rounded-md p-2 transition-colors outline-none",
@@ -1245,6 +1270,8 @@ export function ProjectDetail() {
                   </button>
                   <button
                     onClick={() => setViewMode("list")}
+                    aria-label={t("mySkills.view.list")}
+                    aria-pressed={viewMode === "list"}
                     data-testid="view-list"
                     className={cn(
                       "rounded-md p-2 transition-colors outline-none",
@@ -1328,21 +1355,22 @@ export function ProjectDetail() {
                     <Plus className="h-3.5 w-3.5" />
                     {t("project.addSkill")}
                   </button>
-                  {showAddCallout && groupedSkills.length > 0 && !isMultiSelect && (
-                    <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-border bg-surface p-3 text-[12px] leading-snug shadow-lg">
-                      <button
-                        onClick={dismissAddCallout}
-                        className="absolute right-1.5 top-1.5 rounded p-0.5 text-faint hover:text-secondary"
-                        aria-label={t("common.close")}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                      <p className="pr-4 text-secondary">{t("project.addCallout")}</p>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
+
+            {showAddCallout && groupedSkills.length > 0 && !isMultiSelect && (
+              <div className="relative rounded-lg bg-bg-secondary px-3 py-2 text-[12px] leading-5">
+                <button
+                  onClick={dismissAddCallout}
+                  className="absolute right-1.5 top-1.5 rounded p-0.5 text-faint hover:text-secondary"
+                  aria-label={t("common.close")}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+                <p className="pr-4 text-secondary">{t("project.addCallout")}</p>
+              </div>
+            )}
 
             {project.workspace_type !== "linked" && (
               <RetiredLinksBanner projectId={id} refreshKey={skills} />
@@ -1425,6 +1453,7 @@ export function ProjectDetail() {
             {/* Preset bar */}
             {presets.length > 0 && presetBarAgentKeys.length > 0 && (
               <PresetBar
+                projectName={project.name}
                 presets={presets}
                 managedSkills={managedSkills}
                 agentKeys={presetBarAgentKeys}
@@ -1597,6 +1626,39 @@ export function ProjectDetail() {
                 </button>
               )}
             </div>
+          ) : viewMode === "matrix" ? (
+            <SkillMatrix
+              groups={filtered}
+              projectId={id}
+              projectName={project.name}
+              linked={project.workspace_type === "linked"}
+              agents={exportTargets.filter(
+                (target) =>
+                  (target.installed && target.enabled) ||
+                  groupedSkills.some((group) =>
+                    group.variants.some((copy) => copy.agent === target.key),
+                  ),
+              )}
+              inspect={(key) => {
+                const skill = filtered.find((item) => item.id === key)!;
+
+                if (isMultiSelect) toggleSelect(key);
+                else void handleOpenDetail(skill);
+              }}
+              selection={isMultiSelect ? { ids: selectedIds, toggle: toggleSelect } : undefined}
+              details={(key) => {
+                const skill = filtered.find((item) => item.id === key)!;
+
+                return (
+                  <button
+                    className="app-button-secondary"
+                    onClick={() => void handleOpenDetail(skill)}
+                  >
+                    {t("workspace.sourceActions")}
+                  </button>
+                );
+              }}
+            />
           ) : (
             <div
               className={cn(

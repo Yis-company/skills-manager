@@ -30,6 +30,7 @@ test("confirmed managed deletion stays visible as deleted while its read is held
 }) => {
   await backend.seed({ skills: [skill("s1", "alpha"), skill("s2", "beta")] });
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(skillHeadings(page)).toHaveText(["alpha", "beta"]);
 
   await backend.hold("get_managed_skills");
@@ -50,6 +51,7 @@ test("a rejected managed deletion keeps the row and reports the failure", async 
 }) => {
   await backend.seed({ skills: [skill("s1", "alpha")] });
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(skillHeadings(page)).toHaveText(["alpha"]);
   await backend.failNext("delete_managed_skill", "fake failure");
 
@@ -68,6 +70,7 @@ test("fulfilled batch deletion removes successful rows and keeps reported failur
     deleteFailedIds: ["s2"],
   });
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(skillHeadings(page)).toHaveText(["alpha", "beta", "gamma"]);
 
   await page.getByRole("button", { name: "Select", exact: true }).click();
@@ -90,6 +93,7 @@ test("a rejected batch keeps rows until a held revalidation reports partial writ
     rejectBatchDeleteAfterPartialWrite: true,
   });
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(skillHeadings(page)).toHaveText(["alpha", "beta"]);
 
   await page.getByRole("button", { name: "Select", exact: true }).click();
@@ -126,6 +130,7 @@ test("project whole-skill deletion keeps the variant whose delete failed", async
     },
   });
   await page.goto("/project/p1");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(page.getByRole("heading", { name: "deploy", exact: true, level: 3 })).toBeVisible();
   await backend.failNext("delete_project_skill", "first variant failed");
 
@@ -179,6 +184,7 @@ test("a failed vendored delete keeps its aliases while a successful project dele
     },
   });
   await page.goto("/project/p1");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(page.getByRole("heading", { level: 3 })).toHaveText(["a-vendored", "z-independent"]);
   await page.getByRole("button", { name: "Select skills", exact: true }).click();
   await page.getByRole("button", { name: "Select All", exact: true }).click();
@@ -209,6 +215,7 @@ test("old host read responses cannot replace the selected host's colliding skill
     remoteStates: { [host.id]: { skills: [skill("same-id", "Remote copy")] } },
   });
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(skillHeadings(page)).toHaveText(["Local copy"]);
 
   const initialReads = (await backend.calls("get_managed_skills")).length;
@@ -241,6 +248,7 @@ test("a deletion finishing after a host switch only changes its originating host
     remoteStates: { [host.id]: { skills: [skill("same-id", "Remote copy")] } },
   });
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(skillHeadings(page)).toHaveText(["Local copy"]);
   await backend.hold("delete_managed_skill");
   const heading = page.getByRole("heading", { name: "Local copy", exact: true, level: 3 });
@@ -278,6 +286,7 @@ test("a deletion finishing after a host switch only changes its originating host
 test("a failed background read leaves the loaded library visible", async ({ page, backend }) => {
   await backend.seed({ skills: [skill("s1", "alpha"), skill("s2", "beta")] });
   await page.goto("/my-skills");
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
   await expect(skillHeadings(page)).toHaveText(["alpha", "beta"]);
   await backend.failNext("get_managed_skills", "background refresh failed");
 

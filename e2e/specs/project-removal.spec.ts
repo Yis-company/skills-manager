@@ -80,14 +80,15 @@ test("preset removal asks when a fresh scan fails and cancels on project navigat
     .and(page.locator("button"))
     .click();
 
-  const writing = page.getByRole("button", {
-    name: "Remove Writing skills from this project",
-    exact: true,
-  });
-
-  await expect(writing).toBeEnabled();
+  await page.getByRole("button", { name: "Add preset skills to project…", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Remove Writing skills from this project", exact: true })
+    .click();
   await backend.failNext("get_project_skills", "scan failed");
-  await writing.click();
+  await page
+    .getByRole("dialog", { name: "Review project preset changes" })
+    .getByRole("button", { name: "Apply reviewed changes" })
+    .click();
   const confirmation = page.getByRole("dialog", { name: "Remove copies with local changes?" });
   await expect(confirmation).toBeVisible();
   await page.goBack();
