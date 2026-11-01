@@ -161,6 +161,20 @@ bun install
 bun run tauri:dev
 ```
 
+`bun install` installs a pre-push hook. It runs `bun run format:check`,
+`bun run lint`, `bun run typecheck`, `bun run test`, and Rust formatting
+(`cargo fmt --manifest-path src-tauri/Cargo.toml --check`). Bun, Node, Rust
+and rustfmt must be available when pushing. The checks use the working tree;
+CI also runs the full build, E2E and platform-specific Rust checks.
+
+The installer refuses to overwrite an existing hook or change a configured
+`core.hooksPath`. If you maintain personal hooks, integrate
+`sh scripts/pre-push.sh` into your pre-push hook and run your existing hook
+as well. The installer will continue to refuse the conflict; use
+`bun install --ignore-scripts` when maintaining that integration yourself.
+An install with lifecycle scripts disabled does not install the hook; without
+a conflicting hook, run `bun run prepare` to install it afterwards.
+
 ### CLI
 
 The repository includes an agent-friendly CLI built on the same Rust shared core used by the desktop app. Both the CLI and the desktop app go through the same SQLite database, central library, and sync engine.
