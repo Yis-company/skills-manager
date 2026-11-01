@@ -1,4 +1,4 @@
-# Interactive operations (SKI-20 and SKI-21)
+# Interactive operations (SKI-20 through SKI-22)
 
 Desktop `operation_request({ request })` and the host dispatcher run the same
 backend-owned `OperationService` on `HostCtx`. React observes authoritative
@@ -142,11 +142,47 @@ Receipts contain sanitized source, local evidence and per-item results, never pe
 confirmation authority. Explicit read/reconcile of an unowned unfinished receipt returns
 unknown without replay; unowned Git previews cannot be confirmed.
 
-SKI-22 owns retained multi-host sessions and observing every originating host. Until
-then, the incumbent cancel-before-host-switch prompt uses known authoritative library
-snapshots and waits for safe cancellation before closing that session. Ordinary switching
-with no known active library work does not depend on an extra status RPC. This is not a
-claim of remote continuation across switches or protection against lost admission responses.
+## Viewed host and retained sessions
+
+Host switching does not cancel operations. `RemoteSessions` keeps one live connection
+per host needed by the viewed context, in-flight calls, active operations or live
+failed/review/unknown evidence. Selecting Local or another host releases idle connections;
+a failed target connection preserves the previous view and its connection. Parallel
+connects for the same host share one attempt. Version/protocol checks remain in the
+existing connection path. Ordinary calls never open a connection themselves.
+
+An operation request holds its original connection before its admission response is
+known. Observed snapshots update only that connection's operation records, rejecting
+older/duplicate revisions. Settlement retains the connection through the original
+destination's refresh. `remote_host_release({hostId})` acknowledges that refresh and
+releases only idle off-screen connections; concurrent calls, active work and retry/review
+evidence still retain their session. Refresh failures retain the connection for a read
+retry. `remote_host_disconnect()` selects Local; its optional `hostId` explicitly closes
+one idle host for reconnect and refuses to tear down live operation evidence.
+
+`remote_host_retained()` lists existing session-owned hosts so a remounted webview can
+observe them without switching views or opening connections. `operation-changed` events
+are forwarded with the transport's originating host identity. `OperationsProvider`
+independently polls every originating host that still needs observation, including pending
+admissions. Events are hints; snapshots remain authoritative. A slow or failed host read
+does not await or block another host's reads or actions. Connection unavailability is
+shown in host navigation without inventing an operation outcome.
+
+The provider exposes viewed-host `operations` and contextual-navigation `allOperations`.
+`act(originHostId, request)` requires the action's owning host; `install(sources, origin)`
+accepts an explicit host when resubmitting original evidence. Project and library actions,
+Git confirmations and late admission replies retain that identity. Ordinary view queries
+and the existing host-keyed page remount stay isolated. Operation caches merge by host,
+operation and monotonic revision; refresh markers/errors use a tuple of host, operation
+and attempt. Host navigation reveals active work/attention and a compact off-screen
+shortcut to the original project or installation source, without a mixed Activity page.
+
+A transport failure conservatively retains its host's operation evidence. The incumbent
+viewed-host quiet connection retry is unchanged; automatic operation response-loss
+reconciliation and a definitive unknown-result/retry decision remain SKI-23. Reconnecting
+a dead transport can start a new server and cannot itself prove what the previous server
+applied. No automatic replay is introduced. The retained-host listing is not restart
+restoration, persistence/pruning (SKI-24), or coordinated native shutdown (SKI-25).
 
 SKI-23 owns automatic dropped-response reconciliation; SKI-24 owns complete restart
 result restoration, retention/pruning and restored retry; SKI-25 owns complete quit,

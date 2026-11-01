@@ -1214,4 +1214,11 @@ export interface HostSessionInfo {
 export const remoteHostConnect = (hostId: string) =>
   invoke<HostSessionInfo>("remote_host_connect", { hostId });
 
-export const remoteHostDisconnect = () => invoke<void>("remote_host_disconnect");
+export const remoteHostDisconnect = (hostId?: string) =>
+  invoke<void>("remote_host_disconnect", { hostId: hostId ?? null });
+
+/** Existing app-session connections, without opening a connection or restoring results. */
+export const remoteHostRetained = () => invoke<string[]>("remote_host_retained");
+
+export const remoteHostRelease = (hostId: string) =>
+  invoke<void>("remote_host_release", { hostId });

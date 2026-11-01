@@ -118,13 +118,14 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
     ),
   );
 
-  const enqueue = (skills: SkillsShSkill[], _origin: null | string) => {
+  const enqueue = (skills: SkillsShSkill[], origin: null | string) => {
     void install(
       skills.map((skill) => ({
         kind: "marketplace",
         source: skill.source,
         skill_id: skill.skill_id,
       })),
+      origin,
     ).catch((error) => toast.error(getErrorMessage(error, t("common.error"))));
   };
 
@@ -132,9 +133,10 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
     const entry = marketEntries.get(key);
 
     if (entry)
-      void act({ action: "cancel", operation_id: entry.operation.operation_id }).catch((error) =>
-        toast.error(getErrorMessage(error, t("common.error"))),
-      );
+      void act(entry.operation.host_id, {
+        action: "cancel",
+        operation_id: entry.operation.operation_id,
+      }).catch((error) => toast.error(getErrorMessage(error, t("common.error"))));
   };
 
   const remove = cancel;

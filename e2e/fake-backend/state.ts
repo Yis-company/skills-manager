@@ -73,6 +73,7 @@ export interface Seed {
     result: GithubBackupConnectResult;
   };
   /** Remote hosts and their isolated fake backend data, keyed by host id. */
+  retainedHosts?: string[];
   remoteHosts?: RemoteHost[];
   remoteStates?: Record<string, RemoteSeed>;
   /** The host's CLI is older than the app; connecting installs the app's. */
@@ -216,6 +217,7 @@ export function createState({ settings, ...seed }: Seed): State {
     scan: { tools_scanned: 0, skills_found: 0, groups: [] },
     dialogPaths: [],
     batchImport: [],
+    retainedHosts: [],
     remoteHosts: [],
     remoteStates: {},
     remoteCliNeedsUpdate: false,

@@ -8,6 +8,7 @@ import { getErrorMessage } from "../lib/error";
 import {
   installationPhaseKey,
   operationCounts,
+  operationIdentity,
   type OperationRequest,
   type OperationSnapshot,
 } from "../lib/operations";
@@ -30,7 +31,7 @@ export function InstallationProgress({
     : t("operations.hostLocal");
 
   const perform = (request: OperationRequest) => {
-    void act(request)
+    void act(operation.host_id, request)
       .then(() => region.current?.focus())
       .catch((e) => toast.error(getErrorMessage(e, t("common.error"))));
   };
@@ -109,7 +110,7 @@ export function InstallationProgress({
                   .filter((i) => i.phase === "needs_review")
                   .flatMap((i) => (i.source ? [i.source] : []));
 
-                void install(sources).catch((e) =>
+                void install(sources, operation.host_id).catch((e) =>
                   toast.error(getErrorMessage(e, t("common.error"))),
                 );
               }}
@@ -129,7 +130,7 @@ export function InstallationProgress({
           </p>
         ))}
       </div>
-      {refreshErrors[operation.operation_id] && (
+      {refreshErrors[operationIdentity(operation)] && (
         <div className="flex flex-wrap items-center gap-2 text-[13px] text-secondary">
           <span>{t("operations.libraryRefreshFailed")}</span>
           <button

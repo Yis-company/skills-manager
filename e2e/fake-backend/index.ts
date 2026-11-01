@@ -74,7 +74,26 @@ mockWindows("main");
 mockIPC(
   async (cmd, args) => {
     calls.push({ cmd, args });
-    await holds.get(cmd)?.promise;
+
+    // SAFETY: remote_invoke uses the host-routing envelope; optional request exists only for operation calls.
+    const routed =
+      cmd === "remote_invoke"
+        ? (args as { hostId: string; command: string; args?: { request?: { action: string } } })
+        : null;
+
+    // SAFETY: operation_request is dispatched with the shared OperationRequest envelope.
+    const localOperation =
+      cmd === "operation_request" ? (args as CommandArgs<"operation_request">) : null;
+
+    const action = routed?.args?.request?.action ?? localOperation?.request.action;
+
+    const boundary = routed
+      ? `${routed.hostId}:${routed.command}${action ? `:${action}` : ""}`
+      : action
+        ? `${cmd}:${action}`
+        : cmd;
+
+    await (holds.get(boundary) ?? holds.get(cmd))?.promise;
 
     // SAFETY: these two IPC names own the SyncCallArgs contract; other commands keep their own key.
     const subcommand =
@@ -82,7 +101,12 @@ mockIPC(
         ? (args as CommandArgs<"sync_screen_call">).command
         : cmd;
 
-    const failureKey = failures.has(subcommand) ? subcommand : cmd;
+    const failureKey = failures.has(boundary)
+      ? boundary
+      : failures.has(subcommand)
+        ? subcommand
+        : cmd;
+
     const failure = failures.get(failureKey)?.shift();
 
     if (failure !== undefined) {
@@ -100,7 +124,7 @@ mockIPC(
     }
 
     let result = handler(args ?? {}, state);
-    const responseHold = responseHolds.get(cmd);
+    const responseHold = responseHolds.get(boundary) ?? responseHolds.get(cmd);
 
     if (responseHold && !responseHold.claimed) {
       responseHold.claimed = true;

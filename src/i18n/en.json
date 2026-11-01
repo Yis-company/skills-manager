@@ -1510,12 +1510,7 @@
     "connect": "Connect",
     "disconnect": "Disconnect",
     "connectFailed": "Couldn’t connect to {{name}}",
-    "cancelConnect": "Cancel",
-    "installsTitle": "Installs not finished",
-    "installsRunning_one": "1 skill install hasn’t finished. Switching hosts stops it.",
-    "installsRunning_other": "{{count}} skill installs haven’t finished. Switching hosts stops them.",
-    "waitForInstalls": "Wait for them",
-    "cancelInstalls": "Cancel them"
+    "cancelConnect": "Cancel"
   },
   "remoteSession": {
     "operatingOn": "Operating on",
@@ -1619,6 +1614,8 @@
     "managedPresenceHint": "Managed library deployments · native files and imports are available in details."
   },
   "operations": {
+    "hostUnavailable": "Connection unavailable",
+    "otherHosts": "Work on other hosts",
     "projectProgress": "Project update progress",
     "finished": "Project update finished",
     "stopping": "Stopping safely",

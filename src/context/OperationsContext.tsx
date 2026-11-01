@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { listen } from "@tauri-apps/api/event";
 import {
   createContext,
   type ReactNode,
@@ -17,23 +18,27 @@ import {
   refreshQuery,
 } from "../lib/appQueries";
 import { invokeHost } from "../lib/hostCall";
-import { listenOnActiveHost } from "../lib/hostEvents";
 import {
   type InstallSource,
   isLibraryOperation,
+  mergeOperations,
+  operationIdentity,
+  operationNeedsSession,
   operationQueryKey,
   type OperationRequest,
   type OperationSnapshot,
 } from "../lib/operations";
 import { groupProjectSkills } from "../lib/projectSkillGroups";
-import type { Project } from "../lib/tauri";
+import { type Project, remoteHostRelease, remoteHostRetained } from "../lib/tauri";
 
 interface OperationsState {
   operations: OperationSnapshot[];
+  allOperations: OperationSnapshot[];
+  unavailableHosts: (null | string)[];
   refreshErrors: Record<string, string>;
-  install: (sources: InstallSource[]) => Promise<void>;
+  install: (sources: InstallSource[], origin?: null | string) => Promise<void>;
   submit: (projectId: string, paths?: string[]) => Promise<void>;
-  act: (request: OperationRequest) => Promise<void>;
+  act: (origin: null | string, request: OperationRequest) => Promise<void>;
   refresh: (operation: OperationSnapshot) => Promise<void>;
 }
 
@@ -54,39 +59,82 @@ export function OperationsProvider({
   const client = useQueryClient();
   const [refreshErrors, setRefreshErrors] = useState<Record<string, string>>({});
   const refreshed = useRef(new Set<string>());
+  const refreshing = useRef(new Map<null | string, number>());
+  const refreshFailures = useRef(new Map<string, OperationSnapshot>());
   const submitting = useRef(new Map<string, Promise<void>>());
 
-  const query = useQuery({
-    queryKey: key(hostId),
-    queryFn: async () => {
-      const snapshots = await invokeHost<OperationSnapshot[]>(hostId, "operation_request", {
-        request: { action: "list" },
-      });
+  const [observedHosts, setObservedHosts] = useState<(null | string)[]>([null]);
+  const pending = useRef(new Map<null | string, number>());
 
-      const current = client.getQueryData<OperationSnapshot[]>(key(hostId)) ?? [];
+  const observe = useCallback((origin: null | string) => {
+    setObservedHosts((hosts) => (hosts.includes(origin) ? hosts : [...hosts, origin]));
+  }, []);
 
-      // Operations live for the session. An older in-flight list must not
-      // discard a newly submitted operation or replace its newer revision.
-      return [
-        ...current.filter(
-          (old) => !snapshots.some((next) => next.operation_id === old.operation_id),
-        ),
-        ...snapshots.map((next) => {
-          const old = current.find((item) => item.operation_id === next.operation_id);
+  if (!observedHosts.includes(hostId)) setObservedHosts([...observedHosts, hostId]);
+  useEffect(() => {
+    void remoteHostRetained()
+      .then((hosts) => hosts.forEach(observe))
+      .catch(console.error);
+  }, [observe]);
 
-          return old && old.revision > next.revision ? old : next;
-        }),
-      ];
-    },
-    refetchInterval: 1000,
-    refetchIntervalInBackground: true,
+  const hosts = observedHosts;
+
+  const queries = useQueries({
+    queries: hosts.map((origin) => ({
+      queryKey: key(origin),
+      queryFn: async () => {
+        const snapshots = await invokeHost<OperationSnapshot[]>(origin, "operation_request", {
+          request: { action: "list" },
+        });
+
+        return mergeOperations(
+          client.getQueryData<OperationSnapshot[]>(key(origin)) ?? [],
+          snapshots,
+          origin,
+        );
+      },
+      enabled: () =>
+        client.getQueryData(key(origin)) === undefined ||
+        origin === hostId ||
+        (pending.current.get(origin) ?? 0) > 0 ||
+        (client.getQueryData<OperationSnapshot[]>(key(origin)) ?? []).some(operationNeedsSession),
+      refetchInterval: 1000,
+      refetchIntervalInBackground: true,
+      retry: false,
+    })),
   });
 
-  const operations = query.data ?? EMPTY_OPERATIONS;
+  const unavailableHosts = hosts.filter((_, index) => queries[index].isError);
+  const allOperations = queries.flatMap((query) => query.data ?? EMPTY_OPERATIONS);
+  const operations = allOperations.filter((operation) => operation.host_id === hostId);
+
+  const releaseIfIdle = useCallback(
+    (origin: null | string) => {
+      const records = client.getQueryData<OperationSnapshot[]>(key(origin)) ?? [];
+
+      if (
+        origin !== null &&
+        (refreshing.current.get(origin) ?? 0) === 0 &&
+        (pending.current.get(origin) ?? 0) === 0 &&
+        ![...refreshFailures.current.values()].some((operation) => operation.host_id === origin) &&
+        records.length > 0 &&
+        records.every(
+          (operation) =>
+            !operationNeedsSession(operation) &&
+            refreshed.current.has(operationIdentity(operation)),
+        )
+      ) {
+        void remoteHostRelease(origin).catch(console.error);
+      }
+    },
+    [client],
+  );
 
   const refresh = useCallback(
     async (operation: OperationSnapshot) => {
       const origin = operation.host_id;
+      const identity = operationIdentity(operation);
+      refreshing.current.set(origin, (refreshing.current.get(origin) ?? 0) + 1);
 
       try {
         if (isLibraryOperation(operation)) {
@@ -118,55 +166,82 @@ export function OperationsProvider({
           );
         }
 
+        if (
+          (client.getQueryData<OperationSnapshot[]>(key(origin)) ?? []).find(
+            (o) => o.operation_id === operation.operation_id,
+          )?.attempt_id !== operation.attempt_id
+        )
+          return;
+
+        for (const [id, failed] of refreshFailures.current) {
+          if (failed.host_id === origin && failed.operation_id === operation.operation_id)
+            refreshFailures.current.delete(id);
+        }
+
         setRefreshErrors((current) => {
           const next = { ...current };
-          delete next[operation.operation_id];
+          delete next[operationIdentity(operation)];
 
           return next;
         });
       } catch {
-        setRefreshErrors((current) => ({ ...current, [operation.operation_id]: "refresh" }));
+        if (
+          (client.getQueryData<OperationSnapshot[]>(key(origin)) ?? []).find(
+            (o) => o.operation_id === operation.operation_id,
+          )?.attempt_id !== operation.attempt_id
+        )
+          return;
+        refreshFailures.current.set(identity, operation);
+        setRefreshErrors((current) => ({ ...current, [operationIdentity(operation)]: "refresh" }));
+      } finally {
+        refreshing.current.set(origin, (refreshing.current.get(origin) ?? 1) - 1);
+        releaseIfIdle(origin);
       }
     },
-    [client],
+    [client, releaseIfIdle],
   );
 
   useEffect(() => {
-    for (const operation of operations) {
-      const identity = `${operation.operation_id}/${operation.attempt_id}`;
+    for (const operation of allOperations) {
+      const identity = operationIdentity(operation);
 
       if (operation.settled && !refreshed.current.has(identity)) {
         refreshed.current.add(identity);
         void refresh(operation);
       }
     }
-  }, [operations, refresh]);
+  }, [allOperations, refresh]);
 
   useEffect(() => {
-    const unlisten = listenOnActiveHost("operation-changed", () => {
-      void client.invalidateQueries({ queryKey: key(hostId) });
+    const unlisten = listen<{ host_id?: null | string }>("operation-changed", ({ payload }) => {
+      const origin = payload.host_id ?? null;
+
+      if (!hosts.includes(origin)) return;
+      void client.invalidateQueries({ queryKey: key(origin) });
     });
 
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [client, hostId]);
+  }, [client, hosts]);
 
-  async function act(request: OperationRequest) {
-    const snapshot = await invokeHost<OperationSnapshot>(hostId, "operation_request", { request });
-    client.setQueryData<OperationSnapshot[]>(key(hostId), (current) => {
-      const records = current ?? [];
-      const existing = records.find((o) => o.operation_id === snapshot.operation_id);
+  async function act(origin: null | string, request: OperationRequest) {
+    pending.current.set(origin, (pending.current.get(origin) ?? 0) + 1);
+    observe(origin);
 
-      if (existing && existing.revision > snapshot.revision) return records;
+    try {
+      const snapshot = await invokeHost<OperationSnapshot>(origin, "operation_request", {
+        request,
+      });
 
-      return existing
-        ? records.map((record) =>
-            record.operation_id === snapshot.operation_id ? snapshot : record,
-          )
-        : [...records, snapshot];
-    });
-    void client.invalidateQueries({ queryKey: key(hostId) });
+      client.setQueryData<OperationSnapshot[]>(key(origin), (current) =>
+        mergeOperations(current ?? [], [snapshot], origin),
+      );
+    } finally {
+      pending.current.set(origin, (pending.current.get(origin) ?? 1) - 1);
+      releaseIfIdle(origin);
+      void client.invalidateQueries({ queryKey: key(origin) });
+    }
   }
 
   async function submit(projectId: string, paths?: string[]) {
@@ -175,7 +250,7 @@ export function OperationsProvider({
 
     if (existing) return existing;
 
-    const promise = act({
+    const promise = act(hostId, {
       action: "submit_project_update",
       operation_id: crypto.randomUUID(),
       host_id: hostId,
@@ -192,16 +267,16 @@ export function OperationsProvider({
     }
   }
 
-  async function install(sources: InstallSource[]) {
-    const identity = JSON.stringify([hostId, "library", sources]);
+  async function install(sources: InstallSource[], origin: null | string = hostId) {
+    const identity = JSON.stringify([origin, "library", sources]);
     const existing = submitting.current.get(identity);
 
     if (existing) return existing;
 
-    const promise = act({
+    const promise = act(origin, {
       action: "submit_install",
       operation_id: crypto.randomUUID(),
-      host_id: hostId,
+      host_id: origin,
       sources,
     });
 
@@ -215,7 +290,18 @@ export function OperationsProvider({
   }
 
   return (
-    <Context.Provider value={{ operations, refreshErrors, submit, install, act, refresh }}>
+    <Context.Provider
+      value={{
+        operations,
+        allOperations,
+        unavailableHosts,
+        refreshErrors,
+        submit,
+        install,
+        act,
+        refresh,
+      }}
+    >
       {children}
     </Context.Provider>
   );

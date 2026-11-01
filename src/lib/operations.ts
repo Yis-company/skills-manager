@@ -1,5 +1,3 @@
-import { invokeHost } from "./hostCall";
-
 /** Shared with core/operations.rs; see docs/operations.md. */
 export type OperationPhase =
   | "applying"
@@ -94,25 +92,6 @@ export const operationCounts = (operation: OperationSnapshot) => ({
 export const isLibraryOperation = (operation: OperationSnapshot) =>
   operation.destination?.kind === "library";
 
-/** Transition boundary until retained multi-host sessions land in SKI-22. */
-export async function cancelUnfinishedLibraryOperations(
-  hostId: null | string,
-  operations: OperationSnapshot[],
-) {
-  for (const operation of operations) {
-    let snapshot = await invokeHost<OperationSnapshot>(hostId, "operation_request", {
-      request: { action: "cancel", operation_id: operation.operation_id },
-    });
-
-    while (!snapshot.settled) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      snapshot = await invokeHost<OperationSnapshot>(hostId, "operation_request", {
-        request: { action: "read", operation_id: operation.operation_id },
-      });
-    }
-  }
-}
-
 export const operationQueryKey = (hostId: null | string) => ["host", hostId, "operations"] as const;
 
 export const installationPhaseKey = (phase: OperationPhase) =>
@@ -121,3 +100,33 @@ export const installationPhaseKey = (phase: OperationPhase) =>
     : phase === "needs_review"
       ? "operations.installNeedsReview"
       : `operations.phase.${phase}`;
+
+/** Tuple encoding avoids collisions between host, operation and attempt identifiers. */
+export const operationIdentity = (operation: OperationSnapshot) =>
+  JSON.stringify([operation.host_id, operation.operation_id, operation.attempt_id]);
+
+export const operationNeedsAttention = (operation: OperationSnapshot) =>
+  operation.items.some((item) =>
+    ["failed", "needs_review", "outcome_unknown"].includes(item.phase),
+  );
+
+export const operationNeedsSession = (operation: OperationSnapshot) =>
+  !operation.settled || operationNeedsAttention(operation);
+
+export function mergeOperations(
+  current: OperationSnapshot[],
+  snapshots: OperationSnapshot[],
+  hostId: null | string,
+) {
+  const records = [...current];
+
+  for (const snapshot of snapshots) {
+    if (snapshot.host_id !== hostId) continue;
+    const index = records.findIndex((old) => old.operation_id === snapshot.operation_id);
+
+    if (index < 0) records.push(snapshot);
+    else if (snapshot.revision > records[index].revision) records[index] = snapshot;
+  }
+
+  return records;
+}

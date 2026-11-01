@@ -4,7 +4,12 @@ import { toast } from "sonner";
 
 import { useOperations } from "../context/OperationsContext";
 import { getErrorMessage } from "../lib/error";
-import { operationCounts, type OperationItem, type OperationSnapshot } from "../lib/operations";
+import {
+  operationCounts,
+  operationIdentity,
+  type OperationItem,
+  type OperationSnapshot,
+} from "../lib/operations";
 
 export function ProjectOperationProgress({ operation }: { operation: OperationSnapshot }) {
   const { t } = useTranslation();
@@ -14,6 +19,7 @@ export function ProjectOperationProgress({ operation }: { operation: OperationSn
 
   const perform = (action: "cancel" | "retry_failed") => {
     void act(
+      operation.host_id,
       action === "cancel"
         ? { action, operation_id: operation.operation_id }
         : { action, operation_id: operation.operation_id, attempt_id: crypto.randomUUID() },
@@ -65,7 +71,7 @@ export function ProjectOperationProgress({ operation }: { operation: OperationSn
       {(counts.unknown > 0 || counts.unchanged > 0) && (
         <p className="text-[13px] text-secondary">{t("operations.otherResults", counts)}</p>
       )}
-      {refreshErrors[operation.operation_id] && (
+      {refreshErrors[operationIdentity(operation)] && (
         <div className="flex flex-wrap items-center gap-2 text-[13px] text-secondary">
           <span>{t("operations.refreshFailed")}</span>
           <button

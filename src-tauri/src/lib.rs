@@ -1182,6 +1182,8 @@ pub fn run() {
             commands::remote_hosts::remote_host_install_cli,
             commands::remote_hosts::remote_host_connect,
             commands::remote_hosts::remote_host_disconnect,
+            commands::remote_hosts::remote_host_retained,
+            commands::remote_hosts::remote_host_release,
             commands::remote_hosts::remote_invoke,
         ])
         .run(tauri::generate_context!())

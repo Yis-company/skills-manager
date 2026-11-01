@@ -266,9 +266,27 @@ pub async fn remote_host_connect(
 }
 
 #[tauri::command]
-pub async fn remote_host_disconnect(sessions: State<'_, RemoteSessions>) -> Result<(), AppError> {
+pub async fn remote_host_disconnect(
+    host_id: Option<String>,
+    sessions: State<'_, RemoteSessions>,
+) -> Result<(), AppError> {
+    if let Some(host_id) = host_id {
+        return sessions.disconnect_host(&host_id).await;
+    }
     sessions.disconnect().await;
     Ok(())
+}
+
+/// Observe retained operation hosts after a webview remount.
+#[tauri::command]
+pub fn remote_host_retained(sessions: State<'_, RemoteSessions>) -> Vec<String> {
+    sessions.retained_hosts()
+}
+
+/// Result refresh finished; release this host if nothing else needs it.
+#[tauri::command]
+pub fn remote_host_release(host_id: String, sessions: State<'_, RemoteSessions>) {
+    sessions.release_host(&host_id);
 }
 
 /// Run one host-scoped command on the host over its session, which only

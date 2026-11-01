@@ -223,7 +223,7 @@ const remoteHost = {
 const remoteCalls = async (backend: FakeBackend, command: string) =>
   (await backend.calls("remote_invoke")).filter((call) => call.command === command);
 
-/** The existing cancel-before-switch transition remains until SKI-22. */
+/** Marketplace work retains its original host while Local is viewed. */
 async function installTwoOnTheHost(page: Page, backend: FakeBackend) {
   await page.goto("/install");
   await backend.patch({
@@ -249,16 +249,41 @@ async function installTwoOnTheHost(page: Page, backend: FakeBackend) {
     .toBe(1);
   await page.getByRole("button", { name: "Remote machine", exact: true }).click();
   await page.getByRole("menuitemradio", { name: /Local/ }).click();
-  await expect(page.getByText("2 skill installs haven’t finished.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Local", exact: true })).toBeVisible();
 }
 
-test("switching hosts cancels unfinished library work through its original host", async ({
+test("switching hosts preserves unfinished marketplace work on its original host", async ({
   page,
   backend,
 }) => {
   await installTwoOnTheHost(page, backend);
-  await page.getByRole("button", { name: "Cancel them" }).click();
-  await expect(page.getByRole("button", { name: "Local", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Remote machine · Install Skills.*1 in progress/ }),
+  ).toBeVisible();
+  expect(
+    (await remoteCalls(backend, "operation_request")).filter((call) =>
+      JSON.stringify(call.args).includes('"cancel"'),
+    ),
+  ).toEqual([]);
+  expect(await submits(backend)).toEqual([]);
+});
+
+test("returning to marketplace work can cancel only its original host's installation", async ({
+  page,
+  backend,
+}) => {
+  await installTwoOnTheHost(page, backend);
+  await page
+    .getByRole("button", { name: /Remote machine · Install Skills.*1 in progress/ })
+    .click();
+  await expect(page.getByRole("button", { name: "Remote machine", exact: true })).toBeVisible();
+  await page
+    .getByRole("region", { name: "Installation progress" })
+    .getByRole("button", { name: "Cancel installation" })
+    .click();
+  await expect(page.getByRole("region", { name: "Installation progress" })).toContainText(
+    "Canceled",
+  );
 
   const cancels = (await remoteCalls(backend, "operation_request")).filter((call) =>
     JSON.stringify(call.args).includes('"cancel"'),
@@ -267,17 +292,6 @@ test("switching hosts cancels unfinished library work through its original host"
   expect(cancels).toHaveLength(1);
   expect(cancels[0].hostId).toBe(remoteHost.id);
   expect(await submits(backend)).toEqual([]);
-});
-
-test("waiting for unfinished library work keeps the current host", async ({ page, backend }) => {
-  await installTwoOnTheHost(page, backend);
-  await page.getByRole("button", { name: "Wait for them" }).click();
-  await expect(page.getByRole("button", { name: "Remote machine", exact: true })).toBeVisible();
-  expect(
-    (await remoteCalls(backend, "operation_request")).filter((call) =>
-      JSON.stringify(call.args).includes('"cancel"'),
-    ),
-  ).toEqual([]);
 });
 
 test("searches once the typing stops", async ({ page, backend }) => {

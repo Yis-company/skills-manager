@@ -39,7 +39,7 @@ export function useGitPreview() {
     setSubmitting(true);
 
     try {
-      await act({
+      await act(activeHostId, {
         action: "submit_install",
         operation_id: crypto.randomUUID(),
         host_id: activeHostId,
@@ -64,7 +64,7 @@ export function useGitPreview() {
     setGitConfirmLoading(true);
 
     try {
-      await act({
+      await act(operation.host_id, {
         action: "confirm_install",
         operation_id: operation.operation_id,
         attempt_id: crypto.randomUUID(),

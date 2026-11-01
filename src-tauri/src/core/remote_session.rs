@@ -3,8 +3,8 @@
 //! host-scoped commands for another machine. See `core::serve` for the
 //! protocol.
 //!
-//! Only the active host has a session, except during a switch: the old one
-//! stays open until the new one is ready. Calls never connect: when the link
+//! The viewed host and hosts with live operation state retain one session each.
+//! Idle off-screen sessions close after a successful switch. Calls never connect: when the link
 //! drops, or a call hears nothing from the host for 30 s, pending calls fail,
 //! a `remote-session-state` event tells the UI, and the UI reconnects.
 
@@ -55,6 +55,7 @@ const FORWARDED_EVENTS: &[&str] = &[
     "app-files-changed",
     "install-progress",
     "batch-import-progress",
+    "operation-changed",
 ];
 
 /// What the UI is told about a connected host.
@@ -507,7 +508,11 @@ struct Connecting {
 struct Slot {
     session: Option<Arc<RemoteSession>>,
     connecting: Option<Connecting>,
-    attempts: u64,
+    calls: usize,
+    mutation_calls: usize,
+    operations: HashMap<String, (u64, bool)>,
+    uncertain: bool,
+    awaiting_refresh: bool,
 }
 
 impl Slot {
@@ -528,14 +533,91 @@ impl Slot {
     }
 }
 
-/// The app's one active session. Its lock is never held while connecting,
+#[derive(Default)]
+struct Sessions {
+    hosts: HashMap<String, Slot>,
+    viewed: Option<String>,
+    attempts: u64,
+}
+
+impl Slot {
+    fn needed(&self) -> bool {
+        self.calls > 0
+            || self.uncertain
+            || self.awaiting_refresh
+            || self.operations.values().any(|(_, needed)| *needed)
+    }
+
+    fn observe(&mut self, value: &Value) {
+        if let Some(snapshots) = value.as_array() {
+            for snapshot in snapshots {
+                self.observe(snapshot);
+            }
+            return;
+        }
+        let (Some(id), Some(revision), Some(settled)) = (
+            value["operation_id"].as_str(),
+            value["revision"].as_u64(),
+            value["settled"].as_bool(),
+        ) else {
+            return;
+        };
+        if self
+            .operations
+            .get(id)
+            .is_some_and(|(old, _)| *old >= revision)
+        {
+            return;
+        }
+        // Failed/review/unknown results and Git previews still own live retry evidence.
+        let needed = !settled
+            || value["items"].as_array().is_some_and(|items| {
+                items.iter().any(|item| {
+                    matches!(
+                        item["phase"].as_str(),
+                        Some("failed" | "needs_review" | "outcome_unknown")
+                    )
+                })
+            });
+        self.awaiting_refresh |= settled;
+        self.operations.insert(id.to_owned(), (revision, needed));
+    }
+}
+
+impl Sessions {
+    fn release_idle(&mut self) -> Vec<Arc<RemoteSession>> {
+        let idle: Vec<_> = self
+            .hosts
+            .iter()
+            .filter(|(id, slot)| {
+                self.viewed.as_ref() != Some(*id) && slot.connecting.is_none() && !slot.needed()
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        idle.into_iter()
+            .filter_map(|id| self.hosts.remove(&id).and_then(|slot| slot.session))
+            .collect()
+    }
+}
+
+fn close_sessions(sessions: Vec<Arc<RemoteSession>>) {
+    if !sessions.is_empty() {
+        tokio::task::spawn_blocking(move || {
+            for session in sessions {
+                session.close();
+            }
+        });
+    }
+}
+
+/// The app's viewed session and retained operation sessions. Its lock is never held while connecting,
 /// so a disconnect never waits behind a slow or unreachable host.
 pub struct RemoteSessions {
     store: Arc<SkillStore>,
     events: Arc<dyn HostEvents>,
     cli: Arc<CliCommand>,
     install: Arc<InstallCli>,
-    slot: Arc<Mutex<Slot>>,
+    slots: Arc<Mutex<Sessions>>,
 }
 
 impl RemoteSessions {
@@ -559,41 +641,54 @@ impl RemoteSessions {
             events,
             cli,
             install,
-            slot: Arc::default(),
+            slots: Arc::default(),
         }
     }
 
-    /// The live session for `host_id`, connecting when there is none.
-    /// Parallel callers share one connect and its result. Asking for a host
-    /// abandons a connect to any other. The current session stays open until
-    /// a new one is ready, so a failed switch leaves it in place.
+    /// Select a host, sharing its live connection. A failed switch preserves the view;
+    /// a superseded connect cannot select itself when its hello eventually arrives.
     pub async fn session_for(&self, host_id: &str) -> Result<Arc<RemoteSession>, AppError> {
         let done = {
-            let mut slot = lock(&self.slot);
-            if slot
-                .connecting
-                .as_ref()
-                .is_some_and(|connecting| connecting.host_id != host_id)
-            {
-                slot.connecting = None;
+            let mut slots = lock(&self.slots);
+            for (id, slot) in &mut slots.hosts {
+                if id != host_id {
+                    slot.connecting = None;
+                }
             }
+            let slot = slots.hosts.entry(host_id.to_owned()).or_default();
             if let Some(session) = slot.live(host_id) {
+                slots.viewed = Some(host_id.to_owned());
+                close_sessions(slots.release_idle());
                 return Ok(session);
             }
             match slot.connecting_to(host_id) {
                 Some(done) => done,
-                None => self.start_connect(&mut slot, host_id),
+                None => self.start_connect(&mut slots, host_id),
             }
         };
         outcome(done).await
     }
 
-    /// Run one command on `host_id`. A call never connects: it uses the live
-    /// session or waits for one connecting, and fails at once otherwise, so
-    /// a late call for a host the app has left cannot take the session back.
+    /// Calls never connect. Capture the host and hold its session through the reply,
+    /// including the interval before a submission's admission snapshot is known.
     pub async fn call(&self, host_id: &str, cmd: &str, args: Value) -> Result<Value, AppError> {
+        let mutation = cmd == "operation_request"
+            && matches!(
+                args["request"]["action"].as_str(),
+                Some(
+                    "submit_install"
+                        | "submit_project_update"
+                        | "confirm_install"
+                        | "retry_failed"
+                        | "cancel"
+                )
+            );
         let (live, connecting) = {
-            let slot = lock(&self.slot);
+            let slots = lock(&self.slots);
+            let slot = slots
+                .hosts
+                .get(host_id)
+                .ok_or_else(|| AppError::network("This host is not connected"))?;
             (slot.live(host_id), slot.connecting_to(host_id))
         };
         let session = match (live, connecting) {
@@ -601,40 +696,101 @@ impl RemoteSessions {
             (None, Some(done)) => outcome(done).await?,
             (None, None) => return Err(AppError::network("This host is not connected")),
         };
-        session.call(cmd, args).await
+        {
+            let mut slots = lock(&self.slots);
+            let slot = slots
+                .hosts
+                .get_mut(host_id)
+                .ok_or_else(|| AppError::network("This host is not connected"))?;
+            if !slot
+                .session
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &session))
+            {
+                return Err(AppError::network("This host connection changed"));
+            }
+            slot.calls += 1;
+            if mutation {
+                slot.mutation_calls += 1;
+            }
+        }
+        let result = session.call(cmd, args).await;
+        let mut slots = lock(&self.slots);
+        if let Some(slot) = slots.hosts.get_mut(host_id).filter(|slot| {
+            slot.session
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &session))
+        }) {
+            slot.calls -= 1;
+            if cmd == "operation_request" {
+                if mutation {
+                    slot.mutation_calls -= 1;
+                }
+                match &result {
+                    Ok(value) => slot.observe(value),
+                    // A missing response is not proof that admission or a write failed.
+                    Err(error) if mutation && error.kind == super::error::ErrorKind::Network => {
+                        slot.uncertain = true
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        close_sessions(slots.release_idle());
+        result
     }
 
-    /// Connect to `host_id` on a blocking thread, abandoning any other
-    /// connect in flight, and return what to wait on for the result.
-    fn start_connect(&self, slot: &mut Slot, host_id: &str) -> watch::Receiver<Option<Outcome>> {
-        slot.attempts += 1;
-        let attempt = slot.attempts;
+    fn start_connect(
+        &self,
+        slots: &mut Sessions,
+        host_id: &str,
+    ) -> watch::Receiver<Option<Outcome>> {
+        slots.attempts += 1;
+        let attempt = slots.attempts;
         let (done, waiting) = watch::channel(None);
-        slot.connecting = Some(Connecting {
+        slots
+            .hosts
+            .entry(host_id.to_owned())
+            .or_default()
+            .connecting = Some(Connecting {
             host_id: host_id.to_string(),
             attempt,
             done,
         });
-
         let store = self.store.clone();
         let events = self.events.clone();
         let cli = self.cli.clone();
         let install = self.install.clone();
-        let shared = self.slot.clone();
+        let shared = self.slots.clone();
         let host_id = host_id.to_string();
         tokio::task::spawn_blocking(move || {
             let outcome = connect(&store, &*cli, &*install, &host_id, events.clone()).map(Arc::new);
-            let mut slot = lock(&shared);
+            let mut slots = lock(&shared);
+            let Some(slot) = slots.hosts.get_mut(&host_id) else {
+                return;
+            };
             if slot.connecting.as_ref().map(|c| c.attempt) != Some(attempt) {
-                // Abandoned: dropping `outcome` closes its session.
+                drop(slots);
                 return;
             }
             let connecting = slot.connecting.take().expect("checked above");
             let replaced = match &outcome {
-                Ok(session) => slot.session.replace(session.clone()),
+                Ok(session) => {
+                    // Old futures may observe their failed replies after this hello.
+                    // Their counts belong to the old connection; uncertain admissions
+                    // remain retained for SKI-23 to reconcile, without replaying them.
+                    slot.uncertain |= slot.mutation_calls > 0;
+                    slot.calls = 0;
+                    slot.mutation_calls = 0;
+                    slot.session.replace(session.clone())
+                }
                 Err(_) => None,
             };
-            drop(slot);
+            if outcome.is_ok() {
+                slots.viewed = Some(host_id.clone());
+            }
+            let idle = slots.release_idle();
+            drop(slots);
             if outcome.is_ok() {
                 events.emit(
                     SESSION_STATE_EVENT,
@@ -642,32 +798,68 @@ impl RemoteSessions {
                 );
             }
             let _ = connecting.done.send(Some(outcome));
-            if let Some(old) = replaced {
-                old.close();
+            for session in idle.into_iter().chain(replaced) {
+                session.close();
             }
         });
         waiting
     }
 
-    /// Close the session and abandon a connect in flight, failing its
-    /// callers at once.
+    /// Select Local. Retain hosts needed by pending calls or operation evidence.
     pub async fn disconnect(&self) {
-        if let Some(session) = self.take() {
-            let _ = tokio::task::spawn_blocking(move || session.close()).await;
+        let mut slots = lock(&self.slots);
+        slots.viewed = None;
+        for slot in slots.hosts.values_mut() {
+            slot.connecting = None;
         }
+        close_sessions(slots.release_idle());
     }
 
-    /// Close the session from a non-async context such as app exit.
+    /// The observer has refreshed this host's settled results. Release only idle
+    /// off-screen connections; a concurrent admission or retry still retains it.
+    pub fn release_host(&self, host_id: &str) {
+        let mut slots = lock(&self.slots);
+        if let Some(slot) = slots.hosts.get_mut(host_id) {
+            slot.awaiting_refresh = false;
+        }
+        close_sessions(slots.release_idle());
+    }
+
+    /// Explicit reconnect of one idle host must not tear down another host's work.
+    pub async fn disconnect_host(&self, host_id: &str) -> Result<(), AppError> {
+        let session = {
+            let mut slots = lock(&self.slots);
+            if slots.hosts.get(host_id).is_some_and(Slot::needed) {
+                return Err(AppError::invalid_input(
+                    "This host still has operations that need its connection",
+                ));
+            }
+            slots.hosts.remove(host_id).and_then(|slot| slot.session)
+        };
+        if let Some(session) = session {
+            tokio::task::spawn_blocking(move || session.close()).await?;
+        }
+        Ok(())
+    }
+
+    /// Session-owned hosts for observation after a webview remount, not restart restoration.
+    pub fn retained_hosts(&self) -> Vec<String> {
+        lock(&self.slots)
+            .hosts
+            .iter()
+            .filter(|(_, slot)| slot.needed())
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// App exit remains a separate lifecycle boundary (SKI-25).
     pub fn close_now(&self) {
-        if let Some(session) = self.take() {
-            session.close();
+        let hosts = std::mem::take(&mut lock(&self.slots).hosts);
+        for slot in hosts.into_values() {
+            if let Some(session) = slot.session {
+                session.close();
+            }
         }
-    }
-
-    fn take(&self) -> Option<Arc<RemoteSession>> {
-        let mut slot = lock(&self.slot);
-        slot.connecting = None;
-        slot.session.take()
     }
 }
 
@@ -1051,7 +1243,10 @@ mod tests {
 
         // The abandoned connect finishes later and is closed, not kept.
         tokio::time::sleep(Duration::from_millis(1500)).await;
-        assert!(lock(&sessions.slot).session.is_none());
+        assert!(lock(&sessions.slots)
+            .hosts
+            .values()
+            .all(|slot| slot.session.is_none()));
     }
 
     #[tokio::test]
@@ -1069,6 +1264,219 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(second.is_alive());
+    }
+
+    #[tokio::test]
+    async fn active_operations_keep_their_host_session_across_switches() {
+        let cli = fake_cli(
+            r#"printf '%s\n' "$1"
+               read line
+               echo '{"id":1,"ok":true,"result":{"operation_id":"same-id","revision":1,"settled":false,"items":[{"phase":"applying"}]}}'
+               read line
+               echo '{"id":2,"ok":true,"result":{"operation_id":"same-id","revision":2,"settled":true,"items":[{"phase":"succeeded"}]}}'
+               read line
+               echo '{"id":3,"ok":true,"result":42}'
+               cat >/dev/null"#,
+            &hello_line(VERSION),
+        );
+        let (sessions, _events, _tmp) = sessions(cli);
+        let first = sessions.session_for("h1").await.unwrap();
+        sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"submit_install"}}),
+            )
+            .await
+            .unwrap();
+        let second = sessions.session_for("h2").await.unwrap();
+        assert!(
+            first.is_alive(),
+            "switching must retain the operation's host"
+        );
+        assert!(second.is_alive());
+        let result = sessions
+            .call(
+                "h1",
+                "operation_request",
+                json!({"request":{"action":"read","operation_id":"same-id"}}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["items"][0]["phase"], "succeeded");
+        assert_eq!(
+            sessions.call("h1", "get_presets", json!({})).await.unwrap(),
+            42,
+            "settlement must leave the originating host available for its result refresh"
+        );
+        sessions.release_host("h1");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while first.is_alive() {
+            assert!(
+                Instant::now() < deadline,
+                "idle off-screen host was not released"
+            );
+            tokio::task::yield_now().await;
+        }
+        assert!(second.is_alive());
+    }
+
+    #[tokio::test]
+    async fn pending_admission_and_a_slow_host_do_not_block_other_hosts_or_local() {
+        let barrier = tempfile::tempdir().unwrap();
+        let release = barrier.path().join("release");
+        let signal = release.clone();
+        let (sessions, events, _tmp) = sessions(move |host: &RemoteHostRecord, _: &[&str]| {
+            let script = if host.id == "h1" {
+                format!(
+                    r#"printf '%s\n' "$1"; read line
+                    echo '{{"event":"app-files-changed","payload":{{"stage":"admitting"}}}}'
+                    while ! test -e '{}'; do sleep 0.01; done
+                    echo '{{"id":1,"ok":true,"result":{{"operation_id":"same-id","revision":1,"settled":false,"items":[{{"phase":"queued"}}]}}}}'
+                    cat >/dev/null"#,
+                    signal.display()
+                )
+            } else {
+                r#"printf '%s\n' "$1"; read line
+                    echo '{"id":1,"ok":true,"result":42}'; cat >/dev/null"#
+                    .to_string()
+            };
+            fake_server(&script, &hello_line(VERSION))
+        });
+        let sessions = Arc::new(sessions);
+        let first = sessions.session_for("h1").await.unwrap();
+        let admission = tokio::spawn({
+            let sessions = sessions.clone();
+            async move {
+                sessions
+                    .call(
+                        "h1",
+                        "operation_request",
+                        json!({"request":{"action":"submit_install"}}),
+                    )
+                    .await
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if events
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, payload)| payload["stage"] == "admitting")
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the request never reached the stand-in"
+            );
+            tokio::task::yield_now().await;
+        }
+        let second = sessions.session_for("h2").await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                sessions.call("h2", "get_presets", json!({}))
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+            42
+        );
+        sessions.disconnect().await;
+        assert!(
+            first.is_alive(),
+            "an unresolved admission owns its host even on Local"
+        );
+        assert!(!admission.is_finished());
+        std::fs::write(release, "continue").unwrap();
+        assert_eq!(admission.await.unwrap().unwrap()["settled"], false);
+        assert!(
+            first.is_alive(),
+            "the admitted operation still needs its original connection"
+        );
+        assert_eq!(sessions.retained_hosts(), ["h1"]);
+        assert!(
+            sessions.disconnect_host("h1").await.is_err(),
+            "explicit reconnect cannot tear down live work"
+        );
+        sessions.close_now();
+        assert!(!second.is_alive());
+    }
+
+    #[tokio::test]
+    async fn late_replies_release_reads_but_retain_uncertain_mutations() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+        for (command, args, uncertain) in [
+            ("get_presets", json!({}), false),
+            (
+                "operation_request",
+                json!({"request":{"action":"list"}}),
+                false,
+            ),
+            (
+                "operation_request",
+                json!({"request":{"action":"submit_install"}}),
+                true,
+            ),
+        ] {
+            let barrier = tempfile::tempdir().unwrap();
+            let release = barrier.path().join("drop");
+            let signal = release.clone();
+            let (sessions, events, _tmp) = sessions(move |_: &RemoteHostRecord, _: &[&str]| {
+                fake_server(
+                    &format!(
+                        r#"printf '%s\n' "$1"; read line
+                while ! test -e '{}'; do sleep 0.01; done; exit 0"#,
+                        signal.display()
+                    ),
+                    &hello_line(VERSION),
+                )
+            });
+            sessions.session_for("h1").await.unwrap();
+            let mut old_call = Box::pin(sessions.call("h1", command, args));
+            // Poll admission once, then deliberately leave the reply unobserved until
+            // after a replacement session exists. The pipe drop is externally gated.
+            poll_fn(|cx| {
+                assert!(old_call.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            std::fs::write(release, "drop").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                if events
+                    .0
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(_, payload)| payload["state"] == "disconnected")
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                tokio::task::yield_now().await;
+            }
+            let replacement = sessions.session_for("h1").await.unwrap();
+            old_call.await.unwrap_err();
+            sessions.disconnect().await;
+            assert_eq!(
+                sessions.retained_hosts().is_empty(),
+                !uncertain,
+                "only a lost mutation can retain unresolved admission evidence"
+            );
+            if uncertain {
+                sessions.close_now();
+            }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while replacement.is_alive() {
+                assert!(Instant::now() < deadline);
+                tokio::task::yield_now().await;
+            }
+        }
     }
 
     /// The link drops after one request. Calls fail until the UI connects
@@ -1090,7 +1498,10 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Network);
-        assert!(lock(&sessions.slot).connecting.is_none());
+        assert!(lock(&sessions.slots)
+            .hosts
+            .values()
+            .all(|slot| slot.connecting.is_none()));
 
         let second = sessions.session_for("h1").await.unwrap();
         assert!(!Arc::ptr_eq(&first, &second));

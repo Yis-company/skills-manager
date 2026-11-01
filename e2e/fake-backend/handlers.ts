@@ -128,6 +128,8 @@ export const handlers = {
   // ── App shell ──
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
+  remote_host_release: (_args: { hostId: string }) => null,
+  remote_host_retained: (_args, state) => state.retainedHosts,
   remote_hosts_list: (_args, state) => state.remoteHosts,
   remote_host_update: (
     {

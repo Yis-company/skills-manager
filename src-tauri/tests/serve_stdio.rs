@@ -46,6 +46,10 @@ struct Server {
 }
 
 fn start() -> Server {
+    start_host("test-host")
+}
+
+fn start_host(host_id: &str) -> Server {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -61,7 +65,9 @@ fn start() -> Server {
         cmd
     };
     let events = Arc::new(Recorded::default());
-    let session = RemoteSession::spawn(&cli, &host("unused", None), events.clone()).unwrap();
+    let mut record = host("unused", None);
+    record.id = host_id.to_owned();
+    let session = RemoteSession::spawn(&cli, &record, events.clone()).unwrap();
     Server {
         session,
         events,
@@ -462,4 +468,83 @@ async fn project_operations_use_the_same_contract_over_real_stdio() {
         .await
         .unwrap();
     assert_eq!(list.as_array().unwrap().len(), 1);
+    assert!(
+        server
+            .events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(event, payload)| event == "operation-changed"
+                && payload["host_id"] == "test-host"
+                && payload["operation_id"] == "stdio-project"),
+        "real operation events must reach their owning host observer"
+    );
+}
+
+#[tokio::test]
+async fn three_hosts_keep_colliding_operation_ids_and_libraries_isolated_over_real_stdio() {
+    let servers = [start_host("local"), start_host("build"), start_host("gpu")];
+    for server in &servers {
+        let source = server.tmp.path().join("source/demo");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            format!(
+                "---\nname: demo\n---\n{} body\n",
+                server.session.info().host_id
+            ),
+        )
+        .unwrap();
+    }
+    async fn run(server: &Server) -> Value {
+        let source = server.tmp.path().join("source/demo");
+        server.session.call("operation_request", json!({"request": {
+            "action":"submit_install", "operation_id":"same-operation", "host_id":server.session.info().host_id,
+            "sources":[{"kind":"local", "path":source}]
+        }})).await.unwrap()
+    }
+    let (local, build, gpu) = tokio::join!(run(&servers[0]), run(&servers[1]), run(&servers[2]));
+    for result in [local, build, gpu] {
+        assert_eq!(result["operation_id"], "same-operation");
+    }
+    for server in &servers {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let list = server
+                .session
+                .call("operation_request", json!({"request":{"action":"list"}}))
+                .await
+                .unwrap();
+            assert_eq!(list[0]["host_id"], server.session.info().host_id);
+            if list[0]["settled"] == true {
+                assert_eq!(list[0]["items"][0]["phase"], "succeeded");
+                break;
+            }
+            assert!(Instant::now() < deadline, "{list}");
+            tokio::task::yield_now().await;
+        }
+        let skills = server
+            .session
+            .call("get_managed_skills", json!({}))
+            .await
+            .unwrap();
+        let path = skills[0]["central_path"].as_str().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(Path::new(path).join("SKILL.md")).unwrap(),
+            format!(
+                "---\nname: demo\n---\n{} body\n",
+                server.session.info().host_id
+            )
+        );
+        assert!(server
+            .events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(event, payload)| event == "operation-changed"
+                && payload["host_id"] == server.session.info().host_id
+                && payload["operation_id"] == "same-operation"));
+    }
 }
