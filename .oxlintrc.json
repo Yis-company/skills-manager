@@ -33,6 +33,10 @@
       "name": "anti-slop",
       "specifier": "./tools/oxlint/anti-slop/index.ts"
     },
+    {
+      "name": "local",
+      "specifier": "./tools/oxlint/local/index.ts"
+    },
     "eslint-plugin-perfectionist"
   ],
   "rules": {
@@ -119,6 +123,12 @@
       "files": ["scripts/**"],
       "rules": {
         "anti-slop/no-runtime-typeof": "off"
+      }
+    },
+    {
+      "files": ["e2e/**"],
+      "rules": {
+        "local/no-tmp-paths": "error"
       }
     }
   ]
