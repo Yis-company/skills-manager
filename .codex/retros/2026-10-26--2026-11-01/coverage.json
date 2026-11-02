@@ -1,0 +1,611 @@
+{
+  "window": {
+    "start": "2026-10-26T00:00:00Z",
+    "endExclusive": "2026-11-02T00:00:00Z"
+  },
+  "device": {
+    "name": "MacBook Pro (Yi)",
+    "environmentId": "17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d"
+  },
+  "project": {
+    "name": "ybtam/skills-manager",
+    "projectId": "52c33fb2-1d72-463e-b7af-010ad211e74b",
+    "workspace": "/Users/yitam/Documents/code/ybtam/skills-manager"
+  },
+  "repository": "Yis-company/skills-manager",
+  "active": true,
+  "activeDates": [
+    "2026-11-01"
+  ],
+  "sessions": {
+    "candidateThreads": 30,
+    "covered": 30,
+    "inWindowMessages": 414,
+    "codexRollouts": 62,
+    "toolCalls": 1948,
+    "threads": [
+      {
+        "threadId": "thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3Afe9b3690-e80d-4f44-b17a-62445ac5c080",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "Implement SKI-23 SSH operation outcome recovery",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3Afe9b3690-e80d-4f44-b17a-62445ac5c080>",
+        "status": "completed",
+        "inWindowMessages": 17,
+        "firstMessageAt": "2026-11-01T19:06:02.761Z",
+        "lastMessageAt": "2026-11-01T19:53:13.685Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3Abff14872-ca5b-40b6-9365-178722b627ee",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "Fix final SKI-19 review findings",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3Abff14872-ca5b-40b6-9365-178722b627ee>",
+        "status": "completed",
+        "inWindowMessages": 14,
+        "firstMessageAt": "2026-11-01T21:23:36.225Z",
+        "lastMessageAt": "2026-11-01T21:38:16.281Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A952835ef-6c38-4284-8094-20ec0870757b",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "Implement SKI-20 project operation lifecycle",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A952835ef-6c38-4284-8094-20ec0870757b>",
+        "status": "completed",
+        "inWindowMessages": 16,
+        "firstMessageAt": "2026-11-01T16:46:08.162Z",
+        "lastMessageAt": "2026-11-01T17:29:37.078Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A933be6c4-d767-45a7-8392-7ccbc54bfd4e",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "Implement SKI-24 unresolved result restoration",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A933be6c4-d767-45a7-8392-7ccbc54bfd4e>",
+        "status": "completed",
+        "inWindowMessages": 17,
+        "firstMessageAt": "2026-11-01T19:55:20.942Z",
+        "lastMessageAt": "2026-11-01T20:41:09.765Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A6b1198a7-c898-41c6-99cd-2c7eafaf53a4",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "Implement SKI-22 retained operation hosts",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A6b1198a7-c898-41c6-99cd-2c7eafaf53a4>",
+        "status": "completed",
+        "inWindowMessages": 16,
+        "firstMessageAt": "2026-11-01T18:31:15.886Z",
+        "lastMessageAt": "2026-11-01T19:03:57.968Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A49b03d3a-5e0a-40da-9336-5447da920119",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "Implement SKI-21 unified installation operations",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A49b03d3a-5e0a-40da-9336-5447da920119>",
+        "status": "completed",
+        "inWindowMessages": 20,
+        "firstMessageAt": "2026-11-01T17:37:23.069Z",
+        "lastMessageAt": "2026-11-01T18:27:06.507Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A2cc28949-6a5d-43ef-94e9-62d5ce653258",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "Implement SKI-25 safe quit and automatic quit",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:delegated-task:command%3Amcp%3A77956374-3917-44a1-a5e6-726f64194f5b%3Adelegate-task%3A2cc28949-6a5d-43ef-94e9-62d5ce653258>",
+        "status": "completed",
+        "inWindowMessages": 17,
+        "firstMessageAt": "2026-11-01T20:43:14.079Z",
+        "lastMessageAt": "2026-11-01T21:18:19.085Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "parentThreadId": null,
+        "relationship": null,
+        "title": "Audit App for Async Workflows",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/0237155e-923f-450e-bbbb-e0bee66b51d0>",
+        "status": "completed",
+        "inWindowMessages": 123,
+        "firstMessageAt": "2026-11-01T15:23:59.407Z",
+        "lastMessageAt": "2026-11-01T23:53:32.921Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1990c-dc57-77f2-a7d5-9a96380cdb2d",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/merge_final_fixes",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1990c-dc57-77f2-a7d5-9a96380cdb2d>",
+        "status": "idle",
+        "inWindowMessages": 2,
+        "firstMessageAt": "2026-11-01T21:38:48.280Z",
+        "lastMessageAt": "2026-11-01T21:39:11.280Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a198fb-7bf8-7450-9d36-b65788fa144f",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/final_spec_review",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a198fb-7bf8-7450-9d36-b65788fa144f>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T21:22:40.825Z",
+        "lastMessageAt": "2026-11-01T21:22:40.825Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a198fb-3d7d-7ef2-8833-af9201bdab69",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/final_standards_review",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a198fb-3d7d-7ef2-8833-af9201bdab69>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T21:22:07.624Z",
+        "lastMessageAt": "2026-11-01T21:22:07.624Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a198fa-7d01-7fb2-a1a8-ab215cda8eaf",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/merge_ski25",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a198fa-7d01-7fb2-a1a8-ab215cda8eaf>",
+        "status": "idle",
+        "inWindowMessages": 2,
+        "firstMessageAt": "2026-11-01T21:18:43.052Z",
+        "lastMessageAt": "2026-11-01T21:19:06.361Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a198d8-6cce-77a1-a163-21613a50961f",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/merge_ski24",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a198d8-6cce-77a1-a163-21613a50961f>",
+        "status": "idle",
+        "inWindowMessages": 2,
+        "firstMessageAt": "2026-11-01T20:41:28.248Z",
+        "lastMessageAt": "2026-11-01T20:41:59.778Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a198ac-9c61-73f2-8f5b-ced63bbf6f58",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/merge_ski23",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a198ac-9c61-73f2-8f5b-ced63bbf6f58>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T19:54:06.593Z",
+        "lastMessageAt": "2026-11-01T19:54:06.593Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1987f-89cf-7923-b94b-8b871df85ad1",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/merge_ski22",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1987f-89cf-7923-b94b-8b871df85ad1>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T19:04:47.245Z",
+        "lastMessageAt": "2026-11-01T19:04:47.245Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1985f-a028-7701-aa30-316052932646",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/merge_ski21",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1985f-a028-7701-aa30-316052932646>",
+        "status": "idle",
+        "inWindowMessages": 2,
+        "firstMessageAt": "2026-11-01T18:29:31.220Z",
+        "lastMessageAt": "2026-11-01T18:29:54.437Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1982a-537e-7363-8aed-88fa4e41f747",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/merge_ski20",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1982a-537e-7363-8aed-88fa4e41f747>",
+        "status": "idle",
+        "inWindowMessages": 3,
+        "firstMessageAt": "2026-11-01T17:31:21.284Z",
+        "lastMessageAt": "2026-11-01T17:31:48.864Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a197cf-4d0b-7f20-b87e-ee4b88d3d007",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/impeccable_documenter",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a197cf-4d0b-7f20-b87e-ee4b88d3d007>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T15:52:24.103Z",
+        "lastMessageAt": "2026-11-01T15:52:24.103Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a197cb-6940-74c2-ab51-602d769e6355",
+        "parentThreadId": "0237155e-923f-450e-bbbb-e0bee66b51d0",
+        "relationship": "subagent",
+        "title": "/root/impeccable_finish_reviewer",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a197cb-6940-74c2-ab51-602d769e6355>",
+        "status": "idle",
+        "inWindowMessages": 2,
+        "firstMessageAt": "2026-11-01T15:49:21.548Z",
+        "lastMessageAt": "2026-11-01T15:51:45.843Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "mcp:launch:7133b989d1a8dddae4749e2ae63fa6a5c89622e7205ae5d0b59a4519c6c4d166",
+        "parentThreadId": null,
+        "relationship": null,
+        "title": "skills-manager: pre-push hooks",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/mcp:launch:7133b989d1a8dddae4749e2ae63fa6a5c89622e7205ae5d0b59a4519c6c4d166>",
+        "status": "completed",
+        "inWindowMessages": 15,
+        "firstMessageAt": "2026-11-01T15:34:10.815Z",
+        "lastMessageAt": "2026-11-01T15:46:39.590Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1969a-9928-7fc3-8d85-b9b2cdf26d37",
+        "parentThreadId": "0784ea66-b4f1-4d3f-9269-4f02bc8559f0",
+        "relationship": "subagent",
+        "title": "/root/mechanical_review",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1969a-9928-7fc3-8d85-b9b2cdf26d37>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T10:16:55.383Z",
+        "lastMessageAt": "2026-11-01T10:16:55.383Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1969a-7301-7100-a5c5-f180c22569fd",
+        "parentThreadId": "0784ea66-b4f1-4d3f-9269-4f02bc8559f0",
+        "relationship": "subagent",
+        "title": "/root/design_review",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1969a-7301-7100-a5c5-f180c22569fd>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T10:15:49.862Z",
+        "lastMessageAt": "2026-11-01T10:15:49.862Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "0784ea66-b4f1-4d3f-9269-4f02bc8559f0",
+        "parentThreadId": null,
+        "relationship": null,
+        "title": "Improve App Design Consistency",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/0784ea66-b4f1-4d3f-9269-4f02bc8559f0>",
+        "status": "completed",
+        "inWindowMessages": 42,
+        "firstMessageAt": "2026-11-01T10:13:42.414Z",
+        "lastMessageAt": "2026-11-01T15:21:32.628Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a19654-fd69-75b1-a017-6abb1df2bf95",
+        "parentThreadId": "2117c26e-b3cc-489a-ab3c-fa4affa15bca",
+        "relationship": "subagent",
+        "title": "/root/detector_review",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a19654-fd69-75b1-a017-6abb1df2bf95>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T08:59:14.756Z",
+        "lastMessageAt": "2026-11-01T08:59:14.756Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1967f-0fa4-7c23-842a-78587c613ddf",
+        "parentThreadId": "2117c26e-b3cc-489a-ab3c-fa4affa15bca",
+        "relationship": "subagent",
+        "title": "/root/remediation_detector",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1967f-0fa4-7c23-842a-78587c613ddf>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T09:44:49.439Z",
+        "lastMessageAt": "2026-11-01T09:44:49.439Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1964f-85c9-7f31-98ae-77860215a846",
+        "parentThreadId": "2117c26e-b3cc-489a-ab3c-fa4affa15bca",
+        "relationship": "subagent",
+        "title": "/root/design_review",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1964f-85c9-7f31-98ae-77860215a846>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T08:56:22.163Z",
+        "lastMessageAt": "2026-11-01T08:56:22.163Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "thread:provider:codex:native-thread:01a1967b-cc19-7d51-a176-d695835cc639",
+        "parentThreadId": "2117c26e-b3cc-489a-ab3c-fa4affa15bca",
+        "relationship": "subagent",
+        "title": "/root/remediation_design_review",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/thread:provider:codex:native-thread:01a1967b-cc19-7d51-a176-d695835cc639>",
+        "status": "idle",
+        "inWindowMessages": 1,
+        "firstMessageAt": "2026-11-01T09:42:05.538Z",
+        "lastMessageAt": "2026-11-01T09:42:05.538Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "2117c26e-b3cc-489a-ab3c-fa4affa15bca",
+        "parentThreadId": null,
+        "relationship": null,
+        "title": "Capture Product Context",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/2117c26e-b3cc-489a-ab3c-fa4affa15bca>",
+        "status": "completed",
+        "inWindowMessages": 42,
+        "firstMessageAt": "2026-11-01T08:05:33.707Z",
+        "lastMessageAt": "2026-11-01T10:11:44.787Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "f133f035-0195-4622-9654-e40c6b53d288",
+        "parentThreadId": null,
+        "relationship": null,
+        "title": "Review Fork Changes for Merge",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/f133f035-0195-4622-9654-e40c6b53d288>",
+        "status": "completed",
+        "inWindowMessages": 26,
+        "firstMessageAt": "2026-11-01T08:53:40.780Z",
+        "lastMessageAt": "2026-11-01T09:28:05.641Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      },
+      {
+        "threadId": "mcp:launch:5e1cd90c9b7b845a8f975a32086431938d05d2cdf89bfbf630c6b05f297975ff",
+        "parentThreadId": null,
+        "relationship": null,
+        "title": "ybtam/skills-manager: Assess and initialize useful project context",
+        "link": "<t3-thread://v2/17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d/mcp:launch:5e1cd90c9b7b845a8f975a32086431938d05d2cdf89bfbf630c6b05f297975ff>",
+        "status": "completed",
+        "inWindowMessages": 25,
+        "firstMessageAt": "2026-11-01T08:18:36.113Z",
+        "lastMessageAt": "2026-11-01T08:35:33.522Z",
+        "read": "sqlite-ro messages + codex rollout aggregate"
+      }
+    ]
+  },
+  "pullRequests": {
+    "found": 8,
+    "covered": 8,
+    "items": [
+      {
+        "number": 105,
+        "url": "https://github.com/Yis-company/skills-manager/pull/105",
+        "state": "OPEN",
+        "createdAt": "2026-11-01T23:16",
+        "updatedAt": "2026-11-01T23:53",
+        "mergedAt": null,
+        "head": "feature/ski-19-nonblocking-operations",
+        "reviews": 0,
+        "reviewThreads": 0,
+        "comments": 1,
+        "commits": 11,
+        "changedFiles": 75,
+        "title": "Make project updates and skill installation nonblo",
+        "covered": [
+          "body",
+          "comments",
+          "commits",
+          "check rollups"
+        ]
+      },
+      {
+        "number": 104,
+        "url": "https://github.com/Yis-company/skills-manager/pull/104",
+        "state": "MERGED",
+        "createdAt": "2026-11-01T15:40",
+        "updatedAt": "2026-11-01T15:48",
+        "mergedAt": "2026-11-01T15:48",
+        "head": "chore/bun-migration",
+        "reviews": 0,
+        "reviewThreads": 0,
+        "comments": 1,
+        "commits": 2,
+        "changedFiles": 9,
+        "title": "feat: install a pre-push quality guard",
+        "covered": [
+          "body",
+          "comments",
+          "commits",
+          "check rollups"
+        ]
+      },
+      {
+        "number": 103,
+        "url": "https://github.com/Yis-company/skills-manager/pull/103",
+        "state": "MERGED",
+        "createdAt": "2026-11-01T14:46",
+        "updatedAt": "2026-11-01T15:22",
+        "mergedAt": "2026-11-01T15:22",
+        "head": "feature/improve-app-design-and-ux-consistency",
+        "reviews": 0,
+        "reviewThreads": 0,
+        "comments": 1,
+        "commits": 1,
+        "changedFiles": 36,
+        "title": "Unify workspace layouts and review agent changes",
+        "covered": [
+          "body",
+          "comments",
+          "commits",
+          "check rollups"
+        ]
+      },
+      {
+        "number": 99,
+        "url": "https://github.com/Yis-company/skills-manager/pull/99",
+        "state": "MERGED",
+        "createdAt": "2026-11-01T09:53",
+        "updatedAt": "2026-11-01T10:12",
+        "mergedAt": "2026-11-01T10:12",
+        "head": "feature/impeccable-init",
+        "reviews": 0,
+        "reviewThreads": 0,
+        "comments": 1,
+        "commits": 3,
+        "changedFiles": 54,
+        "title": "docs: initialize Impeccable product context",
+        "covered": [
+          "body",
+          "comments",
+          "commits",
+          "check rollups"
+        ]
+      },
+      {
+        "number": 98,
+        "url": "https://github.com/Yis-company/skills-manager/pull/98",
+        "state": "MERGED",
+        "createdAt": "2026-11-01T09:34",
+        "updatedAt": "2026-11-01T09:35",
+        "mergedAt": "2026-11-01T09:35",
+        "head": "docs/matt-project-context",
+        "reviews": 0,
+        "reviewThreads": 0,
+        "comments": 1,
+        "commits": 1,
+        "changedFiles": 4,
+        "title": "docs: configure engineering skills project context",
+        "covered": [
+          "body",
+          "comments",
+          "commits",
+          "check rollups"
+        ]
+      },
+      {
+        "number": 101,
+        "url": "https://github.com/Yis-company/skills-manager/pull/101",
+        "state": "MERGED",
+        "createdAt": "2026-11-01T09:16",
+        "updatedAt": "2026-11-01T09:30",
+        "mergedAt": "2026-11-01T09:30",
+        "head": "chore/bun-migration",
+        "reviews": 0,
+        "reviewThreads": 0,
+        "comments": 1,
+        "commits": 2,
+        "changedFiles": 15,
+        "title": "chore: migrate from pnpm to Bun",
+        "covered": [
+          "body",
+          "comments",
+          "commits",
+          "check rollups"
+        ]
+      },
+      {
+        "number": 102,
+        "url": "https://github.com/Yis-company/skills-manager/pull/102",
+        "state": "OPEN",
+        "createdAt": "2026-11-01T09:28",
+        "updatedAt": "2026-11-01T09:28",
+        "mergedAt": null,
+        "head": "changeset-release/main",
+        "reviews": 0,
+        "reviewThreads": 0,
+        "comments": 0,
+        "commits": 1,
+        "changedFiles": 8,
+        "title": "chore: version packages",
+        "covered": [
+          "body",
+          "comments",
+          "commits",
+          "check rollups"
+        ]
+      },
+      {
+        "number": 100,
+        "url": "https://github.com/Yis-company/skills-manager/pull/100",
+        "state": "MERGED",
+        "createdAt": "2026-11-01T09:15",
+        "updatedAt": "2026-11-01T09:28",
+        "mergedAt": "2026-11-01T09:28",
+        "head": "feature/review-fork-parent-changes",
+        "reviews": 0,
+        "reviewThreads": 0,
+        "comments": 1,
+        "commits": 1,
+        "changedFiles": 22,
+        "title": "fix: port upstream safety and compatibility fixes",
+        "covered": [
+          "body",
+          "comments",
+          "commits",
+          "check rollups"
+        ]
+      }
+    ]
+  },
+  "mainCiRunsInWindow": {
+    "total": 14,
+    "failed": 5
+  },
+  "gaps": [
+    "PR #101 source session not in this device's T3 threads",
+    "Linear SKI tickets not read",
+    "native subagent transcripts aggregated, not read line by line",
+    "Windows/Linux failure logs for #105 10a2e4e not grep-able; causes taken from session diagnosis and fix commits"
+  ],
+  "findings": [
+    {
+      "id": 1,
+      "severity": "high",
+      "title": "No required status checks; #99 merged with CI pending, main red",
+      "status": "partially-fixed"
+    },
+    {
+      "id": 2,
+      "severity": "high",
+      "title": "Red clippy baseline normalised; pre-push omits clippy",
+      "status": "open"
+    },
+    {
+      "id": 3,
+      "severity": "high",
+      "title": "version.yml bunx changeset:version broken since #101",
+      "status": "open"
+    },
+    {
+      "id": 4,
+      "severity": "medium",
+      "title": "E2E /tmp screenshot paths and unwritten test standards",
+      "status": "partially-fixed"
+    },
+    {
+      "id": 5,
+      "severity": "low",
+      "title": "Shared pre-push hook fails on branches predating it",
+      "status": "open"
+    },
+    {
+      "id": 6,
+      "severity": "low",
+      "title": "Changeset requirement only in CI",
+      "status": "open"
+    }
+  ]
+}

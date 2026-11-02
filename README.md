@@ -146,10 +146,11 @@ bun run tauri:dev
 ```
 
 `bun install` installs a pre-push hook. It runs `bun run format:check`,
-`bun run lint`, `bun run typecheck`, `bun run test`, and Rust formatting
-(`cargo fmt --manifest-path src-tauri/Cargo.toml --check`). Bun, Node, Rust
-and rustfmt must be available when pushing. The checks use the working tree;
-CI also runs the full build, E2E and platform-specific Rust checks.
+`bun run lint`, `bun run typecheck`, `bun run test`, Rust formatting
+(`cargo fmt --check`) and strict Clippy (`cargo clippy --all-targets -- -D
+warnings`). Bun, Node, Rust, rustfmt and Clippy must be available when
+pushing. The checks use the working tree; CI also runs the full build, E2E and
+platform-specific Rust tests.
 
 The installer refuses to overwrite an existing hook or change a configured
 `core.hooksPath`. If you maintain personal hooks, integrate

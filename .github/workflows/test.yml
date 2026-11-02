@@ -6,10 +6,8 @@ on:
     paths:
       - "src-tauri/**"
       - ".github/workflows/test.yml"
+  # Unfiltered so every required check reports on every PR.
   pull_request:
-    paths:
-      - "src-tauri/**"
-      - ".github/workflows/test.yml"
 
 permissions:
   contents: read

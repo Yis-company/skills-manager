@@ -154,7 +154,7 @@ for (const scope of ["library", "agent", "project"] as const) {
 test("desktop matrix fits minimum width and supports keyboard staging", async ({
   page,
   backend,
-}) => {
+}, testInfo) => {
   await backend.seed(matrixSeed);
   await page.setViewportSize({ width: 1100, height: 640 });
   await page.goto("/my-skills");
@@ -167,7 +167,7 @@ test("desktop matrix fits minimum width and supports keyboard staging", async ({
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     ),
   ).toBe(false);
-  await page.screenshot({ path: "/tmp/agents-manager-matrix-1100.png" });
+  await page.screenshot({ path: testInfo.outputPath("matrix-1100.png") });
 });
 
 test("project matrix changes the reviewed assignment without switching the shared preset", async ({
@@ -410,7 +410,7 @@ for (const theme of ["light", "dark"]) {
   test(`primary actions remain readable at minimum width and large text: ${theme}`, async ({
     page,
     backend,
-  }) => {
+  }, testInfo) => {
     await backend.seed({ ...matrixSeed, settings: { theme, text_size: "xlarge" } });
     await page.setViewportSize({ width: 1100, height: 640 });
     await page.goto("/my-skills");
@@ -447,6 +447,6 @@ for (const theme of ["light", "dark"]) {
     await review.hover();
     expect(await contrast()).toBeGreaterThanOrEqual(4.5);
     await page.getByRole("button", { name: "Discard", exact: true }).click();
-    await page.screenshot({ path: `/tmp/agents-manager-matrix-${theme}-large.png` });
+    await page.screenshot({ path: testInfo.outputPath(`matrix-${theme}-large.png`) });
   });
 }

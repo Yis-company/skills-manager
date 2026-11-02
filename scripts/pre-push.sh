@@ -7,3 +7,4 @@ bun run lint
 bun run typecheck
 bun run test
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
