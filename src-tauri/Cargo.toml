@@ -1,6 +1,6 @@
 [package]
 name = "skills-manager"
-version = "1.48.0"
+version = "1.49.0"
 description = "Agents Manager - skills, instructions and MCP configuration"
 authors = ["tianliang"]
 license = "MIT"

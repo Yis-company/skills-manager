@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.49.0
+
+### Minor Changes
+
+- [#99](https://github.com/Yis-company/skills-manager/pull/99) [`f79baf8`](https://github.com/Yis-company/skills-manager/commit/f79baf8b1d9315e4a67301fbaa5be6b805b331db) Thanks [@ybtam](https://github.com/ybtam)! - Clarify preset and host scope, review every removal-producing preset switch, and compare Sync conflicts and edited copies before applying a reviewed choice. Improve keyboard inspection, confirmation dialogs, Library hierarchy, and recoverable agent-log errors.
+
+- [#105](https://github.com/Yis-company/skills-manager/pull/105) [`5e52a22`](https://github.com/Yis-company/skills-manager/commit/5e52a220def2e7ded71b9c343491758ade49086f) Thanks [@ybtam](https://github.com/ybtam)! - Run project updates and skill installations concurrently while keeping progress beside their original host and project. Keep work running across host switches, verify uncertain connection outcomes before retrying, restore unresolved results after restart, and coordinate safe cancellation and automatic quit.
+
+- [#103](https://github.com/Yis-company/skills-manager/pull/103) [`8f408ca`](https://github.com/Yis-company/skills-manager/commit/8f408ca5087734aeb69fa0165a5306459dcb4ed5) Thanks [@ybtam](https://github.com/ybtam)! - Unify Library and agent/project workspaces with persistent resource navigation and agent presence matrices. Stage target changes for an explicit review, preserve pending work across filtering, and make shared preset switches and project preset actions clear. Keep source and content inspection optional while preserving existing grid and list workflows.
+
+### Patch Changes
+
+- [#100](https://github.com/Yis-company/skills-manager/pull/100) [`e88f97a`](https://github.com/Yis-company/skills-manager/commit/e88f97a8c559638a85ed1cf49ce2e7bd0d6284ab) Thanks [@ybtam](https://github.com/ybtam)! - Confirm workspace skill removals, validate library relocation destinations, avoid false updates from unrelated monorepo commits, and fix Git URL and Markdown compatibility handling.
+
 ## 1.48.0
 
 ### Minor Changes
