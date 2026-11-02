@@ -13,7 +13,6 @@ import {
 } from "react";
 import { toast } from "sonner";
 
-import { ConfirmDialog } from "../components/ConfirmDialog";
 import { RemoteCliUpdateDialog } from "../components/RemoteCliUpdateDialog";
 import i18n from "../i18n";
 import {
@@ -39,7 +38,7 @@ import type {
 import * as api from "../lib/tauri";
 import { applyTextSize } from "../lib/textScale";
 import { settingsLink } from "../views/settings/categories";
-import { useInstallQueueControl } from "./InstallQueueContext";
+import { OperationsProvider } from "./OperationsContext";
 import { useWorkspaceChanges } from "./WorkspaceChangesContext";
 
 /** The live link to the active remote host. */
@@ -157,13 +156,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [hostSession, setHostSession] = useState<HostSession | null>(null);
   const [connectingHostId, setConnectingHostId] = useState<null | string>(null);
   const connectingHostIdRef = useRef(connectingHostId);
-  const installQueue = useInstallQueueControl();
-
-  /** Answers the "installs not finished" question a switch asks. */
-  const [installsPrompt, setInstallsPrompt] = useState<{
-    count: number;
-    answer: (cancelThem: boolean) => void;
-  } | null>(null);
 
   const [remoteCliUpdateHostId, setRemoteCliUpdateHostId] = useState<null | string>(null);
   const [updatingRemoteCliHostId, setUpdatingRemoteCliHostId] = useState<null | string>(null);
@@ -340,22 +332,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const isLatest = () => switchSeqRef.current === seq;
       const previous = getActiveHostId();
 
-      // Installs run on the host they were queued for, whose session the
-      // switch closes: leave only once they are cancelled.
-      const installs = installQueue.activeCount();
-
-      if (hostId !== previous && installs > 0) {
-        const cancelThem = await new Promise<boolean>((answer) =>
-          setInstallsPrompt({ count: installs, answer }),
-        );
-
-        if (!cancelThem || !isLatest()) return false;
-        setConnectingHostId(hostId);
-        await installQueue.cancelAll();
-
-        if (!isLatest()) return false;
-      }
-
       if (hostId === null) {
         setConnectingHostId(null);
         // Also abandons a connect in flight. This computer's data does not
@@ -367,7 +343,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setHostSession(null);
         await refreshAppDataForHost(null);
 
-        return true;
+        return isLatest();
       }
 
       setConnectingHostId(hostId);
@@ -381,7 +357,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setHostSession({ info, lostMessage: null, reconnecting: false });
         await refreshAppDataForHost(hostId);
 
-        return true;
+        return isLatest();
       } catch (e) {
         if (!isLatest()) return false;
         const message = getErrorMessage(e, i18n.t("common.error"));
@@ -410,14 +386,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (isLatest()) setConnectingHostId(null);
       }
     },
-    [
-      enterHost,
-      installQueue,
-      refreshAppDataForHost,
-      remoteHosts,
-      updatingRemoteCliHostId,
-      confirmWorkspaceLeave,
-    ],
+    [enterHost, refreshAppDataForHost, remoteHosts, updatingRemoteCliHostId, confirmWorkspaceLeave],
   );
 
   useEffect(() => {
@@ -442,7 +411,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (switchSeqRef.current !== seq) return;
 
         try {
-          const info = await api.remoteHostConnect(hostId);
+          const info = await api.remoteHostConnect(hostId, false);
 
           if (switchSeqRef.current !== seq) return;
           setHostSession({ info, lostMessage: null, reconnecting: false });
@@ -465,7 +434,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const hostId = getActiveHostId();
 
     if (hostId === null) return false;
-    await api.remoteHostDisconnect().catch((e) => console.error("Failed to disconnect:", e));
+    await api.remoteHostDisconnect(hostId).catch((e) => console.error("Failed to disconnect:", e));
 
     return switchHost(hostId);
   }, [switchHost]);
@@ -885,7 +854,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         closeSkillDetail: () => setDetailSkillId(null),
       }}
     >
-      {children}
+      <OperationsProvider hostId={activeHostId} remoteHosts={remoteHosts}>
+        {children}
+      </OperationsProvider>
       <RemoteCliUpdateDialog
         hostId={remoteCliUpdateHostId}
         host={remoteHosts.find((host) => host.id === remoteCliUpdateHostId)}
@@ -894,18 +865,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         getHostSwitchToken={getHostSwitchToken}
         onClose={() => setRemoteCliUpdateHostId(null)}
         onBusyChange={(hostId) => setUpdatingRemoteCliHostId(hostId)}
-      />
-      <ConfirmDialog
-        open={installsPrompt !== null}
-        title={i18n.t("hostSwitcher.installsTitle")}
-        message={i18n.t("hostSwitcher.installsRunning", { count: installsPrompt?.count ?? 0 })}
-        confirmLabel={i18n.t("hostSwitcher.cancelInstalls")}
-        cancelLabel={i18n.t("hostSwitcher.waitForInstalls")}
-        onConfirm={async () => installsPrompt?.answer(true)}
-        onClose={() => {
-          installsPrompt?.answer(false);
-          setInstallsPrompt(null);
-        }}
       />
     </AppContext.Provider>
   );

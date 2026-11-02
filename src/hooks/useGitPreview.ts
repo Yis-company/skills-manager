@@ -3,10 +3,8 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { useApp } from "../context/AppContext";
-import { getErrorKind, getErrorMessage } from "../lib/error";
-import { listenOnActiveHost } from "../lib/hostEvents";
-import * as api from "../lib/tauri";
-import type { GitPreviewResult } from "../lib/tauri";
+import { useOperations } from "../context/OperationsContext";
+import { getErrorMessage } from "../lib/error";
 
 /** A skill found in a previewed repo, and whether and as what to install it. */
 export type GitSelection = {
@@ -16,107 +14,64 @@ export type GitSelection = {
   selected: boolean;
 };
 
-/**
- * Install from a git URL in two steps: clone and preview the repo's skills
- * (with clone progress on a toast), then install the selected ones.
- */
+/** The backend owns preparation and its preview; this hook owns only the open review. */
 export function useGitPreview() {
   const { t } = useTranslation();
-  const { refreshPresets, refreshManagedSkills } = useApp();
+  const { activeHostId } = useApp();
+  const { operations, act } = useOperations();
   const [gitUrl, setGitUrl] = useState("");
-  const [gitLoading, setGitLoading] = useState(false);
-  const [gitCancelKey, setGitCancelKey] = useState<null | string>(null);
-  const [gitPreview, setGitPreview] = useState<GitPreviewResult | null>(null);
-  const [gitPreviewRepoUrl, setGitPreviewRepoUrl] = useState<null | string>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [reviewId, setReviewId] = useState<null | string>(null);
   const [gitSelections, setGitSelections] = useState<GitSelection[]>([]);
   const [gitConfirmLoading, setGitConfirmLoading] = useState(false);
+  const operation = operations.find((o) => o.operation_id === reviewId);
 
-  const handleGitPreview = async () => {
-    if (!gitUrl.trim()) return;
-    setGitLoading(true);
-    const url = gitUrl.trim();
-    setGitCancelKey(url);
+  const reviewOperation = (id: string) => {
+    const preview = operations.find((o) => o.operation_id === id)?.preview;
 
-    const toastId = toast.loading(t("install.toast.cloning"));
-    let unlisten: (() => void) | null = null;
-
-    try {
-      unlisten = await listenOnActiveHost<{ skill_id: string; phase: string; detail?: string }>(
-        "install-progress",
-        (event) => {
-          if (event.payload.skill_id !== url) return;
-
-          if (event.payload.phase === "cloning") {
-            const detail = event.payload.detail?.trim();
-
-            const msg = detail
-              ? `${t("install.toast.cloning")}\n${detail}`
-              : t("install.toast.cloning");
-
-            toast.loading(msg, { id: toastId });
-          }
-        },
-      );
-      const preview = await api.previewGitInstall(url);
-      toast.dismiss(toastId);
-      setGitPreview(preview);
-      setGitPreviewRepoUrl(url);
-      setGitSelections(
-        preview.skills.map((s) => ({
-          rel_path: s.rel_path,
-          name: s.name,
-          description: s.description,
-          selected: true,
-        })),
-      );
-    } catch (error: unknown) {
-      if (getErrorKind(error) === "cancelled") {
-        toast.info(t("install.toast.cancelled"), { id: toastId });
-      } else {
-        toast.error(getErrorMessage(error, t("common.error")), { id: toastId });
-      }
-    } finally {
-      setGitLoading(false);
-      setGitCancelKey(null);
-      unlisten?.();
-    }
+    if (!preview) return;
+    setGitSelections(preview.map((skill) => ({ ...skill, selected: true })));
+    setReviewId(id);
   };
 
-  const handleGitPreviewClose = () => {
-    if (gitConfirmLoading) return;
+  const handleGitPreview = async () => {
+    if (!gitUrl.trim() || submitting) return;
+    setSubmitting(true);
 
-    if (gitPreview) {
-      api.cancelGitPreview(gitPreview.temp_dir).catch(() => {});
+    try {
+      await act(activeHostId, {
+        action: "submit_install",
+        operation_id: crypto.randomUUID(),
+        host_id: activeHostId,
+        sources: [{ kind: "git", url: gitUrl.trim() }],
+      });
+      setGitUrl("");
+    } catch (error) {
+      toast.error(getErrorMessage(error, t("common.error")));
+    } finally {
+      setSubmitting(false);
     }
-
-    setGitPreview(null);
-    setGitPreviewRepoUrl(null);
-    setGitSelections([]);
   };
 
   const handleGitConfirm = async () => {
-    if (!gitPreview) return;
-    const repoUrl = gitPreviewRepoUrl ?? gitUrl.trim();
+    if (!operation?.preview || gitConfirmLoading) return;
 
-    if (!repoUrl) return;
-    const selected = gitSelections.filter((s) => s.selected);
+    const items = gitSelections
+      .filter((s) => s.selected)
+      .map((s) => ({ rel_path: s.rel_path, name: s.name }));
 
-    if (selected.length === 0) return;
+    if (!items.length) return;
     setGitConfirmLoading(true);
 
     try {
-      await api.confirmGitInstall(
-        repoUrl,
-        gitPreview.temp_dir,
-        selected.map((s) => ({ rel_path: s.rel_path, name: s.name })),
-      );
-      await Promise.all([refreshPresets(), refreshManagedSkills()]);
-      toast.success(t("install.toast.success", { name: selected.map((s) => s.name).join(", ") }));
-      setGitUrl("");
-      setGitPreview(null);
-      setGitPreviewRepoUrl(null);
-      setGitSelections([]);
-    } catch (error: unknown) {
+      await act(operation.host_id, {
+        action: "confirm_install",
+        operation_id: operation.operation_id,
+        attempt_id: crypto.randomUUID(),
+        items,
+      });
+      setReviewId(null);
+    } catch (error) {
       toast.error(getErrorMessage(error, t("common.error")));
     } finally {
       setGitConfirmLoading(false);
@@ -126,14 +81,18 @@ export function useGitPreview() {
   return {
     gitUrl,
     setGitUrl,
-    gitLoading,
-    gitCancelKey,
-    gitPreview,
+    gitLoading: submitting,
+    gitPreview: operation?.preview ?? null,
+    reviewIsGit: [
+      ...(operation?.sources ?? []),
+      ...(operation?.items.flatMap((i) => (i.source ? [i.source] : [])) ?? []),
+    ].some((s) => s.kind === "git"),
     gitSelections,
     setGitSelections,
     gitConfirmLoading,
     handleGitPreview,
-    handleGitPreviewClose,
     handleGitConfirm,
+    handleGitPreviewClose: () => setReviewId(null),
+    reviewOperation,
   };
 }

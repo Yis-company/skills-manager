@@ -36,8 +36,10 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { useApp } from "../context/AppContext";
+import { useOperations } from "../context/OperationsContext";
 import { useWorkspaceChanges } from "../context/WorkspaceChangesContext";
 import { type PresetsData, queryKeys } from "../lib/appQueries";
+import { isLibraryOperation, operationCounts, operationProjectMatches } from "../lib/operations";
 import { getPresetIconOption } from "../lib/presetIcons";
 import { applyStoredOrder } from "../lib/storedOrder";
 import * as api from "../lib/tauri";
@@ -183,6 +185,22 @@ export function Sidebar() {
   const presetReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const projectReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [presetsOpen, setPresetsOpen] = useState(true);
+  const { operations } = useOperations();
+  const libraryOperations = operations.filter(isLibraryOperation);
+  const installActive = libraryOperations.filter((o) => !o.settled).length;
+
+  const installAttention = libraryOperations.reduce((count, operation) => {
+    const counts = operationCounts(operation);
+
+    return (
+      count +
+      counts.failed +
+      counts.review +
+      counts.unknown +
+      (operation.recovery === "unknown" && counts.total === 0 ? 1 : 0)
+    );
+  }, 0);
+
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [globalWorkspaceOpen, setGlobalWorkspaceOpen] = useState(true);
   const [lobsterWorkspaceOpen, setLobsterWorkspaceOpen] = useState(true);
@@ -545,7 +563,16 @@ export function Sidebar() {
                 )}
               >
                 <Icon className={cn("w-4 h-4 shrink-0", isActive ? "text-accent" : "text-muted")} />
-                {item.name}
+                <span>
+                  {item.name}
+                  {item.path === "/install" && (installActive > 0 || installAttention > 0) && (
+                    <span className="block text-[12px] font-normal text-secondary">
+                      {t(installActive ? "operations.installNav" : "operations.installAttention", {
+                        count: installActive || installAttention,
+                      })}
+                    </span>
+                  )}
+                </span>
               </Link>
             );
           })}
@@ -767,6 +794,38 @@ export function Sidebar() {
                     {orderedProjects.map((project) => {
                       const isActive = location.pathname === `/project/${project.id}`;
 
+                      const projectOperations = operations.filter((operation) =>
+                        operationProjectMatches(operation, activeHostId, project.id, project.path),
+                      );
+
+                      const progress =
+                        projectOperations
+                          .slice()
+                          .reverse()
+                          .find((operation) => !operation.settled) ??
+                        projectOperations
+                          .slice()
+                          .reverse()
+                          .find((operation) =>
+                            operation.items.some((item) =>
+                              ["failed", "needs_review", "outcome_unknown"].includes(item.phase),
+                            ),
+                          ) ??
+                        projectOperations.at(-1);
+
+                      const progressKey =
+                        progress?.recovery === "checking"
+                          ? "operations.connectionLost"
+                          : progress?.recovery === "unknown"
+                            ? "operations.phase.outcome_unknown"
+                            : !progress?.settled
+                              ? "operations.navProgress"
+                              : progress.items.some((item) => item.phase === "outcome_unknown")
+                                ? "operations.navUnknown"
+                                : progress.items.some((item) => item.phase === "canceled")
+                                  ? "operations.navCanceled"
+                                  : "operations.navResult";
+
                       const healthIndicator = getSyncHealthIndicator(
                         project.sync_health,
                         project.skill_count,
@@ -810,7 +869,14 @@ export function Sidebar() {
                                     <FolderOpen className="h-3 w-3" />
                                   )}
                                 </span>
-                                <span className="flex-1 truncate">{project.name}</span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">{project.name}</span>
+                                  {progress && (
+                                    <span className="block truncate text-[11px] text-secondary">
+                                      {t(progressKey, operationCounts(progress))}
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="ml-auto flex h-[18px] w-[52px] shrink-0 items-center justify-end gap-2 group-hover:hidden">
                                   {healthIndicator && (
                                     <span

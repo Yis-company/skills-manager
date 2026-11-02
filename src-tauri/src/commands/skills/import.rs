@@ -31,20 +31,7 @@ pub fn batch_import_folder_core(
 ) -> Result<BatchImportResult, AppError> {
     let store = ctx.store.clone();
 
-    let root = PathBuf::from(&folder_path);
-    if !root.is_dir() {
-        return Err(AppError::invalid_input("Selected path is not a directory"));
-    }
-
-    // Collect valid skill subdirectories (depth=1)
-    let mut skill_dirs: Vec<PathBuf> = Vec::new();
-    let entries = std::fs::read_dir(&root)?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if is_valid_skill_dir(&path) {
-            skill_dirs.push(path);
-        }
-    }
+    let skill_dirs = collect_local_batch(&folder_path)?;
 
     if skill_dirs.is_empty() {
         return Ok(BatchImportResult {
@@ -106,4 +93,24 @@ pub fn batch_import_folder_core(
         skipped,
         errors,
     })
+}
+
+/// The same depth-one source validation serves direct callers and operations.
+pub(crate) fn collect_local_batch(folder_path: &str) -> Result<Vec<PathBuf>, AppError> {
+    let root = PathBuf::from(folder_path);
+    if !root.is_dir() {
+        return Err(AppError::invalid_input("Selected path is not a directory"));
+    }
+
+    let mut skill_dirs: Vec<PathBuf> = Vec::new();
+    let entries = std::fs::read_dir(&root)?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if is_valid_skill_dir(&path) {
+            skill_dirs.push(path);
+        }
+    }
+
+    skill_dirs.sort();
+    Ok(skill_dirs)
 }

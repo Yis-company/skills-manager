@@ -46,6 +46,10 @@ struct Server {
 }
 
 fn start() -> Server {
+    start_host("test-host")
+}
+
+fn start_host(host_id: &str) -> Server {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -61,7 +65,9 @@ fn start() -> Server {
         cmd
     };
     let events = Arc::new(Recorded::default());
-    let session = RemoteSession::spawn(&cli, &host("unused", None), events.clone()).unwrap();
+    let mut record = host("unused", None);
+    record.id = host_id.to_owned();
+    let session = RemoteSession::spawn(&cli, &record, events.clone()).unwrap();
     Server {
         session,
         events,
@@ -384,4 +390,400 @@ async fn ssh_localhost_round_trip() {
 
     let presets = session.call("get_presets", json!({})).await.unwrap();
     assert!(presets.is_array());
+}
+
+#[tokio::test]
+async fn project_operations_use_the_same_contract_over_real_stdio() {
+    let server = start();
+    let source = server.tmp.path().join("source/demo");
+    let project = server.tmp.path().join("project");
+    let target = project.join(".claude/skills/demo");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(source.join("SKILL.md"), "---\nname: demo\n---\nlibrary\n").unwrap();
+    std::fs::write(target.join("SKILL.md"), "---\nname: demo\n---\nold\n").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(target.join("SKILL.md"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(60))
+        .unwrap();
+    server
+        .session
+        .call("install_local", json!({"sourcePath":source}))
+        .await
+        .unwrap();
+    let project = server
+        .session
+        .call("add_project", json!({"path":project}))
+        .await
+        .unwrap();
+    let args = json!({"request":{"action":"submit_project_update","operation_id":"stdio-project","host_id":"test-host","project_id":project["id"]}});
+    let submitted = server
+        .session
+        .call("operation_request", args.clone())
+        .await
+        .unwrap();
+    assert_eq!(submitted["host_id"], "test-host");
+    assert_eq!(submitted["project_id"], project["id"]);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let snapshot = server
+            .session
+            .call(
+                "operation_request",
+                json!({"request":{"action":"read","operation_id":"stdio-project"}}),
+            )
+            .await
+            .unwrap();
+        if snapshot["settled"] == true {
+            assert_eq!(snapshot["items"][0]["phase"], "succeeded");
+            break;
+        }
+        assert!(Instant::now() < deadline, "{snapshot}");
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+        "---\nname: demo\n---\nlibrary\n"
+    );
+    let reattached = server
+        .session
+        .call("operation_request", args)
+        .await
+        .unwrap();
+    assert_eq!(reattached["attempt_id"], submitted["attempt_id"]);
+    let receipt = server
+        .session
+        .call(
+            "operation_request",
+            json!({"request":{"action":"reconcile","operation_id":"stdio-project"}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt["items"][0]["phase"], "succeeded");
+    let list = server
+        .session
+        .call("operation_request", json!({"request":{"action":"list"}}))
+        .await
+        .unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert!(
+        server
+            .events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(event, payload)| event == "operation-changed"
+                && payload["host_id"] == "test-host"
+                && payload["operation_id"] == "stdio-project"),
+        "real operation events must reach their owning host observer"
+    );
+}
+
+#[tokio::test]
+async fn three_hosts_keep_colliding_operation_ids_and_libraries_isolated_over_real_stdio() {
+    let servers = [start_host("local"), start_host("build"), start_host("gpu")];
+    for server in &servers {
+        let source = server.tmp.path().join("source/demo");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            format!(
+                "---\nname: demo\n---\n{} body\n",
+                server.session.info().host_id
+            ),
+        )
+        .unwrap();
+    }
+    async fn run(server: &Server) -> Value {
+        let source = server.tmp.path().join("source/demo");
+        server.session.call("operation_request", json!({"request": {
+            "action":"submit_install", "operation_id":"same-operation", "host_id":server.session.info().host_id,
+            "sources":[{"kind":"local", "path":source}]
+        }})).await.unwrap()
+    }
+    let (local, build, gpu) = tokio::join!(run(&servers[0]), run(&servers[1]), run(&servers[2]));
+    for result in [local, build, gpu] {
+        assert_eq!(result["operation_id"], "same-operation");
+    }
+    for server in &servers {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let list = server
+                .session
+                .call("operation_request", json!({"request":{"action":"list"}}))
+                .await
+                .unwrap();
+            assert_eq!(list[0]["host_id"], server.session.info().host_id);
+            if list[0]["settled"] == true {
+                assert_eq!(list[0]["items"][0]["phase"], "succeeded");
+                break;
+            }
+            assert!(Instant::now() < deadline, "{list}");
+            tokio::task::yield_now().await;
+        }
+        let skills = server
+            .session
+            .call("get_managed_skills", json!({}))
+            .await
+            .unwrap();
+        let path = skills[0]["central_path"].as_str().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(Path::new(path).join("SKILL.md")).unwrap(),
+            format!(
+                "---\nname: demo\n---\n{} body\n",
+                server.session.info().host_id
+            )
+        );
+        assert!(server
+            .events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(event, payload)| event == "operation-changed"
+                && payload["host_id"] == server.session.info().host_id
+                && payload["operation_id"] == "same-operation"));
+    }
+}
+
+/// Real shared CLI/filesystem/receipt behavior through a deliberately lossy pipe.
+/// Python is a transport stand-in, not an operation implementation.
+#[tokio::test]
+async fn lost_responses_reconcile_original_receipts_without_replaying_writes() {
+    use fs2::FileExt;
+    struct Release(std::path::PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.0, "release");
+        }
+    }
+    for mode in [
+        "before_admission",
+        "after_admission",
+        "applying",
+        "committed",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let base = tmp.path().join("base");
+        let source = tmp.path().join("source/demo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: demo\n---\nintended content\n",
+        )
+        .unwrap();
+        let held = if mode == "after_admission" {
+            let lock = std::fs::File::create(base.join(".skills-manager.lock")).unwrap();
+            FileExt::lock_shared(&lock).unwrap();
+            Some(lock)
+        } else {
+            None
+        };
+        let release = Release(tmp.path().join("release"));
+        let (transport_base, transport_home, release_path) =
+            (base.clone(), home.clone(), release.0.clone());
+        let transport = move |_: &RemoteHostRecord, _: &[&str]| {
+            let mut cmd = Command::new("python3");
+            cmd.arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/lost_response.py"
+            ))
+            .arg(CLI)
+            .arg(&transport_base)
+            .arg(mode)
+            .arg(&release_path)
+            .env("HOME", &transport_home)
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("XDG_DATA_HOME");
+            cmd
+        };
+        let lost = RemoteSession::spawn(
+            &transport,
+            &host("unused", None),
+            Arc::new(Recorded::default()),
+        )
+        .unwrap();
+        let err = lost
+            .call(
+                "operation_request",
+                json!({"request":{
+                    "action":"submit_install", "operation_id":"lost", "host_id":"test-host",
+                    "sources":[{"kind":"local", "path":source}]
+                }}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Network, "{mode}");
+        let (reconnect_base, reconnect_home) = (base.clone(), home.clone());
+        let reconnect = move |_: &RemoteHostRecord, args: &[&str]| {
+            let mut cmd = Command::new(CLI);
+            cmd.arg("--base-dir")
+                .arg(&reconnect_base)
+                .args(args)
+                .env("HOME", &reconnect_home)
+                .env_remove("XDG_CONFIG_HOME")
+                .env_remove("XDG_DATA_HOME");
+            cmd
+        };
+        let reader = RemoteSession::spawn(
+            &reconnect,
+            &host("unused", None),
+            Arc::new(Recorded::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            reader
+                .call("operation_request", json!({"request":{"action":"list"}}))
+                .await
+                .unwrap(),
+            json!([])
+        );
+        let request = json!({"request":{"action":"reconcile", "operation_id":"lost"}});
+        if mode == "before_admission" {
+            assert_eq!(
+                reader
+                    .call("operation_request", request)
+                    .await
+                    .unwrap_err()
+                    .kind,
+                ErrorKind::NotFound
+            );
+            assert!(!base.join("skills/demo").exists());
+        } else {
+            if mode == "after_admission" {
+                let unknown = reader
+                    .call("operation_request", request.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(unknown["items"][0]["phase"], "outcome_unknown");
+                assert!(!base.join("skills/demo").exists());
+            }
+            drop(held);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let result = reader
+                    .call("operation_request", request.clone())
+                    .await
+                    .unwrap();
+                if result["items"][0]["phase"] == "succeeded" {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "{mode}: {result}");
+                tokio::task::yield_now().await;
+            }
+            let target = base.join("skills/demo/SKILL.md");
+            let modified = std::fs::metadata(&target).unwrap().modified().unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&target).unwrap(),
+                "---\nname: demo\n---\nintended content\n"
+            );
+            reader.call("operation_request", request).await.unwrap();
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().modified().unwrap(),
+                modified
+            );
+            assert_eq!(
+                reader
+                    .call("get_managed_skills", json!({}))
+                    .await
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        drop(release);
+        drop(lost);
+    }
+}
+
+#[tokio::test]
+async fn real_host_shutdown_drains_or_cancels_a_held_library_and_seals_admission() {
+    use fs2::FileExt;
+    for cancel in [false, true] {
+        let server = start();
+        let held =
+            std::fs::File::create(server.tmp.path().join("base/.skills-manager.lock")).unwrap();
+        FileExt::lock_shared(&held).unwrap();
+        for id in ["first", "later"] {
+            let source = server.tmp.path().join(id);
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::write(
+                source.join("SKILL.md"),
+                format!("---\nname: {id}\n---\ncontent\n"),
+            )
+            .unwrap();
+            server.session.call("operation_request", json!({"request":{"action":"submit_install","operation_id":id,"host_id":"test-host","sources":[{"kind":"local","path":source}]}})).await.unwrap();
+            let status = server
+                .session
+                .call(
+                    "operation_request",
+                    json!({"request":{"action":"shutdown_seal","epoch":1}}),
+                )
+                .await
+                .unwrap();
+            assert_eq!(status["ready"], false, "a waiting item is unfinished");
+        }
+        let action = if cancel {
+            "shutdown_cancel"
+        } else {
+            "shutdown_seal"
+        };
+        if !cancel {
+            FileExt::unlock(&held).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let settled = loop {
+            let result = server
+                .session
+                .call(
+                    "operation_request",
+                    json!({"request":{"action":action,"epoch":2}}),
+                )
+                .await
+                .unwrap();
+            if result["ready"] == true {
+                break result;
+            }
+            assert!(Instant::now() < deadline, "{result}");
+            tokio::task::yield_now().await;
+        };
+        let snapshots = settled["snapshots"].as_array().unwrap();
+        assert_eq!(snapshots.len(), 2);
+        for record in snapshots {
+            assert_eq!(
+                record["items"][0]["phase"],
+                if cancel { "canceled" } else { "succeeded" }
+            );
+        }
+        let library = server
+            .session
+            .call("get_managed_skills", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            library.as_array().unwrap().len(),
+            if cancel { 0 } else { 2 }
+        );
+        assert!(server
+            .session
+            .call(
+                "operation_request",
+                json!({"request":{"action":"submit_install","operation_id":"sealed","sources":[]}})
+            )
+            .await
+            .is_err());
+        assert!(
+            server.session.is_alive(),
+            "the native app still needs to persist results before teardown"
+        );
+        server.session.close();
+    }
 }

@@ -12,7 +12,7 @@ use crate::core::{
     sync_metadata,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InstallSourceMetadata {
     pub source_type: String,
     pub source_ref: Option<String>,

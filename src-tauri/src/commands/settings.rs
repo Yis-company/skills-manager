@@ -682,27 +682,15 @@ mod tests {
 }
 
 #[tauri::command]
-pub async fn app_exit(app: tauri::AppHandle) {
-    let app_for_main = app.clone();
-    if let Err(err) = app.run_on_main_thread(move || crate::quit_app(&app_for_main)) {
-        log::error!("Failed to schedule app_exit on main thread: {err}");
-        crate::quit_app(&app);
-    }
+pub async fn app_exit<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    crate::quit_app(&app);
 }
 
-/// Relaunch the app so a freshly installed update takes effect. Only ever
-/// invoked from an explicit user confirmation — the updater never restarts on
-/// its own.
-///
-/// Scheduled onto the main thread for the same reason `app_exit` is: the
-/// teardown destroys the main window before the process goes away.
+/// Explicitly request a restart; the shared boundary runs unsaved-work,
+/// worker settlement and persistence checks before any teardown/relaunch.
 #[tauri::command]
-pub async fn restart_app(app: tauri::AppHandle) {
-    let app_for_main = app.clone();
-    if let Err(err) = app.run_on_main_thread(move || crate::restart_app(&app_for_main)) {
-        log::error!("Failed to schedule restart_app on main thread: {err}");
-        crate::restart_app(&app);
-    }
+pub async fn restart_app<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    crate::restart_app(&app);
 }
 
 /// Report why an in-app update cannot be installed from where the app is
@@ -752,9 +740,9 @@ pub async fn update_install_blocker() -> Result<Option<String>, AppError> {
 }
 
 #[tauri::command]
-pub async fn hide_to_tray(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+pub async fn hide_to_tray<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    window: tauri::WebviewWindow<R>,
     store: State<'_, Arc<SkillStore>>,
 ) -> Result<(), AppError> {
     let show_tray_icon = {

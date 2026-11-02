@@ -165,6 +165,7 @@ pub fn run(
         })
     } else {
         let ctx = HostCtx {
+            operations: Arc::default(),
             store,
             cancel: Arc::new(InstallCancelRegistry::new()),
             events: Arc::new(NoopEvents),

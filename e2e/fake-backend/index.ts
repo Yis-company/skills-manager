@@ -24,6 +24,8 @@ export interface E2EControl {
   calls: RecordedCall[];
   /** The next `cmd` rejects with `message` instead of running. */
   failNext(cmd: string, message: string): void;
+  /** Lose the next operation response before admission or after the handler commits. */
+  dropNext(cmd: string, afterAdmission: boolean): void;
   /** Calls to `cmd` wait until `release(cmd)`. */
   hold(cmd: string): void;
   release(cmd: string): void;
@@ -62,6 +64,8 @@ const calls: RecordedCall[] = [];
 
 const failures = new Map<string, string[]>();
 
+const drops = new Map<string, boolean>();
+
 const holds = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 
 const responseHolds = new Map<
@@ -74,7 +78,26 @@ mockWindows("main");
 mockIPC(
   async (cmd, args) => {
     calls.push({ cmd, args });
-    await holds.get(cmd)?.promise;
+
+    // SAFETY: remote_invoke uses the host-routing envelope; optional request exists only for operation calls.
+    const routed =
+      cmd === "remote_invoke"
+        ? (args as { hostId: string; command: string; args?: { request?: { action: string } } })
+        : null;
+
+    // SAFETY: operation_request is dispatched with the shared OperationRequest envelope.
+    const localOperation =
+      cmd === "operation_request" ? (args as CommandArgs<"operation_request">) : null;
+
+    const action = routed?.args?.request?.action ?? localOperation?.request.action;
+
+    const boundary = routed
+      ? `${routed.hostId}:${routed.command}${action ? `:${action}` : ""}`
+      : action
+        ? `${cmd}:${action}`
+        : cmd;
+
+    await (holds.get(boundary) ?? holds.get(cmd))?.promise;
 
     // SAFETY: these two IPC names own the SyncCallArgs contract; other commands keep their own key.
     const subcommand =
@@ -82,13 +105,24 @@ mockIPC(
         ? (args as CommandArgs<"sync_screen_call">).command
         : cmd;
 
-    const failureKey = failures.has(subcommand) ? subcommand : cmd;
+    const failureKey = failures.has(boundary)
+      ? boundary
+      : failures.has(subcommand)
+        ? subcommand
+        : cmd;
+
     const failure = failures.get(failureKey)?.shift();
 
     if (failure !== undefined) {
       if (failures.get(failureKey)?.length === 0) failures.delete(failureKey);
       throw failure;
     }
+
+    const drop = drops.get(boundary);
+    drops.delete(boundary);
+    const lost = { kind: "network", message: "Connection was lost" };
+
+    if (drop === false) throw lost;
 
     const handler = findHandler(cmd);
 
@@ -100,7 +134,10 @@ mockIPC(
     }
 
     let result = handler(args ?? {}, state);
-    const responseHold = responseHolds.get(cmd);
+
+    if (["app_exit", "restart_app", "install_app_update"].includes(cmd))
+      await emit("shutdown-requested", result);
+    const responseHold = responseHolds.get(boundary) ?? responseHolds.get(cmd);
 
     if (responseHold && !responseHold.claimed) {
       responseHold.claimed = true;
@@ -110,6 +147,8 @@ mockIPC(
 
     save();
 
+    if (drop === true) throw lost;
+
     // A copy, so the app never holds a reference into the fake's state.
     return result === undefined ? null : structuredClone(result);
   },
@@ -118,6 +157,9 @@ mockIPC(
 
 window.__e2e = {
   calls,
+  dropNext: (cmd, afterAdmission) => {
+    drops.set(cmd, afterAdmission);
+  },
   failNext: (cmd, message) => failures.set(cmd, [...(failures.get(cmd) ?? []), message]),
   hold: (cmd) => {
     let resolve = () => {};

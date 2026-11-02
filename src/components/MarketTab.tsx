@@ -16,12 +16,17 @@ import {
 } from "lucide-react";
 import { useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
-import { useInstallQueue } from "../context/InstallQueueContext";
+import { useOperations } from "../context/OperationsContext";
 import { MARKET_SEARCH_STEP, type MarketSearch } from "../hooks/useMarketSearch";
 import { useMultiSelect } from "../hooks/useMultiSelect";
 import type { SourceOverflow } from "../hooks/useSourceOverflow";
-import { installKey } from "../lib/installQueue";
+import { getErrorMessage } from "../lib/error";
+import { installationPhaseKey, isItemActive, isLibraryOperation } from "../lib/operations";
+
+const installKey = (skill: SkillsShSkill) => `${skill.source}/${skill.skill_id}`;
+
 import { filterMarketSkills, paginateMarketSkills } from "../lib/marketSearch";
 import type { SkillsShSkill } from "../lib/tauri";
 import { cn } from "../utils";
@@ -89,21 +94,74 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
     visiblePages: visibleMarketPages,
   } = paginateMarketSkills(filteredMarketSkills, marketPage, MARKET_PAGE_SIZE);
 
-  const { items: queueItems, enqueue, remove, cancel } = useInstallQueue();
+  const { operations, install, act } = useOperations();
 
-  // Queued and running installs on this host, by `source/skill_id`.
-  const queueStatus = new Map(
-    queueItems
-      .filter(
-        (item) => item.hostId === hostId && (item.status === "queued" || item.status === "running"),
-      )
-      .map((item) => [item.key, item.status]),
+  const entries = operations
+    .filter(isLibraryOperation)
+    .flatMap((operation) => operation.items.map((item) => ({ operation, item })));
+
+  const marketEntries = new Map(
+    entries.flatMap((entry) => {
+      const source = entry.item.source;
+
+      return source?.kind === "marketplace"
+        ? [[String(`${source.source}/${source.skill_id}`), entry] as const]
+        : [];
+    }),
   );
+
+  const recoveringSources = new Map(
+    operations
+      .filter((o) => o.recovery)
+      .flatMap((operation) =>
+        (operation.sources ?? []).flatMap((source) =>
+          source.kind === "marketplace"
+            ? [[String(`${source.source}/${source.skill_id}`), operation] as const]
+            : [],
+        ),
+      ),
+  );
+
+  const queueStatus = new Map(
+    [...marketEntries].flatMap(([key, entry]) =>
+      isItemActive(entry.item)
+        ? [[key, entry.item.phase === "queued" ? "queued" : "running"] as const]
+        : [],
+    ),
+  );
+
+  const enqueue = (skills: SkillsShSkill[], origin: null | string) => {
+    void install(
+      skills.map((skill) => ({
+        kind: "marketplace",
+        source: skill.source,
+        skill_id: skill.skill_id,
+      })),
+      origin,
+    ).catch((error) => toast.error(getErrorMessage(error, t("common.error"))));
+  };
+
+  const cancel = (key: string) => {
+    const entry = marketEntries.get(key);
+
+    if (entry)
+      void act(entry.operation.host_id, {
+        action: "cancel",
+        operation_id: entry.operation.operation_id,
+      }).catch((error) => toast.error(getErrorMessage(error, t("common.error"))));
+  };
+
+  const remove = cancel;
 
   const isEligible = (skill: SkillsShSkill) => {
     const key = installKey(skill);
 
-    return !installedSourceRefs.has(key) && !queueStatus.has(key);
+    return (
+      !recoveringSources.has(key) &&
+      !installedSourceRefs.has(key) &&
+      !queueStatus.has(key) &&
+      marketEntries.get(key)?.item.phase !== "outcome_unknown"
+    );
   };
 
   const eligibleSkills = paginatedMarketSkills.filter(isEligible);
@@ -334,7 +392,7 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
                             >
                               <Check className="h-3.5 w-3.5" />
                             </span>
-                          ) : status === "running" ? (
+                          ) : status === "running" && !recoveringSources.has(sourceRef) ? (
                             <button
                               onClick={() => cancel(sourceRef)}
                               className="inline-flex items-center gap-1 rounded-[5px] border border-red-500/30 bg-red-500/10 px-1.5 py-1 text-red-400 transition-colors hover:bg-red-500/20"
@@ -346,7 +404,7 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
                                 {t("install.cancel")}
                               </span>
                             </button>
-                          ) : status === "queued" ? (
+                          ) : status === "queued" && !recoveringSources.has(sourceRef) ? (
                             <span className="inline-flex items-center gap-1 rounded-[5px] border border-border-subtle bg-background py-0.5 pl-1.5 pr-0.5 text-[11px] font-medium leading-none text-muted">
                               {t("install.queue.queued")}
                               <button
@@ -361,6 +419,7 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
                           ) : (
                             <button
                               onClick={() => enqueue([skill], hostId)}
+                              disabled={!isEligible(skill)}
                               className="rounded-[5px] border border-accent-border bg-accent-dark p-1 text-white transition-colors hover:bg-accent disabled:opacity-50"
                               title={t("install.oneClickInstall")}
                             >
@@ -370,6 +429,16 @@ export function MarketTab({ market, sourceOverflow, installedSourceRefs, hostId 
                         </div>
                       </div>
 
+                      {marketEntries.has(sourceRef) && (
+                        <p role="status" className="break-words text-[12px] text-secondary">
+                          {t(installationPhaseKey(marketEntries.get(sourceRef)!.item.phase))}
+                          {marketEntries.get(sourceRef)!.item.message && (
+                            <span className="block">
+                              {marketEntries.get(sourceRef)!.item.message}
+                            </span>
+                          )}
+                        </p>
+                      )}
                       <div className="flex flex-wrap items-center gap-1">
                         <button
                           type="button"

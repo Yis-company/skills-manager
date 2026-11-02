@@ -209,6 +209,38 @@ impl SkillStore {
         Ok(())
     }
 
+    /// Compare-and-replace one local document, including empty tombstones. A stale
+    /// webview/process cannot erase a newer result or revive a dismissed summary.
+    pub fn resource_state_put_versioned(
+        &self,
+        kind: &str,
+        id: &str,
+        version: u64,
+        value: &serde_json::Value,
+    ) -> Result<bool> {
+        let raw = serde_json::to_string(value)?;
+        if raw.len() > 16 * 1024 * 1024 {
+            anyhow::bail!("Resource operation exceeds the state size limit");
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        use rusqlite::OptionalExtension;
+        let current: Option<u64> = tx.query_row(
+            "SELECT json_extract(value, '$.version') FROM resource_state WHERE kind = ?1 AND id = ?2",
+            params![kind, id], |row| row.get(0),
+        ).optional()?;
+        if current.unwrap_or(0) != version {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO resource_state (kind, id, value) VALUES (?1, ?2, ?3)
+             ON CONFLICT(kind, id) DO UPDATE SET value = excluded.value",
+            params![kind, id, raw],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn resource_state_delete(&self, kind: &str, id: &str) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "DELETE FROM resource_state WHERE kind = ?1 AND id = ?2",

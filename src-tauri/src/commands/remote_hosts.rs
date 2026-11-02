@@ -260,15 +260,41 @@ fn probe_result(version: String) -> RemoteProbe {
 #[tauri::command]
 pub async fn remote_host_connect(
     host_id: String,
+    select: Option<bool>,
+    boundary: State<'_, Arc<crate::shutdown::Shutdown>>,
     sessions: State<'_, RemoteSessions>,
 ) -> Result<HostSessionInfo, AppError> {
-    Ok(sessions.session_for(&host_id).await?.info().clone())
+    let _call = boundary.enter(false)?;
+    let session = if select.unwrap_or(true) {
+        sessions.session_for(&host_id).await?
+    } else {
+        sessions.reconnect(&host_id).await?
+    };
+    Ok(session.info().clone())
 }
 
 #[tauri::command]
-pub async fn remote_host_disconnect(sessions: State<'_, RemoteSessions>) -> Result<(), AppError> {
+pub async fn remote_host_disconnect(
+    host_id: Option<String>,
+    sessions: State<'_, RemoteSessions>,
+) -> Result<(), AppError> {
+    if let Some(host_id) = host_id {
+        return sessions.disconnect_host(&host_id).await;
+    }
     sessions.disconnect().await;
     Ok(())
+}
+
+/// Observe retained operation hosts after a webview remount.
+#[tauri::command]
+pub fn remote_host_retained(sessions: State<'_, RemoteSessions>) -> Vec<String> {
+    sessions.retained_hosts()
+}
+
+/// Result refresh finished; release this host if nothing else needs it.
+#[tauri::command]
+pub fn remote_host_release(host_id: String, sessions: State<'_, RemoteSessions>) {
+    sessions.release_host(&host_id);
 }
 
 /// Run one host-scoped command on the host over its session, which only
@@ -278,8 +304,16 @@ pub async fn remote_invoke(
     host_id: String,
     command: String,
     args: Value,
+    boundary: State<'_, Arc<crate::shutdown::Shutdown>>,
     sessions: State<'_, RemoteSessions>,
 ) -> Result<Value, AppError> {
+    let _call = boundary.enter(
+        command == "operation_request"
+            && !matches!(
+                args["request"]["action"].as_str(),
+                Some("read" | "list" | "reconcile")
+            ),
+    )?;
     sessions.call(&host_id, &command, args).await
 }
 

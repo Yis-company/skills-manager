@@ -558,6 +558,9 @@ export const updateInstallBlocker = () => invoke<null | string>("update_install_
 
 export const restartApp = () => invoke<void>("restart_app");
 
+/** Windows installation exits the process; use the shared shutdown boundary first. */
+export const installAppUpdate = () => invoke<void>("install_app_update");
+
 export interface DiagnosticInfo {
   app_version: string;
   os: string;
@@ -1211,7 +1214,16 @@ export interface HostSessionInfo {
  * Installs this app's CLI first when the host runs an older one. Rejects when
  * the host is unreachable, has no CLI, or cannot take this version.
  */
-export const remoteHostConnect = (hostId: string) =>
-  invoke<HostSessionInfo>("remote_host_connect", { hostId });
+export const remoteHostConnect = (hostId: string, select?: boolean) =>
+  select === undefined
+    ? invoke<HostSessionInfo>("remote_host_connect", { hostId })
+    : invoke<HostSessionInfo>("remote_host_connect", { hostId, select });
 
-export const remoteHostDisconnect = () => invoke<void>("remote_host_disconnect");
+export const remoteHostDisconnect = (hostId?: string) =>
+  invoke<void>("remote_host_disconnect", { hostId: hostId ?? null });
+
+/** Existing app-session connections, without opening a connection or restoring results. */
+export const remoteHostRetained = () => invoke<string[]>("remote_host_retained");
+
+export const remoteHostRelease = (hostId: string) =>
+  invoke<void>("remote_host_release", { hostId });

@@ -242,6 +242,8 @@ fn slot_stats(dir: &Path) -> (u64, std::time::SystemTime) {
 fn lock_repo_cache(
     cached_dir: &Path,
     on_progress: &Option<ProgressCallback>,
+    cancel: Option<&Arc<AtomicBool>>,
+    wait: bool,
 ) -> Result<RepoCacheLock> {
     if let Some(parent) = cached_dir.parent() {
         std::fs::create_dir_all(parent)?;
@@ -256,13 +258,26 @@ fn lock_repo_cache(
         .open(&lock_path)
         .with_context(|| format!("Failed to open repo cache lock {}", lock_path.display()))?;
 
-    // Try non-blocking first; if contended, surface a progress message before blocking.
-    if file.try_lock_exclusive().is_err() {
-        if let Some(cb) = on_progress {
-            cb("Waiting for another install of this repository to finish…");
+    loop {
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            bail!("Installation cancelled");
         }
-        file.lock_exclusive()
-            .with_context(|| format!("Failed to lock repo cache {}", lock_path.display()))?;
+        match file.try_lock_exclusive() {
+            Ok(()) => break,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.raw_os_error() == Some(33) =>
+            {
+                if !wait {
+                    bail!(CACHE_BUSY);
+                }
+                if let Some(cb) = on_progress {
+                    cb(CACHE_BUSY);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
     Ok(RepoCacheLock { _file: file })
 }
@@ -592,10 +607,36 @@ pub fn clone_repo_ref_scoped(
     proxy_url: Option<&str>,
     on_progress: Option<ProgressCallback>,
 ) -> Result<PathBuf> {
+    clone_repo_ref_scoped_mode(url, branch, subpath, cancel, proxy_url, on_progress, true)
+}
+
+pub const CACHE_BUSY: &str = "Waiting for another install of this repository";
+
+/// Operation workers yield cache contention back to their coordinator.
+pub fn try_clone_repo_ref_scoped(
+    url: &str,
+    branch: Option<&str>,
+    subpath: Option<&str>,
+    cancel: Option<&Arc<AtomicBool>>,
+    proxy_url: Option<&str>,
+    on_progress: Option<ProgressCallback>,
+) -> Result<PathBuf> {
+    clone_repo_ref_scoped_mode(url, branch, subpath, cancel, proxy_url, on_progress, false)
+}
+
+fn clone_repo_ref_scoped_mode(
+    url: &str,
+    branch: Option<&str>,
+    subpath: Option<&str>,
+    cancel: Option<&Arc<AtomicBool>>,
+    proxy_url: Option<&str>,
+    on_progress: Option<ProgressCallback>,
+    wait: bool,
+) -> Result<PathBuf> {
     if let Some(subpath) = sparse_pattern(subpath) {
-        match clone_repo_sparse(url, branch, &subpath, cancel, proxy_url, &on_progress) {
+        match clone_repo_sparse(url, branch, &subpath, cancel, proxy_url, &on_progress, wait) {
             Ok(dir) => return Ok(dir),
-            Err(e) if is_cancellation(&e) => return Err(e),
+            Err(e) if is_cancellation(&e) || e.to_string() == CACHE_BUSY => return Err(e),
             Err(e) => {
                 log::info!(
                     "narrow clone of '{subpath}' from {url} unavailable, using a full checkout: {e}"
@@ -604,7 +645,7 @@ pub fn clone_repo_ref_scoped(
         }
     }
 
-    clone_repo_full(url, branch, cancel, proxy_url, on_progress)
+    clone_repo_full(url, branch, cancel, proxy_url, on_progress, wait)
 }
 
 /// Whether an error is a user cancellation rather than a fault worth retrying
@@ -658,9 +699,10 @@ fn clone_repo_sparse(
     cancel: Option<&Arc<AtomicBool>>,
     proxy_url: Option<&str>,
     on_progress: &Option<ProgressCallback>,
+    wait: bool,
 ) -> Result<PathBuf> {
     let cached_dir = repo_cache_dir_for(url, true);
-    let _cache_lock = lock_repo_cache(&cached_dir, on_progress)?;
+    let _cache_lock = lock_repo_cache(&cached_dir, on_progress, cancel, wait)?;
 
     // One slot serves every skill from this repo: the objects are what is
     // expensive, and they are shared. The lock holds until this call's copy is
@@ -946,9 +988,10 @@ fn clone_repo_full(
     cancel: Option<&Arc<AtomicBool>>,
     proxy_url: Option<&str>,
     on_progress: Option<ProgressCallback>,
+    wait: bool,
 ) -> Result<PathBuf> {
     let cached_dir = repo_cache_dir(url);
-    let _cache_lock = lock_repo_cache(&cached_dir, &on_progress)?;
+    let _cache_lock = lock_repo_cache(&cached_dir, &on_progress, cancel, wait)?;
 
     // Try cached repo first.
     if cached_dir.exists() {
@@ -2898,7 +2941,7 @@ mod tests {
         seed_cache_slot(root, "free", 4096, now - Duration::from_secs(86_400));
 
         // Stand in for another install that already holds the oldest slot.
-        let held = lock_repo_cache(&root.join("held"), &None).unwrap();
+        let held = lock_repo_cache(&root.join("held"), &None, None, true).unwrap();
 
         prune_cache_root(root, &root.join("nothing"), 6000);
 

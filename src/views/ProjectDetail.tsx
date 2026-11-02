@@ -32,6 +32,7 @@ import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import { PresetBar } from "../components/PresetBar";
 import { ProjectAgentsDialog } from "../components/ProjectAgentsDialog";
 import { ProjectGitDialog } from "../components/ProjectGitDialog";
+import { ProjectOperationProgress } from "../components/ProjectOperationProgress";
 import { ProjectSkillCard } from "../components/ProjectSkillCard";
 import { ProjectSkillDetailPanel } from "../components/ProjectSkillDetailPanel";
 import type { ProjectSkillItemProps } from "../components/projectSkillItem";
@@ -40,6 +41,7 @@ import { ResourceWorkspace } from "../components/ResourceWorkspace";
 import { RetiredLinksBanner } from "../components/RetiredLinksBanner";
 import { SkillMatrix } from "../components/SkillMatrix";
 import { useApp } from "../context/AppContext";
+import { useOperations } from "../context/OperationsContext";
 import { useLastUsedExportAgents } from "../hooks/useLastUsedExportAgents";
 import { useMultiSelect } from "../hooks/useMultiSelect";
 import { useProjectAgentTargets } from "../hooks/useProjectAgentTargets";
@@ -53,11 +55,11 @@ import {
 import { getErrorMessage } from "../lib/error";
 import { enabledInstalledAgentKeys, getDefaultExportAgents } from "../lib/exportAgents";
 import { invokeHost } from "../lib/hostCall";
+import { isItemActive, operationProjectMatches } from "../lib/operations";
 import {
   filterProjectSkillGroups,
   getAssignedAgents,
   getProjectUpdateCandidates,
-  getProjectUpdateReviewCount,
   groupProjectSkills,
   isCenterUpdatable,
   pickInitialAgents,
@@ -90,6 +92,23 @@ export function ProjectDetail() {
     activeHostId,
   } = useApp();
 
+  const { operations, submit: submitProjectUpdate } = useOperations();
+  const project = projects.find((p) => p.id === id);
+
+  const scopedOperations = operations.filter((operation) =>
+    operationProjectMatches(operation, activeHostId, id, project?.path),
+  );
+
+  const projectOperations = scopedOperations.filter(
+    (operation, index) =>
+      index === scopedOperations.length - 1 ||
+      !operation.settled ||
+      operation.items.some((item) =>
+        ["failed", "needs_review", "outcome_unknown"].includes(item.phase),
+      ),
+  );
+
+  const batchUpdatingProject = projectOperations.some((operation) => !operation.settled);
   const queryClient = useQueryClient();
 
   const projectMetadataLoaded =
@@ -140,10 +159,7 @@ export function ProjectDetail() {
   const [centerDocContent, setCenterDocContent] = useState<null | string>(null);
   const [centerDocLoading, setCenterDocLoading] = useState(false);
   const [updatingCenterSkill, setUpdatingCenterSkill] = useState<null | string>(null);
-  const [updatingProjectSkill, setUpdatingProjectSkill] = useState<null | string>(null);
   const [batchUpdatingCenter, setBatchUpdatingCenter] = useState(false);
-  const [batchUpdatingProject, setBatchUpdatingProject] = useState(false);
-  const projectUpdateInFlightRef = useRef(false);
   const [togglingSkill, setTogglingSkill] = useState<null | string>(null);
 
   const [togglingAgentTarget, setTogglingAgentTarget] = useState<{
@@ -199,11 +215,7 @@ export function ProjectDetail() {
   const [batchToggling, setBatchToggling] = useState(false);
 
   const batchSelectionLocked =
-    batchDeleteRunning ||
-    batchDeleteTarget !== null ||
-    batchToggling ||
-    batchUpdatingCenter ||
-    batchUpdatingProject;
+    batchDeleteRunning || batchDeleteTarget !== null || batchToggling || batchUpdatingCenter;
 
   const PROJECT_ADD_CALLOUT_KEY = "skills-manager.projectAddCalloutDismissed";
 
@@ -224,8 +236,6 @@ export function ProjectDetail() {
       // ignore
     }
   };
-
-  const project = projects.find((p) => p.id === id);
 
   const getSkillKey = useCallback((skill: Pick<ProjectSkillGroup, "id">) => {
     return skill.id;
@@ -666,68 +676,18 @@ export function ProjectDetail() {
     }
   };
 
-  const runProjectUpdates = async (
-    groups: ProjectSkillGroup[],
-    hostId: null | string,
-    projectId: string,
-    singleName?: string,
-  ) => {
-    let updated = 0;
-    let skipped = 0;
-    let failed = 0;
-    let firstError: unknown;
-
-    for (const group of groups) {
-      skipped += getProjectUpdateReviewCount(group);
-
-      for (const variant of getProjectUpdateCandidates(group)) {
-        try {
-          await invokeHost<void>(hostId, "update_project_skill_from_center", {
-            projectId,
-            skillRelativePath: variant.relative_path,
-            agent: variant.agent,
-          });
-          updated++;
-        } catch (error) {
-          failed++;
-          firstError ??= error;
-        }
-      }
-    }
-
-    const refreshResults = await Promise.allSettled([
-      refreshQuery(queryClient, projectSkillsQueryOptions(hostId, projectId)),
-      refreshQuery(queryClient, projectsQueryOptions(hostId)),
-    ]);
-
-    const refreshFailed = refreshResults.filter((result) => result.status === "rejected").length;
-
-    if (singleName && updated > 0 && skipped === 0 && failed === 0) {
-      toast.success(t("project.updateProjectSuccess", { name: singleName }));
-    } else {
-      toast.message(t("project.updateProjectOutcome", { updated, skipped, failed }));
-    }
-
-    if (firstError) toast.error(getErrorMessage(firstError, t("common.error")));
-
-    if (refreshFailed > 0)
-      toast.error(t("project.updateProjectRefreshFailed", { count: refreshFailed }));
-  };
-
-  const handleUpdateProject = async (skill: ProjectSkillGroup) => {
-    if (!id || projectUpdateInFlightRef.current) return;
-    projectUpdateInFlightRef.current = true;
-    const hostId = activeHostId;
-    const projectId = id;
-    setUpdatingProjectSkill(getSkillKey(skill));
+  const startProjectUpdate = async (paths?: string[]) => {
+    if (!id) return;
 
     try {
-      await runProjectUpdates([skill], hostId, projectId, skill.name);
-    } finally {
-      projectUpdateInFlightRef.current = false;
-      setUpdatingProjectSkill(null);
+      await submitProjectUpdate(id, paths);
+    } catch (error) {
+      toast.error(getErrorMessage(error, t("common.error")));
     }
   };
+
+  const handleUpdateProject = (skill: ProjectSkillGroup) =>
+    startProjectUpdate([skill.relative_path]);
 
   useEffect(() => {
     const refresh = () => {
@@ -1070,35 +1030,10 @@ export function ProjectDetail() {
     }
   };
 
-  const handleBatchUpdateProject = async () => {
-    if (!id || projectUpdateInFlightRef.current) return;
-    projectUpdateInFlightRef.current = true;
-    const hostId = activeHostId;
-    const projectId = id;
-    setBatchUpdatingProject(true);
+  const handleBatchUpdateProject = () =>
+    startProjectUpdate(selectedSkills.map((skill) => skill.relative_path));
 
-    try {
-      await runProjectUpdates(selectedSkills, hostId, projectId);
-    } finally {
-      projectUpdateInFlightRef.current = false;
-      setBatchUpdatingProject(false);
-    }
-  };
-
-  const handleUpdateAllProjectSkills = async () => {
-    if (!id || projectUpdateInFlightRef.current || updatableProjectVariantCount === 0) return;
-    projectUpdateInFlightRef.current = true;
-    const hostId = activeHostId;
-    const projectId = id;
-    setBatchUpdatingProject(true);
-
-    try {
-      await runProjectUpdates(groupedSkills, hostId, projectId);
-    } finally {
-      projectUpdateInFlightRef.current = false;
-      setBatchUpdatingProject(false);
-    }
-  };
+  const handleUpdateAllProjectSkills = () => startProjectUpdate();
 
   const handleBatchEditTags = async (adds: string[], removes: string[]) => {
     let updated = 0;
@@ -1328,11 +1263,7 @@ export function ProjectDetail() {
 
                 <button
                   onClick={handleUpdateAllProjectSkills}
-                  disabled={
-                    updatableProjectVariantCount === 0 ||
-                    batchUpdatingProject ||
-                    updatingProjectSkill !== null
-                  }
+                  disabled={updatableProjectVariantCount === 0 || batchUpdatingProject}
                   className="app-toolbar-button app-toolbar-button-secondary"
                   title={t("project.updateAllFromLibraryHint")}
                 >
@@ -1358,6 +1289,10 @@ export function ProjectDetail() {
                 </div>
               </div>
             </div>
+
+            {projectOperations.map((operation) => (
+              <ProjectOperationProgress key={operation.operation_id} operation={operation} />
+            ))}
 
             {showAddCallout && groupedSkills.length > 0 && !isMultiSelect && (
               <div className="relative rounded-lg bg-bg-secondary px-3 py-2 text-[12px] leading-5">
@@ -1680,7 +1615,19 @@ export function ProjectDetail() {
                   isMultiSelect,
                   isSelected: selectedIds.has(skillKey),
                   isUpdatingCenter: updatingCenterSkill === skillKey,
-                  isUpdatingProject: batchUpdatingProject || updatingProjectSkill !== null,
+                  operationItems:
+                    projectOperations
+                      .slice()
+                      .reverse()
+                      .find((operation) =>
+                        operation.items.some((item) => item.relative_path === skill.relative_path),
+                      )
+                      ?.items.filter((item) => item.relative_path === skill.relative_path) ?? [],
+                  isUpdatingProject: projectOperations.some((operation) =>
+                    operation.items.some(
+                      (item) => item.relative_path === skill.relative_path && isItemActive(item),
+                    ),
+                  ),
                   isToggling: togglingSkill === skillKey,
                   pendingAgent:
                     togglingAgentTarget?.skillKey === skillKey ? togglingAgentTarget.agent : null,

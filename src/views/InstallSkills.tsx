@@ -1,32 +1,32 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Box, Github, UploadCloud } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { GitInstallTab } from "../components/GitInstallTab";
 import { GitPreviewDialog } from "../components/GitPreviewDialog";
+import { InstallationProgress } from "../components/InstallationProgress";
 import { LocalInstallTab } from "../components/LocalInstallTab";
 import { MarketTab } from "../components/MarketTab";
 import { useApp } from "../context/AppContext";
+import { useOperations } from "../context/OperationsContext";
 import { useGitPreview } from "../hooks/useGitPreview";
 import { useLocalScan } from "../hooks/useLocalScan";
 import { useMarketSearch } from "../hooks/useMarketSearch";
 import { useSourceOverflow } from "../hooks/useSourceOverflow";
 import { getErrorMessage } from "../lib/error";
 import { findInstalledByGitUrl as findInstalledSkillByGitUrl } from "../lib/gitUrl";
-import { listenOnActiveHost } from "../lib/hostEvents";
+import { type InstallSource, isItemActive, isLibraryOperation } from "../lib/operations";
 import { pickPath } from "../lib/pickPath";
-import * as api from "../lib/tauri";
-import type { BatchImportResult } from "../lib/tauri";
 import { cn } from "../utils";
 import type { InstallTab } from "./installSearch";
 
 export function InstallSkills() {
   const { t } = useTranslation();
+  const { operations, install } = useOperations();
 
-  const { refreshPresets, refreshManagedSkills, managedSkills, openSkillDetailById, activeHostId } =
-    useApp();
+  const { managedSkills, activeHostId, activeHost } = useApp();
 
   const navigate = useNavigate();
   const { tab: tabParam } = useSearch({ from: "/install" });
@@ -45,44 +45,47 @@ export function InstallSkills() {
     gitUrl,
     setGitUrl,
     gitLoading,
-    gitCancelKey,
     gitPreview,
+    reviewIsGit,
     gitSelections,
     setGitSelections,
     gitConfirmLoading,
     handleGitPreview,
     handleGitPreviewClose,
     handleGitConfirm,
+    reviewOperation,
   } = useGitPreview();
 
-  const { scanResult, scanLoading, localError, setLocalError, runScan, runScanSilent } =
-    useLocalScan(activeTab === "local");
+  const { scanResult, scanLoading, localError, setLocalError, runScan } = useLocalScan(
+    activeTab === "local",
+  );
 
-  const [importingPaths, setImportingPaths] = useState<Set<string>>(new Set());
-  const [importingAll, setImportingAll] = useState(false);
+  const importingPaths = new Set(
+    operations.flatMap((operation) =>
+      operation.items.flatMap((item) =>
+        isItemActive(item) && item.source?.kind === "local" ? [item.source.path] : [],
+      ),
+    ),
+  );
+
+  const importingAll = importingPaths.size > 0;
+
+  const currentScan = scanResult
+    ? {
+        ...scanResult,
+        groups: scanResult.groups.map((group) => ({
+          ...group,
+          imported:
+            group.imported ||
+            group.locations.some((location) =>
+              managedSkills.some((skill) => skill.source_ref === location.found_path),
+            ),
+        })),
+      }
+    : null;
+
   const [renameEditing, setRenameEditing] = useState<Record<string, string>>({});
   const sourceOverflow = useSourceOverflow(market.sourceOptions);
-
-  const managedSkillsRef = useRef(managedSkills);
-  useEffect(() => {
-    managedSkillsRef.current = managedSkills;
-  }, [managedSkills]);
-
-  const goToSkill = useCallback(
-    (skillName: string) => {
-      // Use ref to get the latest managedSkills after refresh
-      const skills = managedSkillsRef.current;
-
-      const skill = skills.find((s) => s.name === skillName || s.source_ref === skillName);
-
-      if (skill) {
-        openSkillDetailById(skill.id);
-      }
-
-      navigate({ to: "/my-skills" });
-    },
-    [navigate, openSkillDetailById],
-  );
 
   const installedSourceRefs = useMemo(() => {
     const set = new Set<string>();
@@ -106,42 +109,24 @@ export function InstallSkills() {
     navigate({ to: "/install", search: { tab } });
   };
 
-  const warnRejected = (results: PromiseSettledResult<unknown>[], label: string) => {
-    for (const r of results) {
-      if (r.status === "rejected") console.warn(`${label} failed:`, r.reason);
+  const submitSources = async (sources: InstallSource[]) => {
+    try {
+      await install(sources);
+    } catch (error) {
+      const message = getErrorMessage(error, t("common.error"));
+      setLocalError(message);
+      toast.error(message);
     }
   };
 
   const installLocalSource = async (sourcePath: string) => {
-    const name = sourcePath.split("/").pop() || sourcePath;
-    const toastId = toast.loading(t("install.toast.installing", { name }));
-
     try {
-      await api.installLocal(sourcePath);
-    } catch (e) {
-      const message = getErrorMessage(e, t("common.error"));
+      await install([{ kind: "local", path: sourcePath }]);
+    } catch (error) {
+      const message = getErrorMessage(error, t("common.error"));
       setLocalError(message);
-      toast.error(message, { id: toastId });
-
-      return;
+      toast.error(message);
     }
-
-    // Install succeeded — post-install refresh is best-effort and must not
-    // surface as an install failure.
-    const results = await Promise.allSettled([
-      refreshPresets(),
-      refreshManagedSkills(),
-      runScanSilent(),
-    ]);
-
-    warnRejected(results, "post-install refresh");
-    toast.success(t("install.toast.success", { name }), {
-      id: toastId,
-      action: {
-        label: t("install.toast.view"),
-        onClick: () => goToSkill(name),
-      },
-    });
   };
 
   const handleLocalFolderInstall = async () => {
@@ -171,127 +156,59 @@ export function InstallSkills() {
   };
 
   const handleBatchImportFolder = async () => {
-    let unlisten: (() => void) | null = null;
-
     try {
       const selected = await pickPath({ directory: true });
 
-      if (!selected) return;
-
-      const toastId = toast.loading(t("install.local.batchImporting"));
-
-      unlisten = await listenOnActiveHost<{ current: number; total: number; name: string }>(
-        "batch-import-progress",
-        (event) => {
-          const { current, total, name } = event.payload;
-          toast.loading(t("install.local.batchProgress", { current, total, name }), {
-            id: toastId,
-          });
-        },
-      );
-
-      const result: BatchImportResult = await api.batchImportFolder(selected);
-
-      if (result.errors.length > 0) {
-        const previewErrors = result.errors.slice(0, 3).join("; ");
-        const remaining = result.errors.length - 3;
-        const detail = remaining > 0 ? `${previewErrors}; +${remaining} more` : previewErrors;
-        toast.error(
-          `${t("install.local.batchErrors", { count: result.errors.length })}: ${detail}`,
-          { id: toastId },
-        );
-      } else if (result.imported === 0) {
-        toast.info(t("install.local.batchAllSkipped", { skipped: result.skipped }), {
-          id: toastId,
-        });
-      } else {
-        toast.success(
-          t("install.local.batchSuccess", {
-            imported: result.imported,
-            skipped: result.skipped,
-          }),
-          { id: toastId },
-        );
-      }
-
-      await Promise.all([refreshPresets(), refreshManagedSkills()]);
-      runScan();
-    } catch (error: unknown) {
-      const message = getErrorMessage(error, t("common.error"));
-      setLocalError(message);
-      toast.error(message);
-    } finally {
-      unlisten?.();
+      if (selected) await submitSources([{ kind: "local_batch", path: selected }]);
+    } catch (error) {
+      toast.error(getErrorMessage(error, t("common.error")));
     }
   };
 
-  const handleCancelInstall = (cancelKey: string) => {
-    api.cancelInstall(cancelKey).catch(() => {
-      // Ignore race: install may have completed before cancel request arrives.
-    });
-  };
+  const handleImportDiscovered = (path: string, name: string) =>
+    submitSources([{ kind: "local", path, name, origin: "discovered" }]);
 
-  const handleImportDiscovered = async (sourcePath: string, name: string) => {
-    setImportingPaths((prev) => new Set(prev).add(sourcePath));
+  const handleImportAllDiscovered = () =>
+    submitSources(
+      (currentScan?.groups ?? []).flatMap((group) => {
+        const location = group.locations[0];
 
-    try {
-      try {
-        await api.importExistingSkill(sourcePath, name);
-      } catch (error: unknown) {
-        toast.error(getErrorMessage(error, t("common.error")));
+        return !group.imported && location
+          ? [
+              {
+                kind: "local" as const,
+                path: location.found_path,
+                name: renameEditing[group.name] ?? group.name,
+                origin: "discovered" as const,
+              },
+            ]
+          : [];
+      }),
+    );
 
-        return;
-      }
+  const libraryOperations = operations.filter(isLibraryOperation);
 
-      toast.success(t("install.scan.importedOne", { name }));
+  const sourceMatches = (source: InstallSource, tab: InstallTab) =>
+    tab === "market"
+      ? source.kind === "marketplace"
+      : tab === "git"
+        ? source.kind === "git"
+        : source.kind === "local" || source.kind === "local_batch";
 
-      const results = await Promise.allSettled([
-        refreshPresets(),
-        refreshManagedSkills(),
-        runScanSilent(),
-      ]);
-
-      warnRejected(results, "post-import refresh");
-    } finally {
-      setImportingPaths((prev) => {
-        const next = new Set(prev);
-        next.delete(sourcePath);
-
-        return next;
-      });
-    }
-  };
-
-  const handleImportAllDiscovered = async () => {
-    setImportingAll(true);
-
-    try {
-      try {
-        await api.importAllDiscovered();
-      } catch (error: unknown) {
-        toast.error(getErrorMessage(error, t("common.error")));
-
-        return;
-      }
-
-      toast.success(t("install.scan.importedAll"));
-
-      const results = await Promise.allSettled([
-        refreshPresets(),
-        refreshManagedSkills(),
-        runScanSilent(),
-      ]);
-
-      warnRejected(results, "post-import refresh");
-    } finally {
-      setImportingAll(false);
-    }
-  };
+  const forSource = (operation: (typeof operations)[number], tab: InstallTab) =>
+    (
+      operation.sources ?? operation.items.flatMap((item) => (item.source ? [item.source] : []))
+    ).some((source) => sourceMatches(source, tab));
 
   return (
     <div className="app-page gap-4">
       <div className="app-page-header border-b-0 pb-0">
-        <h1 className="app-page-title mb-4">{t("install.title")}</h1>
+        <h1 className="app-page-title mb-2">{t("install.title")}</h1>
+        <p className="mb-4 text-[13px] text-secondary">
+          {t("operations.installDestination", {
+            host: activeHost?.name ?? t("operations.hostLocal"),
+          })}
+        </p>
         <div className="flex gap-1 border-b border-border-subtle">
           {[
             { id: "market" as const, label: t("install.browseMarket"), icon: Box },
@@ -314,12 +231,26 @@ export function InstallSkills() {
               >
                 <Icon className="h-3.5 w-3.5" />
                 {tab.label}
+                {libraryOperations.some((o) => !o.settled && forSource(o, tab.id)) && (
+                  <span className="text-secondary">
+                    {libraryOperations.filter((o) => !o.settled && forSource(o, tab.id)).length}
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
       </div>
 
+      {libraryOperations
+        .filter((operation) => forSource(operation, activeTab))
+        .map((operation) => (
+          <InstallationProgress
+            key={operation.operation_id}
+            operation={operation}
+            onReview={() => reviewOperation(operation.operation_id)}
+          />
+        ))}
       {activeTab === "market" && (
         <MarketTab
           market={market}
@@ -331,7 +262,7 @@ export function InstallSkills() {
 
       {activeTab === "local" && (
         <LocalInstallTab
-          scanResult={scanResult}
+          scanResult={currentScan}
           scanLoading={scanLoading}
           localError={localError}
           importingPaths={importingPaths}
@@ -351,17 +282,16 @@ export function InstallSkills() {
         <GitInstallTab
           gitUrl={gitUrl}
           gitLoading={gitLoading}
-          gitCancelKey={gitCancelKey}
           findInstalledByGitUrl={findInstalledByGitUrl}
           onGitUrlChange={setGitUrl}
           onPreview={handleGitPreview}
-          onCancelInstall={handleCancelInstall}
         />
       )}
 
       {/* Git preview / selection dialog */}
       {gitPreview && (
         <GitPreviewDialog
+          repository={reviewIsGit}
           selections={gitSelections}
           setSelections={setGitSelections}
           confirmLoading={gitConfirmLoading}

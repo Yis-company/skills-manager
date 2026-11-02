@@ -224,7 +224,11 @@ fn safe_extract(archive: &mut zip::ZipArchive<std::fs::File>, dest: &Path) -> Re
 /// - Reuse an existing directory when it clearly belongs to the same skill
 ///   (same metadata `name`, or legacy no-metadata `<name>` directory).
 /// - Otherwise allocate `<name>-2`, `<name>-3`, ...
-fn unique_skill_dest(parent: &Path, sanitized_name: &str, source: &Path) -> Result<PathBuf> {
+pub(crate) fn unique_skill_dest(
+    parent: &Path,
+    sanitized_name: &str,
+    source: &Path,
+) -> Result<PathBuf> {
     let source_hash = content_hash::hash_directory(source)?;
 
     for i in 1u32.. {

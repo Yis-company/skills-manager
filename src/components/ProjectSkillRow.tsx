@@ -10,12 +10,14 @@ import { getTagColor } from "../lib/skillTags";
 import { cn } from "../utils";
 import { CreatorBadge } from "./CreatorBadge";
 import { ProjectAgentDots } from "./ProjectAgentDots";
+import { ProjectItemProgress } from "./ProjectOperationProgress";
 import { getSyncStatusMeta, type ProjectSkillItemProps } from "./projectSkillItem";
 import { ToggleSwitch } from "./ToggleSwitch";
 
 /** A skill in the project list view. */
 export function ProjectSkillRow({
   skill,
+  operationItems,
   creator,
   allTags,
   targets,
@@ -97,6 +99,7 @@ export function ProjectSkillRow({
         </div>
       )}
 
+      <ProjectItemProgress items={operationItems} targets={targets} />
       <div className="flex shrink-0 items-center gap-2.5">
         <CreatorBadge creator={creator} size="md" hideLocal className="max-w-[160px]" />
         <span
@@ -121,7 +124,7 @@ export function ProjectSkillRow({
           limit={4}
           size="sm"
           onToggle={
-            isMultiSelect
+            isMultiSelect || isUpdatingProject
               ? undefined
               : (agentKey, enabled) => onToggleAgent(skill, agentKey, enabled)
           }
@@ -172,6 +175,7 @@ export function ProjectSkillRow({
             <ToggleSwitch
               checked={skill.enabledCount === skill.totalCount}
               loading={isToggling}
+              disabled={isUpdatingProject}
               onChange={() => onToggleSkill(skill)}
               title={
                 skill.enabledCount === skill.totalCount
@@ -185,6 +189,7 @@ export function ProjectSkillRow({
               e.stopPropagation();
               onDelete(skill);
             }}
+            disabled={isUpdatingProject}
             className="shrink-0 rounded p-0.5 text-muted transition-colors hover:bg-red-500/10 hover:text-red-500"
             title={t("project.deleteSkill")}
           >

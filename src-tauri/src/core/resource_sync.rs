@@ -318,8 +318,8 @@ pub struct ResourceConflict {
 
 pub fn conflicts(repo: &Repository) -> Result<Vec<ResourceConflict>> {
     open_conflicts(repo)?
-        .into_iter()
-        .map(|(key, _)| comparison_versions(repo, &key).map(|(conflict, ..)| conflict))
+        .into_keys()
+        .map(|key| comparison_versions(repo, &key).map(|(conflict, ..)| conflict))
         .collect()
 }
 
@@ -359,15 +359,14 @@ fn resource_name(key: &str, files: Option<&BTreeMap<String, String>>) -> String 
         .unwrap_or_else(|| key.to_owned())
 }
 
-pub fn comparison_versions(
-    repo: &Repository,
-    key: &str,
-) -> Result<(
+type ConflictVersions = (
     ResourceConflict,
     BTreeMap<String, FileEntry>,
     BTreeMap<String, FileEntry>,
     Oid,
-)> {
+);
+
+pub fn comparison_versions(repo: &Repository, key: &str) -> Result<ConflictVersions> {
     let declared = *open_conflicts(repo)?
         .get(key)
         .context("Conflict no longer exists")?;

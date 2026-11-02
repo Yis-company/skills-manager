@@ -20,6 +20,7 @@ pub trait HostEvents: Send + Sync {
 
 #[derive(Clone)]
 pub struct HostCtx {
+    pub operations: Arc<super::operations::OperationService>,
     pub store: Arc<SkillStore>,
     pub cancel: Arc<InstallCancelRegistry>,
     pub events: Arc<dyn HostEvents>,
@@ -40,6 +41,7 @@ impl HostCtx {
     /// A context with no window to report to: the CLI and background work.
     pub fn headless(store: Arc<SkillStore>) -> Self {
         Self {
+            operations: Arc::new(super::operations::OperationService::default()),
             store,
             cancel: Arc::new(InstallCancelRegistry::new()),
             events: Arc::new(NoopEvents),
@@ -70,6 +72,7 @@ impl HostEvents for RecordingEvents {
 impl HostCtx {
     pub(crate) fn for_tests(store: SkillStore, events: Arc<dyn HostEvents>) -> Self {
         Self {
+            operations: Arc::new(super::operations::OperationService::default()),
             store: Arc::new(store),
             cancel: Arc::new(InstallCancelRegistry::new()),
             events,

@@ -1,5 +1,7 @@
 import type { InvokeArgs } from "@tauri-apps/api/core";
 
+import type { OperationResultsRequest } from "../../src/context/useOperationPersistence";
+import type { ShutdownAction, ShutdownRequest } from "../../src/lib/shutdown";
 import type {
   AppUpdateInfo,
   BatchImportResult,
@@ -11,6 +13,7 @@ import type {
   SyncConflict,
   SyncStatus,
 } from "../../src/lib/tauri";
+import { operationHandler } from "./operations";
 import { projectGitHandler } from "./projectGit";
 import {
   createState,
@@ -81,6 +84,12 @@ type McpsRequest =
     }
   | { action: "undeploy"; target: McpTarget; definitionId: string };
 
+function requestShutdown(target: ShutdownRequest["target"], state: State) {
+  state.shutdown ??= { id: 1, target, mode: null };
+
+  return state.shutdown;
+}
+
 const nothing = () => null;
 
 function presetsWithCounts(state: State): Preset[] {
@@ -122,10 +131,108 @@ type ProjectSkillArgs = {
 // Only the commands the specs reach. Add one when a spec needs it; an unknown
 // command fails the test with "fake backend: no handler for <cmd>".
 export const handlers = {
+  app_exit: (_args, state) => requestShutdown("quit", state),
+  restart_app: (_args, state) => requestShutdown("restart", state),
+  install_app_update: (_args, state) => requestShutdown("install_update", state),
+  hide_to_tray: nothing,
+  shutdown_request: ({ request }: { request: ShutdownAction }, state) => {
+    if (request.action === "read") return state.shutdown;
+
+    if (request.action === "inspect")
+      return {
+        unfinished:
+          !state.shutdownReady ||
+          [state, ...Object.values(state.remoteStates)].some((s) =>
+            s.operations?.some((o) => !o.settled),
+          ),
+      };
+
+    if (request.action === "keep_open") {
+      state.shutdown = null;
+
+      return null;
+    }
+
+    if (request.action === "choose") {
+      state.shutdown = {
+        id: request.id,
+        target: state.shutdown?.target ?? "quit",
+        mode: request.mode,
+      };
+
+      return state.shutdown;
+    }
+
+    if (request.action === "prepare") {
+      const snapshots = [state, ...Object.values(state.remoteStates)].flatMap(
+        (s) => s.operations ?? [],
+      );
+
+      if (state.shutdown?.mode === "cancel")
+        for (const host of [state, ...Object.values(state.remoteStates)]) {
+          for (const o of host.operations ?? []) {
+            if (!o.settled && !o.cancel_requested)
+              // SAFETY: cancel reads only operations; every remote fixture has that array.
+              operationHandler(
+                { request: { action: "cancel", operation_id: o.operation_id } },
+                host as State,
+              );
+          }
+        }
+
+      return { ready: state.shutdownReady && snapshots.every((o) => o.settled), snapshots };
+    }
+
+    if (request.action === "finish" || request.action === "resume") return null;
+    throw new Error("Unimplemented shutdown fixture action");
+  },
+  operation_results_request: ({ request }: { request: OperationResultsRequest }, state) => {
+    if (request.action === "read") {
+      if (state.operationResultsReadError) {
+        state.operationResultsReadError = false;
+        throw new Error("fixture results read unavailable");
+      }
+
+      return state.operationResults;
+    }
+
+    if (state.operationResultsWriteError) throw new Error("fixture disk full");
+
+    if (request.version !== state.operationResults.version)
+      throw new Error("Stale operation results");
+    state.operationResults = {
+      version: request.version + 1,
+      results: structuredClone(request.results).map(({ admission, ...o }) => ({
+        ...o,
+        settled: true,
+        recovery:
+          admission || !o.settled || o.recovery === "checking" ? ("unknown" as const) : o.recovery,
+        recovery_attempt: admission?.expected_attempt ?? o.recovery_attempt,
+        preview: null,
+        items: o.items.map((i) => ({
+          ...i,
+          message: null,
+          phase:
+            ["queued", "preparing", "applying", "waiting", "stopping", "checking_result"].includes(
+              i.phase,
+            ) ||
+            (admission?.action === "confirm_install" && i.phase === "needs_review") ||
+            (admission?.action === "retry_failed" && i.phase === "failed")
+              ? ("outcome_unknown" as const)
+              : i.phase,
+        })),
+      })),
+    };
+
+    return state.operationResults;
+  },
+  operation_request: operationHandler,
   project_git_request: projectGitHandler,
   // ── App shell ──
   log_startup_event: nothing,
   remote_host_disconnect: nothing,
+  remote_host_release: (_args: { hostId: string }) => null,
+  remote_host_retained: (_args, state) => state.retainedHosts,
   remote_hosts_list: (_args, state) => state.remoteHosts,
   remote_host_update: (
     {
@@ -246,7 +353,7 @@ export const handlers = {
 
     return null;
   },
-  remote_host_connect: ({ hostId }: { hostId: string }, state) => {
+  remote_host_connect: ({ hostId }: { hostId: string; select?: boolean }, state) => {
     if (state.remoteHostNewer) {
       throw {
         kind: "remote_version_mismatch",
@@ -289,6 +396,8 @@ export const handlers = {
     const result = handler(args ?? {}, remoteState);
 
     const remoteSeed: RemoteSeed = {
+      operations: remoteState.operations,
+      holdOperations: remoteState.holdOperations,
       skills: remoteState.skills,
       globalLocalSkills: remoteState.globalLocalSkills,
       presets: remoteState.presets,
@@ -685,12 +794,8 @@ export const handlers = {
     throw new Error(`unknown MCP action: ${String(action)}`);
   },
   resource_sync_request: () => ({ conflicts: [] }),
-  check_app_update: (): AppUpdateInfo => ({
-    has_update: false,
-    current_version: "1.40.0",
-    latest_version: "1.40.0",
-    release_url: "",
-  }),
+  check_app_update: (_args, state): AppUpdateInfo => state.appUpdate,
+  update_install_blocker: nothing,
   "plugin:opener|open_url": nothing,
   "plugin:dialog|open": (_args, state) => state.dialogPaths.shift() ?? null,
 

@@ -282,11 +282,30 @@ pub fn preview_git_install_core(
     ctx: &HostCtx,
     repo_url: String,
 ) -> Result<GitPreviewResult, AppError> {
+    preview_git_install_with(ctx, repo_url.clone(), repo_url, true)
+}
+
+pub(crate) fn preview_git_install_operation(
+    ctx: &HostCtx,
+    repo_url: String,
+    operation_id: String,
+) -> Result<GitPreviewResult, AppError> {
+    preview_git_install_with(ctx, repo_url, operation_id, false)
+}
+
+fn preview_git_install_with(
+    ctx: &HostCtx,
+    repo_url: String,
+    cancel_key: String,
+    wait: bool,
+) -> Result<GitPreviewResult, AppError> {
     let store = ctx.store.clone();
     let proxy_url = store.get_setting("proxy_url").ok().flatten();
     let registry = ctx.cancel.clone();
-    let cancel_key = repo_url.clone();
     let cancel = registry.register(&cancel_key);
+    if ctx.operations.cancel_requested(&cancel_key) {
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     let _cancel_guard = CancelRegistrationGuard::new(registry.clone(), cancel_key);
 
     ctx.events.emit(
@@ -310,7 +329,12 @@ pub fn preview_git_install_core(
             }),
         );
     });
-    let temp_dir = git_fetcher::clone_repo_ref_scoped(
+    let clone = if wait {
+        git_fetcher::clone_repo_ref_scoped
+    } else {
+        git_fetcher::try_clone_repo_ref_scoped
+    };
+    let temp_dir = clone(
         &parsed.clone_url,
         parsed.branch.as_deref(),
         parsed.subpath.as_deref(),

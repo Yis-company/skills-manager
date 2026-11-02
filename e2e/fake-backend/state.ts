@@ -1,10 +1,13 @@
 import type { ChangeReview } from "../../src/lib/changeReview";
+import type { OperationSnapshot } from "../../src/lib/operations";
 import type {
   ProjectGitPrReview,
   ProjectGitPushReview,
   ProjectGitStatus,
 } from "../../src/lib/projectGit";
+import type { ShutdownRequest } from "../../src/lib/shutdown";
 import type {
+  AppUpdateInfo,
   GitBackupStatus,
   GithubBackupConnectResult,
   GithubDeviceFlowStart,
@@ -27,6 +30,14 @@ export type RemoteSeed = Omit<Seed, "remoteHosts" | "remoteStates">;
 
 /** What a test starts from. Every field is optional; a missing one is empty. */
 export interface Seed {
+  appUpdate?: AppUpdateInfo;
+  shutdown?: null | ShutdownRequest;
+  shutdownReady?: boolean;
+  operationResultsReadError?: boolean;
+  operationResultsWriteError?: boolean;
+  operationResults?: { version: number; results: OperationSnapshot[] };
+  operations?: OperationSnapshot[];
+  holdOperations?: boolean;
   skills?: ManagedSkill[];
   /** `skill_count` is computed from the skills' `preset_ids`. */
   presets?: Preset[];
@@ -70,6 +81,7 @@ export interface Seed {
     result: GithubBackupConnectResult;
   };
   /** Remote hosts and their isolated fake backend data, keyed by host id. */
+  retainedHosts?: string[];
   remoteHosts?: RemoteHost[];
   remoteStates?: Record<string, RemoteSeed>;
   /** The host's CLI is older than the app; connecting installs the app's. */
@@ -190,6 +202,19 @@ export type State = Required<Seed>;
 
 export function createState({ settings, ...seed }: Seed): State {
   return structuredClone({
+    appUpdate: {
+      has_update: false,
+      current_version: "1.40.0",
+      latest_version: "1.40.0",
+      release_url: "",
+    },
+    shutdown: null,
+    shutdownReady: true,
+    operationResultsReadError: false,
+    operationResultsWriteError: false,
+    operationResults: { version: 0, results: [] },
+    operations: [],
+    holdOperations: false,
     skills: [],
     presets: [],
     activePresetId: null,
@@ -211,6 +236,7 @@ export function createState({ settings, ...seed }: Seed): State {
     scan: { tools_scanned: 0, skills_found: 0, groups: [] },
     dialogPaths: [],
     batchImport: [],
+    retainedHosts: [],
     remoteHosts: [],
     remoteStates: {},
     remoteCliNeedsUpdate: false,

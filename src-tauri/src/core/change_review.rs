@@ -536,6 +536,11 @@ mod tests {
         assert!(disk_files(&root.join("linked")).is_err());
     }
     fn commit(repo: &Repository, message: &str, parents: &[git2::Oid], update: bool) -> git2::Oid {
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Fixture host").unwrap();
+        config
+            .set_str("user.email", "fixture@example.test")
+            .unwrap();
         let mut index = repo.index().unwrap();
         index
             .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
