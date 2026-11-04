@@ -2,4 +2,4 @@
 "skills-manager": patch
 ---
 
-Show every preset in the sidebar without a nested scroll area, and clamp skill descriptions in the agent matrix to two lines (full text on hover).
+Let the sidebar preset list grow with the window instead of a fixed three-row cap, and clamp skill descriptions in the agent matrix to two lines (full text on hover).
