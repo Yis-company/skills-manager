@@ -3,7 +3,6 @@ import {
   Check,
   CheckCircle2,
   Cloud,
-  Github,
   Loader2,
   Pencil,
   RefreshCw,
@@ -20,6 +19,7 @@ import { gitBackupMode, pendingBreakdown } from "../lib/gitBackupMode";
 import * as api from "../lib/tauri";
 import type { GitBackupStatus, GitUpstreamHealth } from "../lib/tauri";
 import { cn } from "../utils";
+import { GithubIcon } from "./GithubIcon";
 
 interface BackupStatusCardProps {
   gitStatus: GitBackupStatus | null;
@@ -237,7 +237,7 @@ export function BackupStatusCard({
               disabled={!!loading}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 text-[13px] font-medium text-amber-700 transition-colors hover:bg-amber-500/15 disabled:opacity-50 dark:text-amber-300"
             >
-              <Github className="h-3.5 w-3.5" />
+              <GithubIcon className="h-3.5 w-3.5" />
               {t("backup.github.reconnect")}
             </button>
           )}

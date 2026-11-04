@@ -581,7 +581,7 @@ fn project_worktrees(project: &Path) -> Vec<Worktree> {
         repo.head()
             .ok()
             .filter(|head| head.is_branch())
-            .and_then(|head| head.shorthand().map(ToOwned::to_owned))
+            .and_then(|head| head.shorthand().ok().map(ToOwned::to_owned))
     };
     let mut items = Vec::new();
     if let Some(path) = main.workdir().and_then(|dir| fs::canonicalize(dir).ok()) {
@@ -597,7 +597,12 @@ fn project_worktrees(project: &Path) -> Vec<Worktree> {
     }
     let names: Vec<String> = main
         .worktrees()
-        .map(|names| names.iter().flatten().map(str::to_owned).collect())
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| name.ok().flatten().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default();
     for name in names {
         let Ok(worktree) = main.find_worktree(&name) else {

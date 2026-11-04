@@ -227,7 +227,7 @@ impl SkillStore {
         use rusqlite::OptionalExtension;
         let current: Option<u64> = tx.query_row(
             "SELECT json_extract(value, '$.version') FROM resource_state WHERE kind = ?1 AND id = ?2",
-            params![kind, id], |row| row.get(0),
+            params![kind, id], |row| row.get::<_, i64>(0).map(|v| v as u64),
         ).optional()?;
         if current.unwrap_or(0) != version {
             return Ok(false);

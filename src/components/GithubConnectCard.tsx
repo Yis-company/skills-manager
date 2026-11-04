@@ -1,10 +1,11 @@
 import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Copy, ExternalLink, Github, Loader2 } from "lucide-react";
+import { Copy, ExternalLink, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import type { GithubDeviceFlowStart } from "../lib/tauri";
+import { GithubIcon } from "./GithubIcon";
 
 const GITHUB_TOKEN_URL =
   "https://github.com/settings/tokens/new?scopes=repo&description=Skills%20Manager%20Backup";
@@ -55,7 +56,7 @@ export function GithubConnectCard({
   return (
     <section className="app-panel p-4">
       <div className="mb-3 flex items-center gap-2">
-        <Github className="h-4 w-4 text-muted" />
+        <GithubIcon className="h-4 w-4 text-muted" />
         <h2 className="text-[14px] font-semibold text-secondary">
           {reconnectMode ? t("backup.github.reconnectTitle") : t("backup.github.title")}
         </h2>
@@ -109,7 +110,7 @@ export function GithubConnectCard({
               {loading === "github" ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Github className="h-3.5 w-3.5" />
+                <GithubIcon className="h-3.5 w-3.5" />
               )}
               {loading === "github"
                 ? t("backup.github.connecting")

@@ -1,9 +1,10 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { Box, Github, UploadCloud } from "lucide-react";
+import { Box, UploadCloud } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { GithubIcon } from "../components/GithubIcon";
 import { GitInstallTab } from "../components/GitInstallTab";
 import { GitPreviewDialog } from "../components/GitPreviewDialog";
 import { InstallationProgress } from "../components/InstallationProgress";
@@ -213,7 +214,7 @@ export function InstallSkills() {
           {[
             { id: "market" as const, label: t("install.browseMarket"), icon: Box },
             { id: "local" as const, label: t("install.localInstall"), icon: UploadCloud },
-            { id: "git" as const, label: t("install.gitInstall"), icon: Github },
+            { id: "git" as const, label: t("install.gitInstall"), icon: GithubIcon },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;

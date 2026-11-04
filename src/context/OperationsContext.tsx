@@ -192,25 +192,25 @@ export function OperationsProvider({
         });
 
       update(() => checking);
-      let expired = false;
-      let timeout: ReturnType<typeof setTimeout>;
+      const expiry = new AbortController();
+      const timeout = setTimeout(() => expiry.abort(), 12000);
 
       const work = async () => {
         for (const delay of [0, 500, 1500]) {
           if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
 
-          if (expired) return;
+          if (expiry.signal.aborted) return;
 
           try {
             if (origin !== null) await remoteHostConnect(origin, false);
 
-            if (expired) return;
+            if (expiry.signal.aborted) return;
 
             const snapshot = await invokeHost<OperationSnapshot>(origin, "operation_request", {
               request: { action: "reconcile", operation_id: operation.operation_id },
             });
 
-            if (expired) return;
+            if (expiry.signal.aborted) return;
             client.setQueryData<OperationSnapshot[]>(key(origin), (current = []) =>
               mergeOperations(current, [snapshot], origin, dismissed.current),
             );
@@ -229,10 +229,10 @@ export function OperationsProvider({
       const promise = Promise.race([
         work(),
         new Promise<void>((resolve) => {
-          timeout = setTimeout(resolve, 12000);
+          expiry.signal.addEventListener("abort", () => resolve());
         }),
       ]).finally(() => {
-        expired = true;
+        expiry.abort();
         clearTimeout(timeout);
         update((current) =>
           current.recovery

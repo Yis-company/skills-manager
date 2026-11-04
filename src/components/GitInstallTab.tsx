@@ -1,8 +1,9 @@
-import { Check, DownloadCloud, Github, Loader2 } from "lucide-react";
+import { Check, DownloadCloud, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type { ManagedSkill } from "../lib/tauri";
 import { cn } from "../utils";
+import { GithubIcon } from "./GithubIcon";
 
 interface GitInstallTabProps {
   gitUrl: string;
@@ -27,7 +28,7 @@ export function GitInstallTab({
     <div className="animate-in fade-in duration-300">
       <div className="app-panel max-w-lg p-5">
         <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface-hover">
-          <Github className="h-5 w-5 text-tertiary" />
+          <GithubIcon className="h-5 w-5 text-tertiary" />
         </div>
         <h2 className="mb-1 text-[14px] font-semibold text-primary">{t("install.gitTitle")}</h2>
         <p className="mb-4 text-[13px] text-muted">{t("install.gitDesc")}</p>

@@ -1,8 +1,14 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.js";
 
 @layer base {
+  /* Tailwind v4 preflight defaults borders to currentColor; keep v3's gray-200 default. */
+  *,
+  ::before,
+  ::after {
+    border-color: #e5e7eb;
+  }
+
   /* Light theme (default) */
   :root {
     --app-scale: 1;

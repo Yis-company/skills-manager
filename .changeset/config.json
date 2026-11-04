@@ -15,8 +15,7 @@
     "package.json",
     "bun.lock",
     "vite.config.ts",
-    "tailwind.config.js",
-    "postcss.config.js"
+    "tailwind.config.js"
   ],
   "format": false
 }
