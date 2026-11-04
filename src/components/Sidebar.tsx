@@ -613,7 +613,7 @@ export function Sidebar() {
                   strategy={verticalListSortingStrategy}
                 >
                   <div
-                    className="max-h-24 space-y-0.5 overflow-y-auto"
+                    className="space-y-0.5"
                     id="sidebar-presets"
                     role="region"
                     aria-label={t("sidebar.presets")}
