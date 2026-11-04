@@ -1,7 +1,8 @@
 import type { TFunction } from "i18next";
-import { Github, Globe, GripVertical, HardDrive } from "lucide-react";
+import { Globe, GripVertical, HardDrive } from "lucide-react";
 
 import type { ManagedSkill, ToolInfo } from "../lib/tauri";
+import { GithubIcon } from "./GithubIcon";
 import type { SortableHandleProps } from "./SortableItem";
 
 /** Shared by the library's grid card and list row. */
@@ -41,7 +42,7 @@ export const sourceIcon = (type: string) => {
   switch (type) {
     case "git":
     case "skillssh":
-      return <Github className="h-3 w-3" />;
+      return <GithubIcon className="h-3 w-3" />;
     case "local":
     case "import":
       return <HardDrive className="h-3 w-3" />;

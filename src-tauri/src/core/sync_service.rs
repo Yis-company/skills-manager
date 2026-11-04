@@ -201,14 +201,14 @@ pub fn conflicts(store: &SkillStore) -> Vec<SyncConflict> {
             .as_ref()?
             .find_commit(git2::Oid::from_str(commit).ok()?)
             .ok()?;
-        let name = commit.author().name().map(str::to_owned);
+        let name = commit.author().name().ok().map(str::to_owned);
         name
     };
     // A host that pulled the conflict holds the version of the host that
     // recorded it, so that host names the version in place.
     let recorder = |skill_id: &str| -> Option<String> {
         let commit = merge::pending::declaring_commit(repo.as_ref()?, head?, skill_id)?;
-        let name = commit.author().name().map(str::to_owned);
+        let name = commit.author().name().ok().map(str::to_owned);
         name
     };
     store

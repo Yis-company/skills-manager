@@ -123,7 +123,7 @@ fn repo_cache_dir_for(url: &str, sparse: bool) -> PathBuf {
     let canonical = canonicalize_clone_url(url);
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
+    let hash = hex::encode(hasher.finalize());
     let short = &hash[..16];
     let name = if sparse {
         format!("{short}-sparse")

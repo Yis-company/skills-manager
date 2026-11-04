@@ -80,7 +80,7 @@ export function useMarketSearch(active: boolean) {
 
     setMarketError(null);
 
-    let stale = false;
+    const controller = new AbortController();
 
     const request = query
       ? api.searchSkillssh(query, marketSearchLimit)
@@ -88,7 +88,7 @@ export function useMarketSearch(active: boolean) {
 
     request
       .then((result) => {
-        if (stale) return;
+        if (controller.signal.aborted) return;
         setMarketSkills(result);
 
         if (query.length > 0 && !loadingMore) {
@@ -102,20 +102,20 @@ export function useMarketSearch(active: boolean) {
         }
       })
       .catch((e) => {
-        if (stale) return;
+        if (controller.signal.aborted) return;
         console.error(e);
         const message = e?.toString?.() || t("common.error");
         setMarketError(message);
         toast.error(message);
       })
       .finally(() => {
-        if (stale) return;
+        if (controller.signal.aborted) return;
         setMarketLoading(false);
         setMarketLoadingMore(false);
       });
 
     return () => {
-      stale = true;
+      controller.abort();
     };
   }, [active, debouncedMarketQuery, marketReloadKey, marketSearchLimit, marketTab, t]);
 

@@ -12,7 +12,7 @@ import {
 // Without resources, `t` returns the key itself, so tests can assert which copy was picked.
 const i18n = createInstance();
 
-i18n.init({ lng: "en", resources: {}, initAsync: false, showSupportNotice: false });
+i18n.init({ lng: "en", resources: {}, initAsync: false });
 
 const { t } = i18n;
 

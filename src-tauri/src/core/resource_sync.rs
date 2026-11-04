@@ -104,7 +104,7 @@ pub fn validate_tree(repo: &Repository, tree: &Tree) -> Result<()> {
                     }
                     if bundle
                         .iter()
-                        .any(|entry| !matches!(entry.name(), Some("definition.json" | "files")))
+                        .any(|entry| !matches!(entry.name(), Ok("definition.json" | "files")))
                     {
                         bail!("Unknown instruction bundle content");
                     }
@@ -122,6 +122,7 @@ pub fn validate_tree(repo: &Repository, tree: &Tree) -> Result<()> {
                 for item in mcps.iter() {
                     let id = item
                         .name()
+                        .ok()
                         .and_then(|s| s.strip_suffix(".json"))
                         .context("Invalid MCP resource filename")?;
                     resource_store::validate_id(id)?;
@@ -232,7 +233,7 @@ pub fn drop_legacy_records(repo: &Repository, store: &SkillStore) -> Result<()> 
     let legacy: Vec<String> = repo
         .references_glob("refs/skills-manager/resource-conflicts/*")?
         .flatten()
-        .filter_map(|r| r.name().map(str::to_owned))
+        .filter_map(|r| r.name().ok().map(str::to_owned))
         .collect();
     for name in legacy {
         if let Ok(mut reference) = repo.find_reference(&name) {

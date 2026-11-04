@@ -6,7 +6,6 @@ import {
   Download,
   ExternalLink,
   FileArchive,
-  Github,
   Loader2,
   RefreshCw,
   Settings2,
@@ -15,6 +14,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { GithubIcon } from "../../components/GithubIcon";
 import { useApp } from "../../context/AppContext";
 import { getErrorMessage } from "../../lib/error";
 import * as api from "../../lib/tauri";
@@ -272,7 +272,7 @@ export function AboutSection({ reportingIssue, onReportIssue }: AboutSectionProp
             disabled={openingGithub}
             className={`${ACTION_BUTTON_CLASS} border-border bg-surface-hover text-tertiary hover:bg-surface-active`}
           >
-            <Github className="h-3 w-3" /> GitHub
+            <GithubIcon className="h-3 w-3" /> GitHub
           </button>
         </div>
       </div>

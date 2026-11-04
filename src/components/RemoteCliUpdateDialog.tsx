@@ -80,7 +80,7 @@ export function RemoteCliUpdateDialog({
     const generation = ++generationRef.current;
 
     if (!hostId) return;
-    let active = true;
+    const controller = new AbortController();
 
     const previousFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -88,10 +88,10 @@ export function RemoteCliUpdateDialog({
     requestAnimationFrame(() =>
       dialogRef.current?.querySelector<HTMLElement>("button:not([disabled])")?.focus(),
     );
-    void loadProbe(hostId, generation, () => active);
+    void loadProbe(hostId, generation, () => !controller.signal.aborted);
 
     return () => {
-      active = false;
+      controller.abort();
       previousFocus?.focus();
     };
   }, [hostId, loadProbe]);

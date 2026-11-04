@@ -299,9 +299,11 @@ export function AgentsSection() {
       const newGroupKeys = arrayMove(groupKeys, oldIdx, newIdx);
       const fullOrder = tools.map((t) => t.key);
       const groupKeySet = new Set(groupKeys);
-      let cursor = 0;
+      const groupQueue = [...newGroupKeys];
 
-      const newFullOrder = fullOrder.map((k) => (groupKeySet.has(k) ? newGroupKeys[cursor++] : k));
+      const newFullOrder = fullOrder.map((k) =>
+        groupKeySet.has(k) ? (groupQueue.shift() ?? k) : k,
+      );
 
       try {
         await api.setToolOrder(newFullOrder);
