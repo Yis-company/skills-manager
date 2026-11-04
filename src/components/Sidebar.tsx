@@ -612,8 +612,9 @@ export function Sidebar() {
                   items={orderedPresets.map((s) => s.id)}
                   strategy={verticalListSortingStrategy}
                 >
+                  {/* Grow with the window, but leave room for the nav and workspace headers below. */}
                   <div
-                    className="max-h-24 space-y-0.5 overflow-y-auto"
+                    className="max-h-[max(6rem,calc(100vh/var(--app-scale)-28rem))] space-y-0.5 overflow-y-auto"
                     id="sidebar-presets"
                     role="region"
                     aria-label={t("sidebar.presets")}

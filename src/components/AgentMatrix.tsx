@@ -100,7 +100,10 @@ export function AgentMatrix({
                     </h3>
                   </div>
                   {row.description && (
-                    <p className="mt-1.5 text-[13px] font-normal leading-5 text-muted">
+                    <p
+                      className="mt-1.5 line-clamp-2 text-[13px] font-normal leading-5 text-muted"
+                      title={row.description}
+                    >
                       {row.description}
                     </p>
                   )}
