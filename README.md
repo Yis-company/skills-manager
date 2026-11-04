@@ -145,7 +145,7 @@ bun install
 bun run tauri:dev
 ```
 
-`bun install` installs a pre-push hook. It runs `bun run format:check`,
+`bun install` installs a pre-push hook, except in CI (`CI` set). It runs `bun run format:check`,
 `bun run lint`, `bun run typecheck`, `bun run test`, Rust formatting
 (`cargo fmt --check`) and strict Clippy (`cargo clippy --all-targets -- -D
 warnings`). Bun, Node, Rust, rustfmt and Clippy must be available when

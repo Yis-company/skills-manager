@@ -14,6 +14,13 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
+// The hook guards developer pushes. CI runs the same checks in its own jobs,
+// and a hook there would gate the release tag push on tools the runner lacks.
+if (process.env.CI) {
+  console.log("CI detected; not installing the pre-push hook.");
+  process.exit(0);
+}
+
 try {
   if (realpathSync(git("rev-parse", "--show-toplevel")) !== realpathSync(root)) {
     throw new Error("The project root is not the Git repository root.");
