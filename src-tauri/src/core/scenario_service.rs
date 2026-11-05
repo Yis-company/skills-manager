@@ -1113,7 +1113,7 @@ pub fn apply_skills_to_tools(
     }
 
     match mode {
-        BatchApplyMode::Add => apply_add(store, skill_ids, tool_keys, false),
+        BatchApplyMode::Add => apply_add(store, &skills_to_add(store, skill_ids), tool_keys, false),
         BatchApplyMode::Remove => apply_remove(store, skill_ids, tool_keys),
     }
 }
@@ -1127,12 +1127,59 @@ pub fn preflight_add_skills_to_tools(
     if skill_ids.is_empty() || tool_keys.is_empty() {
         return Ok(());
     }
-    apply_add(store, skill_ids, tool_keys, true)
+    apply_add(store, &skills_to_add(store, skill_ids), tool_keys, true)
+}
+
+/// The same check for a skill about to be created, so a refusal leaves nothing
+/// to roll back. It has no row yet, so no target can already be recorded for it.
+pub fn preflight_add_new_skill_to_tools(
+    store: &SkillStore,
+    name: &str,
+    central_path: &Path,
+    tool_keys: &[String],
+) -> Result<(), AppError> {
+    if tool_keys.is_empty() {
+        return Ok(());
+    }
+    let skill = SkillToAdd {
+        id: String::new(),
+        name: name.to_string(),
+        central_path: central_path.to_path_buf(),
+        content_hash: None,
+    };
+    apply_add(store, &[skill], tool_keys, true)
+}
+
+/// What deployment needs to know about a skill.
+#[derive(Clone)]
+struct SkillToAdd {
+    id: String,
+    name: String,
+    central_path: PathBuf,
+    content_hash: Option<String>,
+}
+
+fn skills_to_add(store: &SkillStore, skill_ids: &[String]) -> Vec<SkillToAdd> {
+    skill_ids
+        .iter()
+        .filter_map(|skill_id| {
+            let Ok(Some(skill)) = store.get_skill_by_id(skill_id) else {
+                log::warn!("apply_skills_to_tools: skill {skill_id} not found");
+                return None;
+            };
+            Some(SkillToAdd {
+                id: skill.id,
+                name: skill.name,
+                central_path: PathBuf::from(skill.central_path),
+                content_hash: skill.content_hash,
+            })
+        })
+        .collect()
 }
 
 fn apply_add(
     store: &SkillStore,
-    skill_ids: &[String],
+    skills: &[SkillToAdd],
     tool_keys: &[String],
     preflight_only: bool,
 ) -> Result<(), AppError> {
@@ -1164,7 +1211,7 @@ fn apply_add(
     // finished copy cannot be undone — but nothing is written until every pair
     // has been judged.
     struct PlannedPair {
-        skill: crate::core::skill_store::SkillRecord,
+        skill: SkillToAdd,
         tool_key: String,
         source: PathBuf,
         target: PathBuf,
@@ -1173,12 +1220,8 @@ fn apply_add(
 
     let existing_targets = store.get_all_targets().map_err(AppError::db)?;
     let mut plan: Vec<PlannedPair> = Vec::new();
-    for skill_id in skill_ids {
-        let Ok(Some(skill)) = store.get_skill_by_id(skill_id) else {
-            log::warn!("apply_skills_to_tools: skill {skill_id} not found");
-            continue;
-        };
-        let source = PathBuf::from(&skill.central_path);
+    for skill in skills {
+        let source = skill.central_path.clone();
         let target_name = sync_engine::target_dir_name(&source, &skill.name);
         for (tool_key, adapter) in &adapters {
             plan.push(PlannedPair {
@@ -1186,7 +1229,7 @@ fn apply_add(
                 tool_key: tool_key.clone(),
                 mode: sync_engine::sync_mode_for_tool(tool_key, configured_mode.as_deref()),
                 source: source.clone(),
-                target: deployment_target(adapter, &target_name, skill_id, &existing_targets),
+                target: deployment_target(adapter, &target_name, &skill.id, &existing_targets),
             });
         }
     }
@@ -1387,7 +1430,7 @@ fn apply_add(
 
     log::info!(
         "apply_skills_to_tools(Add): skills={} tools={} synced={synced} failed={failed}",
-        skill_ids.len(),
+        skills.len(),
         adapters.len(),
     );
     Ok(())

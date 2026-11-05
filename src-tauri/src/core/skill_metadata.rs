@@ -52,7 +52,9 @@ fn parse_frontmatter(content: &str) -> SkillMeta {
     }
 
     let rest = &trimmed[3..];
-    if let Some(end) = rest.find("---") {
+    // The closing fence starts a line. A bare `---` also matches inside a value,
+    // such as a description containing "before --- after".
+    if let Some(end) = rest.find("\n---") {
         let yaml_str = &rest[..end];
         if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(yaml_str) {
             let name = yaml
@@ -192,6 +194,12 @@ mod tests {
         let meta = parse_frontmatter(content);
         assert_eq!(meta.name.as_deref(), Some("my-skill"));
         assert_eq!(meta.description.as_deref(), Some("A great skill"));
+    }
+
+    #[test]
+    fn parse_frontmatter_keeps_dashes_inside_a_value() {
+        let meta = parse_frontmatter("---\nname: demo\ndescription: before --- after\n---\nbody");
+        assert_eq!(meta.description.as_deref(), Some("before --- after"));
     }
 
     #[test]

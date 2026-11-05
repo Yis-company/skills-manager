@@ -787,3 +787,152 @@ async fn real_host_shutdown_drains_or_cancels_a_held_library_and_seals_admission
         server.session.close();
     }
 }
+
+fn written_skill(name: &str, project: Option<&str>) -> Value {
+    json!({ "request": {
+        "name": name,
+        "content": { "kind": "written", "description": "Demo", "instructions": "Do it." },
+        "project": project,
+    }})
+}
+
+#[tokio::test]
+async fn create_skill_writes_to_the_hosts_library() {
+    let server = start();
+
+    let report = server
+        .session
+        .call("create_skill", written_skill("on-host", None))
+        .await
+        .unwrap();
+
+    assert_eq!(report["partial"], false);
+    let skills = server
+        .session
+        .call("get_managed_skills", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(skills[0]["name"], "on-host");
+    assert!(server
+        .tmp
+        .path()
+        .join("base/skills/on-host/SKILL.md")
+        .is_file());
+}
+
+#[tokio::test]
+async fn create_skill_adds_to_a_project_by_id_path_or_name() {
+    let server = start();
+    std::fs::create_dir_all(server.tmp.path().join("home/.claude")).unwrap();
+    let project_dir = server.tmp.path().join("my-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let project = server
+        .session
+        .call("add_project", json!({ "path": project_dir }))
+        .await
+        .unwrap();
+
+    let refs = [
+        ("by-id", project["id"].as_str().unwrap().to_owned()),
+        ("by-path", project_dir.to_str().unwrap().to_owned()),
+        ("by-name", project["name"].as_str().unwrap().to_owned()),
+    ];
+    for (name, reference) in &refs {
+        let report = server
+            .session
+            .call("create_skill", written_skill(name, Some(reference)))
+            .await
+            .unwrap();
+        assert_eq!(report["partial"], false, "{report}");
+        assert_eq!(report["targets"][0]["kind"], "project");
+        assert!(project_dir
+            .join(format!(".claude/skills/{name}/SKILL.md"))
+            .exists());
+    }
+}
+
+#[tokio::test]
+async fn create_skill_keeps_the_skill_and_reports_a_target_that_failed() {
+    // Nothing is installed in this home, so the project has no agent to add to.
+    let server = start();
+    let project_dir = server.tmp.path().join("my-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let project = server
+        .session
+        .call("add_project", json!({ "path": project_dir }))
+        .await
+        .unwrap();
+
+    let report = server
+        .session
+        .call(
+            "create_skill",
+            written_skill("kept", project["id"].as_str()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report["partial"], true);
+    assert!(report["targets"][0]["error"].is_string());
+    let skills = server
+        .session
+        .call("get_managed_skills", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(skills[0]["name"], "kept");
+}
+
+#[tokio::test]
+async fn create_skill_refuses_an_unregistered_project_without_writing() {
+    let server = start();
+    let error = server
+        .session
+        .call(
+            "create_skill",
+            written_skill("nope", Some("no-such-project")),
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.kind, ErrorKind::NotFound);
+    assert!(!server.tmp.path().join("base/skills/nope").exists());
+}
+
+#[tokio::test]
+async fn skills_create_resolves_a_project_from_the_current_folder() {
+    let server = start();
+    std::fs::create_dir_all(server.tmp.path().join("home/.claude")).unwrap();
+    let project_dir = server.tmp.path().join("my-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    server
+        .session
+        .call("add_project", json!({ "path": project_dir }))
+        .await
+        .unwrap();
+    let body = server.tmp.path().join("body.md");
+    std::fs::write(&body, "Do it.\n").unwrap();
+
+    let output = Command::new(CLI)
+        .arg("--json")
+        .arg("--base-dir")
+        .arg(server.tmp.path().join("base"))
+        .args(["skills", "create", "from-here", "--description", "Demo"])
+        .arg("--body-file")
+        .arg(&body)
+        .args(["--project", "."])
+        .current_dir(&project_dir)
+        .env("HOME", server.tmp.path().join("home"))
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(project_dir
+        .join(".claude/skills/from-here/SKILL.md")
+        .exists());
+}

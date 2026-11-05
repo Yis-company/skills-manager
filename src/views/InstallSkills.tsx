@@ -1,9 +1,10 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { Box, UploadCloud } from "lucide-react";
+import { Box, FilePlus2, UploadCloud } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { CreateSkillTab } from "../components/CreateSkillTab";
 import { GithubIcon } from "../components/GithubIcon";
 import { GitInstallTab } from "../components/GitInstallTab";
 import { GitPreviewDialog } from "../components/GitPreviewDialog";
@@ -12,6 +13,7 @@ import { LocalInstallTab } from "../components/LocalInstallTab";
 import { MarketTab } from "../components/MarketTab";
 import { useApp } from "../context/AppContext";
 import { useOperations } from "../context/OperationsContext";
+import { useCreateSkill } from "../hooks/useCreateSkill";
 import { useGitPreview } from "../hooks/useGitPreview";
 import { useLocalScan } from "../hooks/useLocalScan";
 import { useMarketSearch } from "../hooks/useMarketSearch";
@@ -41,6 +43,7 @@ export function InstallSkills() {
   }
 
   const market = useMarketSearch(activeTab === "market");
+  const createSkillForm = useCreateSkill(activeTab === "create");
 
   const {
     gitUrl,
@@ -194,7 +197,7 @@ export function InstallSkills() {
       ? source.kind === "marketplace"
       : tab === "git"
         ? source.kind === "git"
-        : source.kind === "local" || source.kind === "local_batch";
+        : tab === "local" && (source.kind === "local" || source.kind === "local_batch");
 
   const forSource = (operation: (typeof operations)[number], tab: InstallTab) =>
     (
@@ -215,6 +218,7 @@ export function InstallSkills() {
             { id: "market" as const, label: t("install.browseMarket"), icon: Box },
             { id: "local" as const, label: t("install.localInstall"), icon: UploadCloud },
             { id: "git" as const, label: t("install.gitInstall"), icon: GithubIcon },
+            { id: "create" as const, label: t("install.createTab"), icon: FilePlus2 },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -288,6 +292,8 @@ export function InstallSkills() {
           onPreview={handleGitPreview}
         />
       )}
+
+      {activeTab === "create" && <CreateSkillTab form={createSkillForm} />}
 
       {/* Git preview / selection dialog */}
       {gitPreview && (

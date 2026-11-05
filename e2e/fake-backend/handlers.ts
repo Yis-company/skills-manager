@@ -5,6 +5,8 @@ import type { ShutdownAction, ShutdownRequest } from "../../src/lib/shutdown";
 import type {
   AppUpdateInfo,
   BatchImportResult,
+  CreateSkillRequest,
+  CreateSkillTarget,
   GitBackupSizeReport,
   GithubDevicePollResult,
   Preset,
@@ -24,6 +26,7 @@ import {
   type McpTarget,
   projectSkill,
   type RemoteSeed,
+  skill,
   type State,
 } from "./state";
 
@@ -417,6 +420,7 @@ export const handlers = {
       mcpTargets: remoteState.mcpTargets,
       resourcePreviews: remoteState.resourcePreviews,
       failedInstallSkillIds: remoteState.failedInstallSkillIds,
+      centralRepoPath: remoteState.centralRepoPath,
     };
 
     state.remoteStates[hostId] = remoteSeed;
@@ -817,6 +821,54 @@ export const handlers = {
     state.centralRepoPendingPath = nextPath === state.centralRepoPath ? null : nextPath;
 
     return nextPath;
+  },
+
+  // ── Creating skills ──
+  create_skill: ({ request }: { request: CreateSkillRequest }, state) => {
+    if (state.skills.some((item) => item.name === request.name)) {
+      throw {
+        kind: "skill_exists",
+        message: `A skill named '${request.name}' is already in the library`,
+      };
+    }
+
+    const id = `created-${request.name}`;
+
+    const created = skill(id, request.name, {
+      description: request.content.description,
+      source_type: "local",
+      source_ref: null,
+      update_status: "local_only",
+      preset_ids: request.preset ? [request.preset] : [],
+      targets: request.agents.map((tool) => ({
+        id: `${id}-${tool}`,
+        skill_id: id,
+        tool,
+        target_path: `/home/e2e/.${tool}/skills/${request.name}`,
+        mode: "link",
+        status: "ok",
+        synced_at: 1,
+      })),
+    });
+
+    state.skills.push(created);
+
+    const presetName = state.presets.find((item) => item.id === request.preset)?.name;
+    const projectName = state.projects.find((item) => item.id === request.project)?.name;
+
+    const targets: CreateSkillTarget[] = [
+      ...request.agents.map((name) => ({ kind: "agent" as const, name })),
+      ...(presetName ? [{ kind: "preset" as const, name: presetName }] : []),
+      ...(projectName ? [{ kind: "project" as const, name: projectName }] : []),
+    ].map((target) => ({ ...target, error: state.createSkillTargetErrors[target.name] ?? null }));
+
+    return {
+      skill_id: id,
+      name: request.name,
+      path: created.central_path,
+      targets,
+      partial: targets.some((target) => target.error),
+    };
   },
 
   // ── Tools ──

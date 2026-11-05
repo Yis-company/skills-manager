@@ -336,6 +336,32 @@ export interface BatchDeleteSkillsResult {
 export const deleteManagedSkills = (skillIds: string[]) =>
   invoke<BatchDeleteSkillsResult>("delete_managed_skills", { skillIds });
 
+export interface CreateSkillRequest {
+  name: string;
+  content: { kind: "written"; description: string; instructions: string };
+  agents: string[];
+  preset: null | string;
+  project: null | string;
+}
+
+export interface CreateSkillTarget {
+  kind: "agent" | "preset" | "project";
+  name: string;
+  /** Set when the skill was created but could not be applied here. */
+  error: null | string;
+}
+
+export interface CreateSkillReport {
+  skill_id: string;
+  name: string;
+  path: string;
+  targets: CreateSkillTarget[];
+  partial: boolean;
+}
+
+export const createSkill = (request: CreateSkillRequest) =>
+  invoke<CreateSkillReport>("create_skill", { request });
+
 export const installLocal = (sourcePath: string, name?: string) =>
   invoke<void>("install_local", { sourcePath, name: name || null });
 
