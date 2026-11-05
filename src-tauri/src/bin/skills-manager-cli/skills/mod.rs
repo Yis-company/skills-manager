@@ -1,10 +1,14 @@
 //! `skills`: the subcommand dispatcher. Each group of subcommands lives in its own module.
 
+use std::sync::Arc;
+
+use anyhow::bail;
 use app_lib::core::{skill_source, skill_store::SkillStore};
 
 use crate::args::{SkillsArgs, SkillsCommand};
 use crate::output::{map_app_err, print_json};
 use crate::skills::adopt::run_adopt;
+use crate::skills::create::{run_create, CreateArgs};
 use crate::skills::deploy::{run_deprecated_set_enabled, run_skill_deployment, run_sync};
 use crate::skills::install::{classify_ref, run_install, run_remove, run_search, SyncTarget};
 use crate::skills::list::{
@@ -14,14 +18,49 @@ use crate::skills::tags::run_tag;
 use crate::skills::update::{run_check, run_update};
 
 mod adopt;
+mod create;
 pub(crate) mod deploy;
 mod install;
 pub(crate) mod list;
 mod tags;
 mod update;
 
-pub(crate) fn run_skills(args: SkillsArgs, store: &SkillStore, json: bool) -> anyhow::Result<()> {
+pub(crate) fn run_skills(
+    args: SkillsArgs,
+    store: &Arc<SkillStore>,
+    json: bool,
+) -> anyhow::Result<()> {
     match args.command {
+        SkillsCommand::Create {
+            name,
+            description,
+            body_file,
+            from,
+            agents,
+            preset,
+            project,
+            host,
+            dry_run,
+        } => {
+            let report = run_create(
+                store,
+                CreateArgs {
+                    name,
+                    description,
+                    body_file,
+                    from,
+                    agents,
+                    preset,
+                    project,
+                    host,
+                    dry_run,
+                },
+            )?;
+            print_json(&report, json);
+            if report["partial"] == true {
+                bail!("the skill was created, but some targets failed; see the report");
+            }
+        }
         SkillsCommand::List {
             query,
             tags,

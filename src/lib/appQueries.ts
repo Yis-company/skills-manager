@@ -19,6 +19,7 @@ export const queryKeys = {
   managedSkills: (hostId: null | string) => ["host", hostId, "managedSkills"] as const,
   projects: (hostId: null | string) => ["host", hostId, "projects"] as const,
   remoteHosts: () => ["remoteHosts"] as const,
+  centralRepoPath: (hostId: null | string) => ["host", hostId, "centralRepoPath"] as const,
   projectSkills: (hostId: null | string, projectId: string) =>
     ["host", hostId, "projectSkills", projectId] as const,
 };
@@ -62,6 +63,13 @@ export const projectsQueryOptions = (hostId: null | string) =>
     ...desktopQueryDefaults,
     queryKey: queryKeys.projects(hostId),
     queryFn: () => invokeHost<Project[]>(hostId, "get_projects"),
+  });
+
+export const centralRepoPathQueryOptions = (hostId: null | string) =>
+  queryOptions({
+    ...desktopQueryDefaults,
+    queryKey: queryKeys.centralRepoPath(hostId),
+    queryFn: () => invokeHost<string>(hostId, "get_central_repo_path"),
   });
 
 export const remoteHostsQueryOptions = () =>

@@ -6,6 +6,7 @@ describe("parseInstallSearch", () => {
   it("keeps a known tab", () => {
     expect(parseInstallSearch({ tab: "local" })).toEqual({ tab: "local" });
     expect(parseInstallSearch({ tab: "git" })).toEqual({ tab: "git" });
+    expect(parseInstallSearch({ tab: "create" })).toEqual({ tab: "create" });
   });
 
   it("drops a missing, unknown, or non-string tab", () => {

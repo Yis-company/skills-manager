@@ -35,6 +35,7 @@ export const HOST_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "get_skill_source_diff",
   "delete_managed_skill",
   "delete_managed_skills",
+  "create_skill",
   "install_local",
   "install_git",
   "preview_git_install",

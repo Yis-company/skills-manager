@@ -104,6 +104,39 @@ pub(crate) enum SkillsCommand {
         #[arg(long, alias = "sync-scenario", value_name = "REF")]
         sync_preset: Option<String>,
     },
+    /// Write a new skill straight into the library, with no source to update from.
+    Create {
+        /// Lowercase letters, digits and single hyphens, e.g. `release-notes`
+        name: String,
+        /// When agents should use the skill
+        #[arg(long, requires = "body_file", required_unless_present = "from")]
+        description: Option<String>,
+        /// Instructions as Markdown: a file path, or `-` for stdin
+        #[arg(long, value_name = "PATH", requires = "description")]
+        body_file: Option<String>,
+        /// Folder holding a finished skill, for skills with extra files
+        #[arg(
+            long,
+            value_name = "DIR",
+            conflicts_with_all = ["description", "body_file", "host"]
+        )]
+        from: Option<PathBuf>,
+        /// Also add the skill to this agent. Repeatable.
+        #[arg(long = "agent", value_name = "AGENT")]
+        agents: Vec<String>,
+        /// Also add the skill to this preset (id or name), membership only
+        #[arg(long, value_name = "REF")]
+        preset: Option<String>,
+        /// Also add the skill to this registered project (id, name or path)
+        #[arg(long, value_name = "REF")]
+        project: Option<String>,
+        /// Create on this registered SSH host instead of this machine
+        #[arg(long, value_name = "HOST")]
+        host: Option<String>,
+        /// Report what would happen without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
     Update {
         /// Skill ref (id / name / dir basename / central path). Omit for --all.
         reference: Option<String>,

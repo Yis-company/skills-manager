@@ -49,6 +49,8 @@ pub enum ErrorKind {
     TargetConflict,
     /// The remote CLI answers, but is not the version required by this app.
     RemoteVersionMismatch,
+    /// A new skill's name is already taken in the library.
+    SkillExists,
 }
 
 impl fmt::Display for AppError {
@@ -69,6 +71,14 @@ impl AppError {
     pub fn invalid_input(msg: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind::InvalidInput,
+            message: msg.into(),
+            details: None,
+        }
+    }
+
+    pub fn skill_exists(msg: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::SkillExists,
             message: msg.into(),
             details: None,
         }

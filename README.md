@@ -42,6 +42,7 @@ Agents Manager brings three kinds of reusable resources into one Library: Skills
 - **Instructions** — Edit supported instruction files in place or save reusable bundles with linked documents. Review deployments against the current project before applying them; library edits never silently change deployed files.
 - **MCP connections** — Add definitions manually, import supported configurations, or browse the official MCP Registry. Review commands, arguments, and credential references before saving or deploying. The target agent handles process startup and authentication.
 - **Marketplace** — Browse popular skills from the marketplace and find them with keyword search.
+- **Create skills** — Write a new skill straight into the library from the Install page or `skills create`, and optionally add it to agents, a preset or a project on any host.
 - **Your agents can manage skills** — Claude Code, Codex, Cursor and the rest can install a skill, deploy it to another agent, or report what is where, by driving Agents Manager instead of writing into an agent's folder behind its back — so sources, presets, update tracking and per-agent state stay intact. The Dashboard sets this up in one click; see [Let your agents manage skills](#let-your-agents-manage-skills).
 - **Presets** — Group skills into named presets. Library selects the preset you view and edit. In Global Workspace, switch the shared active preset that hosts in Sync follow; review removals before applying. In Project Workspaces, preset actions add or remove skills only in that project. Edited agent copies are preserved for review. The sidebar lists all presets for quick access.
 - **Global Workspace** — Each agent gets its own page listing every skill in its global folder — including ones installed outside Agents Manager — so the view always reflects what the agent actually sees. Add or remove skills per agent, or use the All Agents overview to manage every installed agent at once.
@@ -168,6 +169,9 @@ The repository includes an agent-friendly CLI built on the same Rust shared core
 # Look around
 bun run cli skills list
 bun run cli skills show db
+
+# Write a new skill straight into the library, optionally adding it with --agent, --preset or --project
+bun run cli skills create my-skill --description "When to use it" --body-file notes.md
 
 # Install into the library (does NOT deploy to any agent by itself)
 bun run cli skills install ./my-skill

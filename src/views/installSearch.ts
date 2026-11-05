@@ -1,4 +1,4 @@
-export const INSTALL_TABS = ["market", "local", "git"] as const;
+export const INSTALL_TABS = ["market", "local", "git", "create"] as const;
 
 export type InstallTab = (typeof INSTALL_TABS)[number];
 

@@ -152,12 +152,28 @@ pub fn run(
     } else {
         format!("{kind}_request")
     };
-    let result = if let Some(host) = args.host {
+    let result = call_on_host(store, args.host.as_deref(), &command, request)?;
+    crate::output::print_json(&result, json_output);
+    if result.get("partial").and_then(Value::as_bool) == Some(true) {
+        bail!("Resource operation partially failed; inspect the per-file result before retrying");
+    }
+    Ok(())
+}
+
+/// Run one app command with `{"request": request}` on a registered SSH host, or
+/// on this machine when `host` is `None`.
+pub(crate) fn call_on_host(
+    store: Arc<SkillStore>,
+    host: Option<&str>,
+    command: &str,
+    request: Value,
+) -> Result<Value> {
+    if let Some(host) = host {
         let runtime = tokio::runtime::Runtime::new()?;
         runtime.block_on(async {
             let sessions = RemoteSessions::new(store, Arc::new(NoopEvents));
-            let result = match sessions.session_for(&host).await {
-                Ok(session) => session.call(&command, json!({"request":request})).await,
+            let result = match sessions.session_for(host).await {
+                Ok(session) => session.call(command, json!({"request":request})).await,
                 Err(error) => Err(error),
             };
             sessions.disconnect().await;
@@ -170,14 +186,9 @@ pub fn run(
             cancel: Arc::new(InstallCancelRegistry::new()),
             events: Arc::new(NoopEvents),
         };
-        host_dispatch::dispatch(&ctx, &command, &json!({"request":request}))
+        host_dispatch::dispatch(&ctx, command, &json!({"request":request}))
     }
-    .map_err(crate::output::map_app_err)?;
-    crate::output::print_json(&result, json_output);
-    if result.get("partial").and_then(Value::as_bool) == Some(true) {
-        bail!("Resource operation partially failed; inspect the per-file result before retrying");
-    }
-    Ok(())
+    .map_err(crate::output::map_app_err)
 }
 
 #[cfg(test)]

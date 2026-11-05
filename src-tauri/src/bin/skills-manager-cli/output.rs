@@ -1,6 +1,6 @@
 //! Printing reports, and the `--json` failure envelope.
 
-use app_lib::core::error::AppError;
+use app_lib::core::error::{AppError, ErrorKind};
 use serde::Serialize;
 
 /// Keep the `AppError` itself in the chain rather than only its sentence:
@@ -12,10 +12,12 @@ use serde::Serialize;
 /// the caller has to act on rather than repeat — a deployment refusal names
 /// the paths in the way — and those pass their structure straight through, so
 /// an agent can say which directory is blocking and offer the way out (#363).
+/// A taken skill name has no details, but an agent has to tell it apart to pick
+/// another name.
 pub(crate) fn error_envelope(err: &anyhow::Error) -> serde_json::Value {
     let message = format!("{err:#}");
     match err.downcast_ref::<AppError>() {
-        Some(app_err) if app_err.details.is_some() => {
+        Some(app_err) if app_err.details.is_some() || app_err.kind == ErrorKind::SkillExists => {
             let mut value = serde_json::to_value(app_err).unwrap();
             let object = value.as_object_mut().unwrap();
             object.insert("ok".into(), serde_json::Value::Bool(false));

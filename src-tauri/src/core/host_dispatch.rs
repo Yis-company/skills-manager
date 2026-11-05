@@ -43,6 +43,7 @@ pub const COMMANDS: &[&str] = &[
     "get_skill_source_diff",
     "delete_managed_skill",
     "delete_managed_skills",
+    "create_skill",
     "install_local",
     "install_git",
     "preview_git_install",
@@ -261,6 +262,7 @@ pub fn dispatch(ctx: &HostCtx, command: &str, args: &Value) -> Result<Value, App
         "delete_managed_skills" => {
             reply(skills::delete_managed_skills_core(ctx, a.req("skillIds")?))
         }
+        "create_skill" => reply(skills::create_skill_core(ctx, a.req("request")?)),
         "install_local" => reply(skills::install_local_core(
             ctx,
             a.req("sourcePath")?,

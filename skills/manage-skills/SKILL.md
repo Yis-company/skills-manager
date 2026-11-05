@@ -1,6 +1,6 @@
 ---
 name: manage-skills
-description: Manage the user's shared agent-skill library via skills-manager-cli — install, update, remove, deploy or undeploy skills per agent, manage presets, organize tags, search, and adopt existing skills. Use this whenever the user wants Claude Code, Codex, Cursor, or another agent to gain or lose a skill, wants to organize the central library, or asks what is installed or deployed. Prefer this over direct agent-folder installs because Skills Manager preserves source metadata, preset membership, updates, and cross-agent deployment state.
+description: Manage the user's shared agent-skill library via skills-manager-cli — create, install, update, remove, deploy or undeploy skills per agent, manage presets, organize tags, search, and adopt existing skills. Use this whenever the user wants Claude Code, Codex, Cursor, or another agent to gain or lose a skill, wants to organize the central library, or asks what is installed or deployed. Prefer this over direct agent-folder installs because Skills Manager preserves source metadata, preset membership, updates, and cross-agent deployment state.
 ---
 
 ## Before doing anything
@@ -111,6 +111,39 @@ Internally, presets are still stored as scenarios for backward-compatible Git Ba
 4. Otherwise → error; pass `--local` / `--git` / `--skillssh` to disambiguate
 
 **Always verify after install** with `skills list` or `skills show <name>` so you can confirm the skill landed and report the preset / sync state back to the user.
+
+## Create
+
+Use this when the user wants a new skill of their own, rather than `install` from a source. A created skill has no source path, so a temporary folder you wrote it in can safely disappear. `install ./folder` records that folder as the source, and `update` fails once it's gone.
+
+```bash
+# The body comes from a file, or stdin with "-"
+"$SM" --json skills create release-notes \
+  --description "Draft release notes from merged PRs. Use when preparing a release." \
+  --body-file notes.md
+
+# A finished folder, for skills with extra files. Its SKILL.md must set this
+# name and a description.
+"$SM" --json skills create release-notes --from ./release-notes
+```
+
+Both forms take these options:
+
+- `--agent <key>`, repeatable: also add the skill to that agent.
+- `--preset <id or name>`: also add it to the preset, as membership only.
+- `--project <id, name or path>`: also add it to a registered project. `.` is the current folder. A folder that isn't registered is refused, so ask the user to add it as a project workspace in the app.
+- `--host <id>`: create on a registered SSH host. `--from` and relative `--project` paths are refused with it, because they name things on this machine. `--body-file` still works.
+- `--dry-run`: run every check and report the targets, writing nothing.
+
+Names are up to 64 lowercase letters, digits and single hyphens. An invalid name is refused, not rewritten. The description is what tells agents when to use the skill, so say that in it.
+
+The failures to handle:
+
+- **`SKILL_EXISTS`**: the name is taken, and the existing skill is untouched. Ask the user for another name. Don't remove the existing skill to make room.
+- **`TARGET_CONFLICT`**: a folder at an agent's skill path isn't ours, and nothing was written. Handle it as in "When a deployment is refused" above.
+- **`partial: true` with a non-zero exit**: the skill was created, and `targets[].error` says which targets failed. Don't run `create` again. Fix the target, then use `skills deploy` or `presets add-skill`, or add it to a project in the app.
+
+`skills update` has nothing to do for a created skill. To change one later, edit the folder at the reported `path`. Agents linked to the library see the edit straight away, but copies don't update on their own.
 
 ## Search
 
@@ -321,6 +354,12 @@ Use `agents disable <agent>` when the user wants the whole Agent integration tur
 3. If ambiguous: ask the user to pick.
 4. Deploy it to the agent(s) the user requested with `skills deploy`.
 5. `skills status <name>` to confirm the library and deployment state.
+
+### "Write me a skill that does X"
+
+1. Draft the name, description and instructions, and show them to the user if they haven't specified them.
+2. `skills create <name> ... --dry-run` with the targets they asked for, to catch a taken name or a blocked folder.
+3. Run it without `--dry-run`, then report the `path` and each target from the report.
 
 ### "What skills do I have?"
 

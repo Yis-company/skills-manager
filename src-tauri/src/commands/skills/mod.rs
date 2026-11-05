@@ -1,5 +1,6 @@
 //! Tauri commands for the managed skills library, grouped by concern.
 
+mod create;
 mod import;
 mod install;
 mod library;
@@ -9,6 +10,7 @@ mod types;
 mod update;
 mod update_check;
 
+pub use create::*;
 pub use import::*;
 pub use install::*;
 pub use library::*;

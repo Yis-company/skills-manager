@@ -1056,6 +1056,7 @@ pub fn run() {
             commands::skills::get_skill_source_diff,
             commands::skills::delete_managed_skill,
             commands::skills::delete_managed_skills,
+            commands::skills::create_skill,
             commands::skills::install_local,
             commands::skills::install_git,
             commands::skills::preview_git_install,

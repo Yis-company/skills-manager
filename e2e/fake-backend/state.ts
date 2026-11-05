@@ -39,6 +39,8 @@ export interface Seed {
   operations?: OperationSnapshot[];
   holdOperations?: boolean;
   skills?: ManagedSkill[];
+  /** Target name to the error `create_skill` reports for it. */
+  createSkillTargetErrors?: Record<string, string>;
   /** `skill_count` is computed from the skills' `preset_ids`. */
   presets?: Preset[];
   activePresetId?: null | string;
@@ -216,6 +218,7 @@ export function createState({ settings, ...seed }: Seed): State {
     operations: [],
     holdOperations: false,
     skills: [],
+    createSkillTargetErrors: {},
     presets: [],
     activePresetId: null,
     presetSkillOrder: {},

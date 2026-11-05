@@ -16,6 +16,14 @@ pub(crate) fn run_update(
     let mut reports = Vec::new();
 
     for skill in targets {
+        // A created or detached skill has nothing to update from. That's only
+        // an error when someone asks for this skill by name.
+        if all
+            && skill.source_ref.is_none()
+            && matches!(skill.source_type.as_str(), "local" | "import")
+        {
+            continue;
+        }
         let report = match skill.source_type.as_str() {
             "git" | "skillssh" => {
                 match skill_update::update_git_skill_internal(

@@ -33,6 +33,10 @@ _Avoid_: Protocol, schema version
 Adding a skill to the library, from the marketplace or a source.
 _Avoid_: using it for agents
 
+**Create**:
+Writing a new skill straight into the library. It has no source, so there is nothing to update it from.
+_Avoid_: Scaffold, author, using install for this
+
 **Add to agent**:
 Putting a library skill into an agent's skills folder, as a link or a copy. A skill is "On agent" or "Not on agent"; the opposite action is "Remove from agent".
 _Avoid_: Sync, deploy, install
