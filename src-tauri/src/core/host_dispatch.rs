@@ -803,6 +803,7 @@ mod tests {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let host = test_host_with(Arc::new(HeldOperation {
+            target_path: None,
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),
@@ -1888,6 +1889,7 @@ mod tests {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let host = test_host_with(Arc::new(HeldOperation {
+            target_path: None,
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),
@@ -1941,6 +1943,7 @@ mod tests {
     }
 
     struct HeldOperation {
+        target_path: Option<&'static str>,
         entered_once: std::sync::atomic::AtomicBool,
         entered: std::sync::mpsc::Sender<()>,
         release: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
@@ -1949,9 +1952,22 @@ mod tests {
         fn emit(&self, event: &str, payload: Value) {
             if event == "operation-changed"
                 && payload["operation_id"] == "held"
-                && payload["items"]
-                    .as_array()
-                    .is_some_and(|items| items.iter().any(|item| item["phase"] == "applying"))
+                && payload["items"].as_array().is_some_and(|items| {
+                    // A targeted barrier needs the item's initial snapshot:
+                    // sibling callbacks can also report that item as applying.
+                    items.iter().any(|item| {
+                        item["phase"] == "applying"
+                            && self
+                                .target_path
+                                .is_none_or(|path| item["relative_path"] == path)
+                    }) && self.target_path.is_none_or(|path| {
+                        items.iter().all(|item| {
+                            item["relative_path"] == path
+                                || item["phase"] == "queued"
+                                || item["phase"] == "needs_review"
+                        })
+                    })
+                })
                 && !self
                     .entered_once
                     .swap(true, std::sync::atomic::Ordering::SeqCst)
@@ -2022,6 +2038,7 @@ mod tests {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let host = test_host_with(Arc::new(HeldOperation {
+            target_path: None,
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),
@@ -2101,6 +2118,7 @@ mod tests {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let mut host = test_host_with(Arc::new(HeldOperation {
+            target_path: Some("x"),
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),
@@ -2200,6 +2218,7 @@ mod tests {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let mut host = test_host_with(Arc::new(HeldOperation {
+            target_path: None,
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),
@@ -2243,6 +2262,7 @@ mod tests {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let host = test_host_with(Arc::new(HeldOperation {
+            target_path: None,
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),
@@ -2319,6 +2339,7 @@ mod tests {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let host = test_host_with(Arc::new(HeldOperation {
+            target_path: None,
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),
@@ -2375,6 +2396,7 @@ mod tests {
         let (entered, receiver) = std::sync::mpsc::channel();
         let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let host = test_host_with(Arc::new(HeldOperation {
+            target_path: None,
             entered_once: std::sync::atomic::AtomicBool::new(false),
             entered,
             release: release.clone(),

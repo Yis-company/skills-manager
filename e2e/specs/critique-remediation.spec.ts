@@ -196,7 +196,7 @@ for (const theme of ["light", "dark"]) {
       test(`long Library and comparison stay usable: ${theme}, ${textSize}, ${width}`, async ({
         page,
         backend,
-      }) => {
+      }, testInfo) => {
         await page.setViewportSize({ width, height: width === 1100 ? 640 : 860 });
         await backend.seed({
           ...syncSeed,
@@ -243,7 +243,7 @@ for (const theme of ["light", "dark"]) {
           (width === 1440 && textSize === "default" && theme === "light")
         ) {
           await page.screenshot({
-            path: `.impeccable/review/2026-11-01-remediation/library-${theme}-${textSize}-${width}.png`,
+            path: testInfo.outputPath(`library-${theme}-${textSize}-${width}.png`),
           });
         }
 
@@ -266,7 +266,7 @@ for (const theme of ["light", "dark"]) {
           (width === 1440 && textSize === "default" && theme === "light")
         ) {
           await page.screenshot({
-            path: `.impeccable/review/2026-11-01-remediation/comparison-${theme}-${textSize}-${width}.png`,
+            path: testInfo.outputPath(`comparison-${theme}-${textSize}-${width}.png`),
           });
         }
       });

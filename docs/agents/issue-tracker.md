@@ -8,6 +8,15 @@ When a skill says to fetch a ticket, read it in Linear. When it says to publish,
 
 GitHub hosts source and pull requests. Preserve the existing engineering tracker. External PRs are not an automatic triage surface.
 
+Before pushing or opening a PR, check `git remote get-url origin`. Resolve its
+owner/repository and verify the GitHub numeric repository ID; this checkout's
+origin is `Yis-company/skills-manager`, ID `1385003072`. Stop on a mismatch.
+Bind repository-aware commands with `gh ... --repo Yis-company/skills-manager`
+and create PRs with `--base main`. For `gh api`, use explicit
+`/repos/Yis-company/skills-manager/...` paths or GraphQL owner/name variables.
+Do not rely on the CLI's default repository: this fork also has an upstream remote.
+Verify the PR's base repository before trusting its checks or publishing a review.
+
 Wayfinder maps and decision tickets retain their wayfinder labels, without implementation triage labels. Preserve older SID references in existing ticket history.
 
 For Sync decisions, read:
