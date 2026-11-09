@@ -1,15 +1,15 @@
 import { defineRule, eslintCompatPlugin } from "@oxlint/plugins";
 
-const tmpPath = /^(\/private)?\/tmp\//;
+const tmpPath = /^(?:(\/private)?\/tmp\/|(?:\.\/)?\.impeccable\/review(?:\/|$))/;
 
 /** Ban machine-specific temp paths; tests write artifacts under testInfo.outputPath(). */
 const noTmpPathsRule = defineRule({
   meta: {
     type: "problem",
-    docs: { description: "Disallow absolute /tmp paths in tests." },
+    docs: { description: "Keep test artifacts in Playwright output paths." },
     messages: {
       tmpPath:
-        "Write test artifacts with `testInfo.outputPath()`; absolute /tmp paths break on other machines and CI.",
+        "Write test artifacts with `testInfo.outputPath()`; absolute temp paths and tracked review screenshots are not test output directories.",
     },
   },
   createOnce(context) {

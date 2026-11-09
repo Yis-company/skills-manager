@@ -43,7 +43,16 @@ description: Manage the user's shared agent-skill library via skills-manager-cli
 
    If nothing is printed at all, this skill doesn't apply — fall back to
    find-skills, or tell the user to install Skills Manager.
-2. **Always pass `--json` when you parse output yourself.** Pretty-printed output is for the user; JSON is for you. Errors include `ok=false`, a stable `code`, and `message` on stderr with a non-zero exit code.
+2. **Check compatibility before changing the library.** Read the resolved CLI's
+   `--version`. Check library access with `--json skills list` before reporting
+   host setup complete. Listing does not request a skill change, but CLI startup
+   can initialize or migrate its database; it is not a strictly read-only probe.
+   If database compatibility is refused, stop using that binary. Report its
+   version and the full error, then use the app's matching CLI or obtain approval
+   to upgrade it. Never downgrade, delete or rewrite the database to make an old
+   CLI work. A direct-file fallback proves only which files were copied; it does
+   not prove library registration, preset membership or managed deployment.
+3. **Always pass `--json` when you parse output yourself.** Pretty-printed output is for the user; JSON is for you. Errors include `ok=false`, a stable `code`, and `message` on stderr with a non-zero exit code.
 
 ```bash
 "$SM" --json skills list

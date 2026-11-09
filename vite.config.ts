@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   // The Playwright specs in e2e/ run with `bun run e2e`, not with vitest.
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "scripts/*.test.ts"],
   },
   server: {
     host: "127.0.0.1",

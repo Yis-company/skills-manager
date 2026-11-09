@@ -176,9 +176,13 @@ fn run_command(
         ));
     }
     if let Some(Err(error)) = writer_result {
-        return Err(AppError::network(format!(
-            "SSH binary transfer failed: {error}"
-        )));
+        // An early refusal closes stdin before reading the binary. Preserve its
+        // exit code and diagnostic; a successful child must still consume input.
+        if error.kind() != std::io::ErrorKind::BrokenPipe || status.success() {
+            return Err(AppError::network(format!(
+                "SSH binary transfer failed: {error}"
+            )));
+        }
     }
     Ok((
         status.code().unwrap_or(-1),
@@ -587,7 +591,9 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(bytes).unwrap();
+        if let Err(error) = child.stdin.take().unwrap().write_all(bytes) {
+            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        }
         child.wait_with_output().unwrap()
     }
 
@@ -628,6 +634,27 @@ mod tests {
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(command).env("HOME", home);
         run_command(cmd, input, Duration::from_secs(3))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn early_installer_refusal_preserves_exit_code_and_stderr() {
+        let home = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), home.path().join(".skills-manager")).unwrap();
+        let (code, _, stderr) = local_ssh(
+            home.path(),
+            &wrap_sh(&install_script(
+                home.path().to_str().unwrap(),
+                "1.2.3",
+                "fixture",
+            )),
+            Some(&vec![0u8; 1024 * 1024]),
+        )
+        .unwrap();
+        assert_eq!(code, 41);
+        assert!(stderr.contains("SYMLINK_REFUSED"), "{stderr}");
+        assert!(outside.path().read_dir().unwrap().next().is_none());
     }
 
     #[cfg(unix)]

@@ -161,6 +161,10 @@ as well. The installer will continue to refuse the conflict; use
 An install with lifecycle scripts disabled does not install the hook; without
 a conflicting hook, run `bun run prepare` to install it afterwards.
 
+When reporting verification, include every observed failure, its cause, and whether
+the change fixed it. A passing retry alone does not prove repair. Mark unresolved
+failures and checks that were not run explicitly.
+
 ### CLI
 
 The repository includes an agent-friendly CLI built on the same Rust shared core used by the desktop app. Both the CLI and the desktop app go through the same SQLite database, central library, and sync engine.
