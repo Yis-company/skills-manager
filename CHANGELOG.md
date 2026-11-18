@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.50.0
+
+### Minor Changes
+
+- [#111](https://github.com/Yis-company/skills-manager/pull/111) [`460e389`](https://github.com/Yis-company/skills-manager/commit/460e389bc474844d171e92f0a1ab86261acefb46) Thanks [@ybtam](https://github.com/ybtam)! - Create a new skill straight into the library, from `skills create` in the CLI or the new Create tab on the Install page, and optionally add it to agents, a preset or a project on any host. A created skill has no source path, and `skills update --all` now skips local skills without one instead of reporting an error. Skill descriptions containing `---` are now read correctly.
+
+### Patch Changes
+
+- [#110](https://github.com/Yis-company/skills-manager/pull/110) [`e09adf8`](https://github.com/Yis-company/skills-manager/commit/e09adf88776e584bdde889a0b05b4d3c13f4c05f) Thanks [@ybtam](https://github.com/ybtam)! - Let the sidebar preset list grow with the window instead of a fixed three-row cap, and clamp skill descriptions in the agent matrix to two lines (full text on hover).
+
+- [#114](https://github.com/Yis-company/skills-manager/pull/114) [`322b0d7`](https://github.com/Yis-company/skills-manager/commit/322b0d7ca6f0622a1f4b8674b1866bea4efbee55) Thanks [@ybtam](https://github.com/ybtam)! - Keep keyboard focus inside project and Library dialogs, restore it on close, and move it with resource-tab selection. Let keyboard users choose tag suggestions and prevent duplicate project scans and tag renames while a request is pending.
+
+- [#115](https://github.com/Yis-company/skills-manager/pull/115) [`3f19494`](https://github.com/Yis-company/skills-manager/commit/3f19494d85df319125ed1597b556ab8c74cb16b1) Thanks [@ybtam](https://github.com/ybtam)! - Refresh npm and Cargo dependencies to their latest releases, including i18next 27 and react-i18next 18, and pin CI to Node.js 26.13.1.
+
+- [#112](https://github.com/Yis-company/skills-manager/pull/112) [`9561884`](https://github.com/Yis-company/skills-manager/commit/95618846321cfea5f89238b86f34720b320c22db) Thanks [@ybtam](https://github.com/ybtam)! - Clarify CLI and library compatibility checks and the limits of direct-file setup fallbacks.
+  
+  Preserve remote installer refusal diagnostics when the remote command closes its input before accepting a binary.
+
+- [#108](https://github.com/Yis-company/skills-manager/pull/108) [`1284156`](https://github.com/Yis-company/skills-manager/commit/1284156ac6e48e8d8e41af05d8aea550d4ed8567) Thanks [@ybtam](https://github.com/ybtam)! - Update app dependencies and build runtimes to their latest stable versions, including Tauri, Vite, Tailwind CSS, TypeScript, React and Node.js.
+
 ## 1.49.0
 
 ### Minor Changes
