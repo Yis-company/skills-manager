@@ -540,6 +540,19 @@ export const searchSkillssh = (query: string, limit?: number) =>
     limit: limit ?? null,
   });
 
+// ── MCP client registration ──
+
+export interface McpRegistration {
+  status: "added" | "unchanged";
+  serverName: string;
+  configPath: string;
+  nextStep: string;
+}
+
+/** Register this computer's CLI as an MCP server for Codex or Claude Code. */
+export const registerMcpClient = (agentKey: "claude_code" | "codex") =>
+  invokeLocal<McpRegistration>("register_mcp_client", { agentKey });
+
 // ── Settings ──
 
 export const getSettings = (key: string) => invoke<null | string>("get_settings", { key });
