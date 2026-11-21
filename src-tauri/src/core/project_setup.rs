@@ -4,7 +4,7 @@
 //!
 //! Discovery is read-only: it never registers projects, deploys, or writes
 //! the store, so it can run on a store opened read-only. Apply writes; see
-//! [`apply`].
+//! [`apply`]. Inspection is read-only too; see [`inspect`].
 
 use std::path::{Path, PathBuf};
 
@@ -17,6 +17,7 @@ use crate::core::skill_store::{ProjectRecord, SkillStore};
 use crate::core::sync_service;
 
 mod apply;
+mod inspect;
 pub use apply::mcp_value;
 
 /// Library options per page.
@@ -93,6 +94,12 @@ enum Request {
         #[serde(default)]
         evidence: bool,
     },
+    Inspect {
+        checkout_path: String,
+        operation_id: String,
+        #[serde(default)]
+        evidence: bool,
+    },
 }
 
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
@@ -108,6 +115,11 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
             operation_id,
             evidence,
         } => apply::apply(ctx, &checkout_path, &operation_id, evidence),
+        Request::Inspect {
+            checkout_path,
+            operation_id,
+            evidence,
+        } => inspect::inspect(ctx, &checkout_path, &operation_id, evidence),
     }
 }
 

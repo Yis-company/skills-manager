@@ -29,7 +29,7 @@ use crate::core::project_scanner::AgentSkillConfig;
 use crate::core::skill_store::{ProjectRecord, SkillRecord};
 use crate::core::{content_hash, instructions, mcps, project_deploy, sync_engine};
 
-const RECEIPT_KIND: &str = "project_setup_receipt";
+pub(super) const RECEIPT_KIND: &str = "project_setup_receipt";
 const MAX_OPERATION_ID: usize = 128;
 /// The most MCP connections one preview may change; see `mcps::adapters::preview`.
 const MCP_BATCH: usize = 64;
@@ -38,10 +38,12 @@ const INSTRUCTION_AGENTS: &[&str] = &["claude_code", "codex", "antigravity", "he
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Status {
+pub(super) enum Status {
     // Declared from least to most in need of attention.
     Unchanged,
     Changed,
+    /// Inspection only: absent or behind, so apply would write it.
+    NotApplied,
     Missing,
     Blocked,
     NeedsReview,
@@ -50,11 +52,11 @@ enum Status {
 
 /// One item's verified result. `reason` says why it was not applied.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ItemResult {
+pub(super) struct ItemResult {
     kind: ItemKind,
     id: String,
     agents: Vec<String>,
-    status: Status,
+    pub(super) status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
 }
@@ -96,13 +98,7 @@ pub(super) fn apply(
     let project = project.ok_or_else(|| {
         AppError::invalid_input("This checkout is not a registered project; discover it first")
     })?;
-    let setup: SavedSetup = ctx
-        .store
-        .resource_state_get(SETUP_KIND, &project.id)
-        .map_err(AppError::db)?
-        .map(serde_json::from_value)
-        .transpose()
-        .map_err(|e| AppError::internal(format!("Saved Project setup is unreadable: {e}")))?
+    let setup = load_setup(ctx, &project.id)?
         .ok_or_else(|| AppError::invalid_input("This project has no saved Project setup"))?;
     let host = effective_device_name(&ctx.store);
     let intent = json!({
@@ -118,7 +114,7 @@ pub(super) fn apply(
         path: checkout.to_string_lossy().into_owned(),
         ..project
     };
-    let run = Run::new(ctx, project)?;
+    let run = Run::new(ctx, project, true)?;
 
     let claim = json!({ "version": 1, "intent": intent });
     if !ctx
@@ -129,6 +125,28 @@ pub(super) fn apply(
         return answer_from_receipt(ctx, operation_id, &intent, evidence);
     }
 
+    let items = check_items(&run, &setup);
+    let mut result = summarize(&intent, operation_id, &items);
+    result["items"] = json!(items);
+    let receipt = json!({ "version": 2, "intent": intent, "result": result });
+    ctx.store
+        .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
+        .map_err(AppError::db)?;
+    Ok(respond(result, false, evidence))
+}
+
+pub(super) fn load_setup(ctx: &HostCtx, project_id: &str) -> Result<Option<SavedSetup>, AppError> {
+    ctx.store
+        .resource_state_get(SETUP_KIND, project_id)
+        .map_err(AppError::db)?
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| AppError::internal(format!("Saved Project setup is unreadable: {e}")))
+}
+
+/// Check each item against its destination and, when `run` writes, apply
+/// and verify it.
+pub(super) fn check_items(run: &Run, setup: &SavedSetup) -> Vec<ItemResult> {
     // Each item's steps, one per agent where it varies by agent. MCP
     // connections are queued and applied in batches per agent config.
     let mut steps: Vec<Vec<Step>> = Vec::with_capacity(setup.items.len());
@@ -137,9 +155,9 @@ pub(super) fn apply(
         steps.push(Vec::new());
         let step = match item.kind {
             _ if item.agents.is_empty() => Ok(Step::because(Status::Blocked, "no_agents")),
-            ItemKind::Skill => apply_skill(&run, item),
-            ItemKind::Instruction => apply_instruction(&run, item),
-            ItemKind::Mcp => match check_mcp(&run, item) {
+            ItemKind::Skill => apply_skill(run, item),
+            ItemKind::Instruction => apply_instruction(run, item),
+            ItemKind::Mcp => match check_mcp(run, item) {
                 Ok(agents) => {
                     queued.extend(agents.into_iter().map(|agent| (agent, index)));
                     continue;
@@ -157,11 +175,11 @@ pub(super) fn apply(
             .iter()
             .map(|(_, index)| (*index, &setup.items[*index]))
             .collect();
-        for ((index, _), step) in batch.iter().zip(apply_mcps(&run, agent, &batch)) {
+        for ((index, _), step) in batch.iter().zip(apply_mcps(run, agent, &batch)) {
             steps[*index].push(step);
         }
     }
-    let items: Vec<ItemResult> = setup
+    setup
         .items
         .iter()
         .zip(steps)
@@ -175,14 +193,7 @@ pub(super) fn apply(
                 reason,
             }
         })
-        .collect();
-    let mut result = summarize(&intent, operation_id, &items);
-    result["items"] = json!(items);
-    let receipt = json!({ "version": 2, "intent": intent, "result": result });
-    ctx.store
-        .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
-        .map_err(AppError::db)?;
-    Ok(respond(result, false, evidence))
+        .collect()
 }
 
 fn answer_from_receipt(
@@ -276,9 +287,11 @@ fn summarize(intent: &Value, operation_id: &str, items: &[ItemResult]) -> Value 
 }
 
 /// Lookups made once per request rather than once per item.
-struct Run<'a> {
+pub(super) struct Run<'a> {
     ctx: &'a HostCtx,
     project: ProjectRecord,
+    /// False for inspection: check each destination and write nothing.
+    write: bool,
     skill_groups: Vec<(AgentSkillConfig, Vec<String>)>,
     available_skill_groups: HashSet<String>,
     instruction_recovery_pending: bool,
@@ -288,7 +301,11 @@ struct Run<'a> {
 }
 
 impl<'a> Run<'a> {
-    fn new(ctx: &'a HostCtx, project: ProjectRecord) -> Result<Self, AppError> {
+    pub(super) fn new(
+        ctx: &'a HostCtx,
+        project: ProjectRecord,
+        write: bool,
+    ) -> Result<Self, AppError> {
         let capabilities = mcps::dispatch(ctx, json!({ "action": "capabilities" }))?;
         let mcp_agents = capabilities["targets"]
             .as_array()
@@ -315,6 +332,7 @@ impl<'a> Run<'a> {
             mcp_agents,
             ctx,
             project,
+            write,
         })
     }
 }
@@ -446,6 +464,9 @@ fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
     if states.iter().all(|state| *state == Slot::Same) {
         return Ok(Step::of(Status::Unchanged));
     }
+    if !run.write {
+        return Ok(Step::of(Status::NotApplied));
+    }
 
     if copy_mode {
         let keys: Vec<String> = groups
@@ -531,6 +552,9 @@ fn apply_instruction(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
             if unchanged(&planned) {
                 return Ok(Step::of(Status::Unchanged));
             }
+            if !run.write {
+                return Ok(Step::of(Status::NotApplied));
+            }
             let stored = preview(false)?;
             let applied = instructions::dispatch(
                 ctx,
@@ -598,11 +622,11 @@ fn apply_mcps(run: &Run, agent: &str, batch: &[(usize, &SetupItem)]) -> Vec<Step
     }
     let ids: Vec<&str> = batch.iter().map(|(_, item)| item.id.as_str()).collect();
     ids.chunks(MCP_BATCH)
-        .flat_map(|chunk| mcp_chunk(run.ctx, &target, chunk))
+        .flat_map(|chunk| mcp_chunk(run.ctx, &target, chunk, run.write))
         .collect()
 }
 
-fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str]) -> Vec<Step> {
+fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<Step> {
     let preview = |ids: &[&str], dry_run: bool| {
         let operations: Vec<Value> = ids
             .iter()
@@ -620,7 +644,7 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str]) -> Vec<Step> {
         Err(_) if ids.len() > 1 => {
             return ids
                 .iter()
-                .flat_map(|id| mcp_chunk(ctx, target, &[id]))
+                .flat_map(|id| mcp_chunk(ctx, target, &[id], write))
                 .collect()
         }
         Err(error) if error.kind == ErrorKind::InvalidInput => {
@@ -638,7 +662,11 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str]) -> Vec<Step> {
         .collect();
     steps.resize(ids.len(), Some(Step::because(Status::Failed, "no_preview")));
     let eligible: Vec<usize> = (0..ids.len()).filter(|i| steps[*i].is_none()).collect();
-    if !eligible.is_empty() {
+    if !write {
+        for index in &eligible {
+            steps[*index] = Some(Step::of(Status::NotApplied));
+        }
+    } else if !eligible.is_empty() {
         let eligible_ids: Vec<&str> = eligible.iter().map(|i| ids[*i]).collect();
         let applied = preview(&eligible_ids, false).and_then(|stored| {
             mcps::dispatch(
@@ -685,7 +713,7 @@ fn change_kinds(preview: &Value) -> Vec<&str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -699,14 +727,14 @@ mod tests {
 
     /// A library with one custom agent, `agent_a` (`.a/skills`), and a
     /// registered project at `work/app`.
-    struct Fixture {
-        repo: TestRepo,
-        ctx: HostCtx,
-        checkout: PathBuf,
+    pub(crate) struct Fixture {
+        pub repo: TestRepo,
+        pub ctx: HostCtx,
+        pub checkout: PathBuf,
     }
 
     impl Fixture {
-        fn new() -> Self {
+        pub fn new() -> Self {
             let repo = test_repo();
             let tmp = repo._tmp.path();
             let store = SkillStore::new(&tmp.join("repo/test.db")).unwrap();
@@ -744,7 +772,7 @@ mod tests {
             }
         }
 
-        fn skill(&self, id: &str, name: &str) -> PathBuf {
+        pub fn skill(&self, id: &str, name: &str) -> PathBuf {
             let dir = write_skill_dir(name);
             self.ctx
                 .store
@@ -753,7 +781,7 @@ mod tests {
             dir
         }
 
-        fn instruction(&self, files: Value) -> String {
+        pub fn instruction(&self, files: Value) -> String {
             let saved = self.request(
                 "instructions_request",
                 json!({ "action": "save", "name": "Rules", "files": files }),
@@ -761,7 +789,7 @@ mod tests {
             saved["item"]["id"].as_str().unwrap().to_owned()
         }
 
-        fn mcp(&self, name: &str) -> Value {
+        pub fn mcp(&self, name: &str) -> Value {
             let saved = self.request(
                 "mcps_request",
                 json!({ "action": "save", "definition": {
@@ -771,11 +799,11 @@ mod tests {
             saved["definition"].clone()
         }
 
-        fn request(&self, command: &str, request: Value) -> Value {
+        pub fn request(&self, command: &str, request: Value) -> Value {
             dispatch(&self.ctx, command, &json!({ "request": request })).unwrap()
         }
 
-        fn save_setup(&self, items: Value) {
+        pub fn save_setup(&self, items: Value) {
             super::super::save_setup(
                 &self.ctx.store,
                 "p1",
@@ -785,11 +813,11 @@ mod tests {
             .unwrap();
         }
 
-        fn apply(&self, operation_id: &str) -> Result<Value, AppError> {
+        pub fn apply(&self, operation_id: &str) -> Result<Value, AppError> {
             self.apply_with(json!({ "operation_id": operation_id }))
         }
 
-        fn apply_with(&self, args: Value) -> Result<Value, AppError> {
+        pub fn apply_with(&self, args: Value) -> Result<Value, AppError> {
             let mut request = json!({ "action": "apply", "checkout_path": self.checkout });
             request
                 .as_object_mut()
@@ -802,19 +830,19 @@ mod tests {
             )
         }
 
-        fn path(&self, relative: &str) -> PathBuf {
+        pub fn path(&self, relative: &str) -> PathBuf {
             self.checkout.join(relative)
         }
     }
 
-    fn approved(definition: &Value) -> Value {
+    pub(crate) fn approved(definition: &Value) -> Value {
         json!({ "transport": definition["transport"], "server": definition["server"],
                 "auth": definition.get("auth") })
     }
 
     /// One of each kind: a Skill for agent_a, and an Instruction bundle and an
     /// MCP connection for Claude Code.
-    fn one_of_each(fixture: &Fixture) -> (PathBuf, Value) {
+    pub(crate) fn one_of_each(fixture: &Fixture) -> (PathBuf, Value) {
         let library = fixture.skill("s1", "review");
         let bundle = fixture.instruction(json!({ "CLAUDE.md": "Be brief.\n" }));
         let mcp = fixture.mcp("docs");
@@ -859,7 +887,7 @@ mod tests {
 
     /// Every file and link under the checkout, plus the store's deployment
     /// records, to prove a call wrote nothing.
-    fn destinations(fixture: &Fixture) -> Vec<(PathBuf, String)> {
+    pub(crate) fn destinations(fixture: &Fixture) -> Vec<(PathBuf, String)> {
         let mut found = Vec::new();
         let mut pending = vec![fixture.checkout.clone()];
         while let Some(dir) = pending.pop() {
@@ -885,7 +913,7 @@ mod tests {
         found
     }
 
-    fn item<'a>(result: &'a Value, kind: &str) -> &'a Value {
+    pub(crate) fn item<'a>(result: &'a Value, kind: &str) -> &'a Value {
         result["items"]
             .as_array()
             .unwrap()

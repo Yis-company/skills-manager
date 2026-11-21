@@ -30,6 +30,7 @@ const INVALID_PARAMS: i64 = -32602;
 
 const DISCOVER: &str = "discover_project_setup";
 const APPLY: &str = "apply_project_setup";
+const INSPECT: &str = "inspect_project_setup_result";
 
 /// How the server reaches the library: read-only, and writable on demand.
 pub struct Library<'a> {
@@ -95,7 +96,7 @@ fn answer(ctx: &Library, message: &Value) -> Option<Value> {
     let result = match method {
         "initialize" => Ok(initialize(params)),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": [discover_tool(), apply_tool()] })),
+        "tools/list" => Ok(json!({ "tools": [discover_tool(), apply_tool(), inspect_tool()] })),
         "tools/call" => call_tool(ctx, params),
         _ => Err((METHOD_NOT_FOUND, format!("Method not found: {method}"))),
     };
@@ -125,7 +126,8 @@ fn initialize(params: &Value) -> Value {
         },
         "instructions": "Pass the active checkout's absolute path to discover_project_setup \
             to read its Project setup, and to apply_project_setup to apply and verify it. \
-            A linked worktree is its own checkout.",
+            After a lost reply or an unclear result, inspect_project_setup_result reads it \
+            back without writing. A linked worktree is its own checkout.",
     })
 }
 
@@ -136,6 +138,7 @@ fn call_tool(ctx: &Library, params: &Value) -> Result<Value, (i64, String)> {
     let action = match name {
         DISCOVER => "discover",
         APPLY => "apply",
+        INSPECT => "inspect",
         _ => return Err((INVALID_PARAMS, format!("Unknown tool: {name}"))),
     };
     let mut request = match &params["arguments"] {
@@ -356,6 +359,100 @@ fn apply_tool() -> Value {
         },
         "annotations": {
             "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+        },
+    })
+}
+
+fn inspect_tool() -> Value {
+    let count = json!({ "type": "integer", "minimum": 0 });
+    json!({
+        "name": INSPECT,
+        "title": "Inspect Project setup result",
+        "description": "Read back an apply_project_setup operation on this computer without \
+            writing or resubmitting: its recorded result, and the checkout's current state \
+            against its saved setup. A missing receipt, or one with no recorded result, is \
+            outcome_unknown; a matching checkout is reported as verified state, not as this \
+            operation's change. Per-item results come only with evidence: true.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "checkout_path": {
+                    "type": "string",
+                    "description": "Absolute path of the checkout the operation targeted.",
+                },
+                "operation_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "description": "The operation_id passed to apply_project_setup.",
+                },
+                "evidence": {
+                    "type": "boolean",
+                    "description": "Include the recorded and current per-item results.",
+                },
+            },
+            "required": ["checkout_path", "operation_id"],
+            "additionalProperties": false,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "operation_id": { "type": "string" },
+                "host": { "type": "string" },
+                "checkout_path": { "type": "string" },
+                "project_id": { "type": "string" },
+                "outcome": {
+                    "type": "string",
+                    "enum": ["verified_changed", "verified_no_change", "attention_needed", "outcome_unknown"],
+                },
+                "receipt": {
+                    "type": "string",
+                    "enum": ["result", "intent_only", "missing"],
+                    "description": "What this host recorded for the operation_id.",
+                },
+                "recorded": {
+                    "type": ["object", "null"],
+                    "description": "The recorded apply result, when there is one.",
+                },
+                "destination": {
+                    "type": ["object", "null"],
+                    "description": "The checkout's current state against its saved setup; \
+                        null when there is no saved setup.",
+                    "properties": {
+                        "setup_version": { "type": "integer" },
+                        "state": { "type": "string", "enum": ["matches", "differs"] },
+                        "counts": {
+                            "type": "object",
+                            "properties": {
+                                "unchanged": count, "not_applied": count, "needs_review": count,
+                                "blocked": count, "missing": count, "failed": count,
+                            },
+                            "required": ["unchanged", "not_applied", "needs_review", "blocked", "missing", "failed"],
+                        },
+                        "items": {
+                            "type": "array",
+                            "description": "Only with evidence: true.",
+                        },
+                    },
+                    "required": ["setup_version", "state", "counts"],
+                },
+                "recovery_possible": {
+                    "type": "boolean",
+                    "description": "Some items are not applied, and apply under a new \
+                        operation_id would set them up.",
+                },
+                "next_action": { "type": "string" },
+            },
+            "required": [
+                "operation_id", "host", "checkout_path", "project_id", "outcome", "receipt",
+                "recorded", "destination", "recovery_possible", "next_action",
+            ],
+        },
+        "annotations": {
+            "readOnlyHint": true,
             "destructiveHint": false,
             "idempotentHint": true,
             "openWorldHint": false,

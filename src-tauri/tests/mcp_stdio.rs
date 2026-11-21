@@ -172,7 +172,7 @@ fn the_handshake_matches_what_codex_and_claude_code_send() {
         assert_eq!(init["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
 
         let tools = reply(&lines, 2)["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         let tool = &tools[0];
         assert_eq!(tool["name"], "discover_project_setup");
         assert_eq!(tool["inputSchema"]["type"], "object");
@@ -186,6 +186,13 @@ fn the_handshake_matches_what_codex_and_claude_code_send() {
             json!(["checkout_path", "operation_id"])
         );
         assert_eq!(apply["annotations"]["readOnlyHint"], false);
+        let inspect = &tools[2];
+        assert_eq!(inspect["name"], "inspect_project_setup_result");
+        assert_eq!(
+            inspect["inputSchema"]["required"],
+            json!(["checkout_path", "operation_id"])
+        );
+        assert_eq!(inspect["annotations"]["readOnlyHint"], true);
 
         assert_eq!(reply(&lines, 3)["result"], json!({}));
         assert_eq!(reply(&lines, 4)["error"]["code"], -32601);
@@ -310,7 +317,7 @@ fn a_failed_discovery_is_a_tool_error_the_agent_can_read() {
 }
 
 #[test]
-fn apply_sets_up_a_saved_mcp_connection_and_a_retry_answers_from_its_receipt() {
+fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_writing() {
     let machine = Machine::new();
     let saved = machine
         .cli()
@@ -373,4 +380,29 @@ fn apply_sets_up_a_saved_mcp_connection_and_a_retry_answers_from_its_receipt() {
     let retry = &reply(&lines, 2)["result"]["structuredContent"];
     assert_eq!(retry["from_receipt"], true);
     assert_eq!(retry["outcome"], "verified_changed");
+
+    let inspect = |id, operation_id| {
+        request(
+            id,
+            "tools/call",
+            json!({ "name": "inspect_project_setup_result",
+                    "arguments": { "checkout_path": checkout, "operation_id": operation_id } }),
+        )
+    };
+    let before = (snapshot(&machine.base()), snapshot(&checkout));
+    let lines = machine.mcp(&[inspect(3, "op-1"), inspect(4, "op-unknown")]);
+
+    let recorded = &reply(&lines, 3)["result"];
+    assert_eq!(recorded["isError"], false, "{recorded}");
+    assert_eq!(recorded["structuredContent"]["outcome"], "verified_changed");
+    assert_eq!(
+        recorded["structuredContent"]["destination"]["state"],
+        "matches"
+    );
+    let unknown = &reply(&lines, 4)["result"]["structuredContent"];
+    assert_eq!(unknown["outcome"], "outcome_unknown");
+    assert_eq!(unknown["receipt"], "missing");
+    let after = (snapshot(&machine.base()), snapshot(&checkout));
+    assert_eq!(changed(&before.0, &after.0), Vec::<PathBuf>::new());
+    assert_eq!(changed(&before.1, &after.1), Vec::<PathBuf>::new());
 }
