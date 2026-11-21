@@ -9,8 +9,9 @@
 
 use serde_json::{json, Value};
 
-use super::apply::{check_saved, load_setup, Run, Status, RECEIPT_KIND};
+use super::apply::{load_setup, RECEIPT_KIND};
 use super::find_project;
+use super::items::{check_saved, Run, Status};
 use crate::core::error::AppError;
 use crate::core::git_backup_store::effective_device_name;
 use crate::core::host::HostCtx;

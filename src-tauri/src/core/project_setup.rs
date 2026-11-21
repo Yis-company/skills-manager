@@ -17,8 +17,10 @@ use crate::core::skill_store::{ProjectRecord, SkillStore};
 use crate::core::sync_service;
 
 mod apply;
+mod confirm;
 mod inspect;
-pub use apply::mcp_value;
+mod items;
+pub use items::mcp::mcp_value;
 
 /// Library options per page.
 pub const PAGE_SIZE: usize = 50;
@@ -43,7 +45,7 @@ pub struct SetupItem {
     /// Always explicit: an empty list never means every agent.
     pub agents: Vec<String>,
     /// For an MCP connection, the effective value the user approved, kept
-    /// verbatim. See [`apply::mcp_value`].
+    /// verbatim. See [`items::mcp::mcp_value`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved: Option<Value>,
 }
