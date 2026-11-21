@@ -94,12 +94,12 @@ pub(super) fn apply_instruction(
                 json!({ "action": "apply", "preview_id": stored["preview_id"] }),
             )?;
             if applied["status"] != "complete" {
-                return Ok(Step::because(Status::Failed, "apply_incomplete"));
+                return Ok(Step::failed("apply_incomplete", false));
             }
             Ok(if unchanged(&preview(true)?) {
                 Step::of(Status::Changed)
             } else {
-                Step::because(Status::Failed, "verification_failed")
+                Step::failed("verification_failed", false)
             })
         })
         .collect::<Result<Vec<_>, AppError>>()

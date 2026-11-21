@@ -58,7 +58,7 @@ pub(super) fn apply_mcps(run: &Run, agent: &str, batch: &[(usize, &SetupItem)]) 
     match pending {
         Ok(false) => {}
         Ok(true) => return vec![Step::because(Status::Blocked, "pending_recovery"); batch.len()],
-        Err(error) => return vec![Step::because(Status::Failed, error.message); batch.len()],
+        Err(error) => return vec![Step::error(error); batch.len()],
     }
     let ids: Vec<&str> = batch.iter().map(|(_, item)| item.id.as_str()).collect();
     ids.chunks(MCP_BATCH)
@@ -90,7 +90,7 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<St
         Err(error) if error.kind == ErrorKind::InvalidInput => {
             return vec![Step::because(Status::NeedsReview, error.message)]
         }
-        Err(error) => return vec![Step::because(Status::Failed, error.message)],
+        Err(error) => return vec![Step::error(error)],
     };
     let mut steps: Vec<Option<Step>> = change_kinds(&planned)
         .into_iter()
@@ -100,7 +100,7 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<St
             _ => Some(Step::because(Status::NeedsReview, "edited_here")),
         })
         .collect();
-    steps.resize(ids.len(), Some(Step::because(Status::Failed, "no_preview")));
+    steps.resize(ids.len(), Some(Step::failed("no_preview", false)));
     let eligible: Vec<usize> = (0..ids.len()).filter(|i| steps[*i].is_none()).collect();
     if !write {
         for index in &eligible {
@@ -122,15 +122,16 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<St
                         .map(|k| *k == "unchanged")
                         .collect::<Vec<_>>()
                 })
-                .map_err(|error| error.message),
-            Ok(_) => Err("apply_incomplete".to_owned()),
-            Err(error) => Err(error.message),
+                .map_err(Step::error),
+            // A partial write leaves a recovery that blocks a retry.
+            Ok(_) => Err(Step::failed("apply_incomplete", false)),
+            Err(error) => Err(Step::error(error)),
         };
         for (n, index) in eligible.iter().enumerate() {
             steps[*index] = Some(match &verified {
                 Ok(checks) if checks.get(n) == Some(&true) => Step::of(Status::Changed),
-                Ok(_) => Step::because(Status::Failed, "verification_failed"),
-                Err(message) => Step::because(Status::Failed, message.clone()),
+                Ok(_) => Step::failed("verification_failed", false),
+                Err(step) => step.clone(),
             });
         }
     }

@@ -414,9 +414,14 @@ fn apply_tool() -> Value {
                 "outcome": {
                     "type": "string",
                     "enum": [
-                        "verified_changed", "verified_no_change", "attention_needed",
-                        "outcome_unknown", "confirmation_needed",
+                        "verified_changed", "verified_no_change", "partial_success",
+                        "needs_review", "retryable_failure", "outcome_unknown",
+                        "confirmation_needed",
                     ],
+                    "description": "partial_success: some items changed, others need a \
+                        decision, retry or recovery. needs_review: nothing changed and an \
+                        item needs a decision or recovery. retryable_failure: nothing changed \
+                        and every unsettled item failed in a way a new apply may fix.",
                 },
                 "agents": { "type": "array", "items": { "type": "string" } },
                 "counts": {
@@ -448,6 +453,11 @@ fn apply_tool() -> Value {
                                 "enum": ["changed", "unchanged", "needs_review", "blocked", "missing", "failed"],
                             },
                             "reason": { "type": "string" },
+                            "retryable": {
+                                "type": "boolean",
+                                "description": "For a failed item: whether applying again \
+                                    may succeed with nothing else done first.",
+                            },
                         },
                         "required": ["kind", "id", "agents", "status"],
                     },
@@ -511,7 +521,10 @@ fn inspect_tool() -> Value {
                 "project_id": { "type": "string" },
                 "outcome": {
                     "type": "string",
-                    "enum": ["verified_changed", "verified_no_change", "attention_needed", "outcome_unknown"],
+                    "enum": [
+                        "verified_changed", "verified_no_change", "partial_success",
+                        "needs_review", "retryable_failure", "outcome_unknown",
+                    ],
                 },
                 "receipt": {
                     "type": "string",

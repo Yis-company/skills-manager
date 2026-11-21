@@ -47,17 +47,47 @@ pub(super) struct ItemResult {
     pub(super) status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) reason: Option<String>,
+    /// For a failure: whether applying again may succeed with nothing else
+    /// done first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) retryable: Option<bool>,
 }
 
 #[derive(Clone)]
-pub(super) struct Step(pub(super) Status, pub(super) Option<String>);
+pub(super) struct Step {
+    pub(super) status: Status,
+    pub(super) reason: Option<String>,
+    pub(super) retryable: bool,
+}
 
 impl Step {
     pub(super) fn of(status: Status) -> Self {
-        Self(status, None)
+        Self {
+            status,
+            reason: None,
+            retryable: false,
+        }
     }
     pub(super) fn because(status: Status, reason: impl Into<String>) -> Self {
-        Self(status, Some(reason.into()))
+        Self {
+            reason: Some(reason.into()),
+            ..Self::of(status)
+        }
+    }
+    /// A failure; `retryable` when applying again may succeed as it is.
+    pub(super) fn failed(reason: impl Into<String>, retryable: bool) -> Self {
+        Self {
+            retryable,
+            ..Self::because(Status::Failed, reason)
+        }
+    }
+    /// A failure from `error`: a database, file or network error may pass.
+    pub(super) fn error(error: AppError) -> Self {
+        let retryable = matches!(
+            error.kind,
+            ErrorKind::Database | ErrorKind::Io | ErrorKind::Network
+        );
+        Self::failed(error.message, retryable)
     }
 }
 
@@ -111,8 +141,7 @@ pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
                 Err(step) => Ok(step),
             },
         };
-        steps[index]
-            .push(step.unwrap_or_else(|error| Step::because(Status::Failed, error.message)));
+        steps[index].push(step.unwrap_or_else(Step::error));
     }
     queued.sort();
     for batch in queued.chunk_by(|a, b| a.0 == b.0) {
@@ -128,13 +157,14 @@ pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
     plan.iter()
         .zip(steps)
         .map(|(Planned { item, .. }, steps)| {
-            let Step(status, reason) = worst(steps);
+            let step = worst(steps);
             ItemResult {
                 kind: item.kind,
                 id: item.id.clone(),
                 agents: item.agents.clone(),
-                status,
-                reason,
+                status: step.status,
+                reason: step.reason,
+                retryable: (step.status == Status::Failed).then_some(step.retryable),
             }
         })
         .collect()
@@ -234,6 +264,6 @@ fn missing(error: AppError) -> Step {
 fn worst(steps: impl IntoIterator<Item = Step>) -> Step {
     steps
         .into_iter()
-        .max_by_key(|step| step.0)
+        .max_by_key(|step| step.status)
         .unwrap_or_else(|| Step::because(Status::Blocked, "no_supported_agent"))
 }

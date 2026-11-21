@@ -159,7 +159,7 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError>
         let failed = project_deploy::deploy_copy_mode(root, &configs, &source, &dir_name, &keys)
             .map_err(AppError::io)?;
         if let Some(failure) = failed.first() {
-            return Ok(Step::because(Status::Failed, failure.error.clone()));
+            return Ok(Step::failed(failure.error.clone(), true));
         }
     } else {
         let configured = ctx.store.get_setting("sync_mode").map_err(AppError::db)?;
@@ -178,6 +178,6 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError>
     Ok(if verified {
         Step::of(Status::Changed)
     } else {
-        Step::because(Status::Failed, "verification_failed")
+        Step::failed("verification_failed", false)
     })
 }

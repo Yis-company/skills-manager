@@ -224,24 +224,52 @@ pub(super) fn without_evidence(result: &mut Value, evidence: bool) {
     }
 }
 
+/// The outcome of a run and its next safe action. Changed and unchanged
+/// items are settled; any other item needs a decision, a retry or recovery.
+fn outcome(items: &[ItemResult]) -> (&'static str, &'static str) {
+    let changed = items.iter().any(|item| item.status == Status::Changed);
+    let mut unsettled = items
+        .iter()
+        .filter(|item| !matches!(item.status, Status::Changed | Status::Unchanged))
+        .peekable();
+    if unsettled.peek().is_none() {
+        return if changed {
+            (
+                "verified_changed",
+                "None: the changes were applied and verified.",
+            )
+        } else {
+            (
+                "verified_no_change",
+                "None: the checkout matches its saved setup.",
+            )
+        };
+    }
+    if changed {
+        return (
+            "partial_success",
+            "Independent items were applied and verified. Ask again with the same \
+             operation_id and evidence: true to list the items that need a decision, retry \
+             or recovery.",
+        );
+    }
+    if unsettled.all(|item| item.retryable == Some(true)) {
+        return (
+            "retryable_failure",
+            "Nothing was changed. Apply again under a new operation_id: apply checks each \
+             destination before writing and never overwrites edits.",
+        );
+    }
+    (
+        "needs_review",
+        "Nothing was changed. Ask again with the same operation_id and evidence: true to \
+         list the items that need a decision or recovery.",
+    )
+}
+
 pub(super) fn summarize(scope: &Value, operation_id: &str, items: &[ItemResult]) -> Value {
     let agents = sorted_agents(items.iter().map(|item| &item.agents));
-    let worst = items.iter().map(|item| item.status).max();
-    let (outcome, next_action) = match worst {
-        None | Some(Status::Unchanged) => (
-            "verified_no_change",
-            "None: the checkout matches its saved setup.",
-        ),
-        Some(Status::Changed) => (
-            "verified_changed",
-            "None: the changes were applied and verified.",
-        ),
-        Some(_) => (
-            "attention_needed",
-            "Independent items were applied. Ask again with the same operation_id and \
-             evidence: true to list the items that need a decision, retry or recovery.",
-        ),
-    };
+    let (outcome, next_action) = outcome(items);
     let mut notes = Vec::new();
     if items
         .iter()
@@ -504,7 +532,7 @@ pub(super) mod tests {
             .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
             .unwrap();
 
-        assert_eq!(result["outcome"], "attention_needed");
+        assert_eq!(result["outcome"], "partial_success");
         assert_eq!(item(&result, "skill")["status"], "needs_review");
         assert_eq!(item(&result, "skill")["reason"], "edited_here");
         assert_eq!(item(&result, "instruction")["status"], "needs_review");
@@ -657,7 +685,27 @@ pub(super) mod tests {
 
         assert_eq!(item(&result, "mcp")["status"], "needs_review");
         assert_eq!(item(&result, "mcp")["reason"], "value_changed");
+        assert_eq!(result["outcome"], "needs_review");
         assert!(!fixture.path(".mcp.json").exists());
+    }
+
+    #[test]
+    fn a_failed_write_with_nothing_changed_is_a_retryable_failure() {
+        let fixture = Fixture::new();
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        // A file where the agent's folder belongs makes the write fail.
+        std::fs::write(fixture.path(".a"), "not a folder").unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(result["outcome"], "retryable_failure", "{result}");
+        assert_eq!(item(&result, "skill")["status"], "failed");
+        assert_eq!(item(&result, "skill")["retryable"], true);
+        let next = result["next_action"].as_str().unwrap();
+        assert!(next.contains("new operation_id"), "{next}");
     }
 
     #[test]
@@ -707,6 +755,7 @@ pub(super) mod tests {
         assert_eq!(item(&result, "instruction")["reason"], "pending_recovery");
         assert_eq!(item(&result, "mcp")["reason"], "pending_recovery");
         assert_eq!(item(&result, "skill")["status"], "changed");
+        assert_eq!(result["outcome"], "partial_success");
         assert_eq!(
             store
                 .resource_state_get("instructions_journal", "j1")
