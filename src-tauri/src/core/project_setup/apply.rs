@@ -37,6 +37,10 @@ pub(super) struct Args {
     /// An earlier proposal, sent back with a `choice` on each decision.
     #[serde(default)]
     confirm: Option<Value>,
+    /// Agents for this run only, in place of each saved item's agents. The
+    /// saved setup is left as it is.
+    #[serde(default)]
+    agents: Option<Vec<String>>,
 }
 
 pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
@@ -73,6 +77,9 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         "project_id": proposal.project_id,
         "setup_version": proposal.setup_version,
     });
+    if let Some(agents) = &args.agents {
+        check_named_agents(&run, agents, args.items.is_some() || args.confirm.is_some())?;
+    }
     let plan = match (saved, args.items, &args.confirm) {
         (None, Some(items), None) => {
             proposal.decisions = items
@@ -95,13 +102,27 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         }
         (saved, None, Some(confirm)) => confirmed(&run, &proposal, saved, confirm)?,
         (Some(saved), None, None) => Plan {
-            items: saved.items.into_iter().map(Planned::new).collect(),
+            items: saved
+                .items
+                .into_iter()
+                .map(|item| match &args.agents {
+                    Some(agents) => SetupItem {
+                        agents: agents.clone(),
+                        ..item
+                    },
+                    None => item,
+                })
+                .map(Planned::new)
+                .collect(),
             save: false,
         },
     };
     let mut intent = scope.clone();
     if let Some(confirm) = &args.confirm {
         intent["confirm"] = confirm.clone();
+    }
+    if let Some(agents) = &args.agents {
+        intent["agents"] = json!(agents);
     }
 
     let claim = json!({ "version": 1, "intent": intent });
@@ -133,7 +154,13 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
     let mut result = summarize(&scope, operation_id, &results);
     proposal.project_id = Some(run.project.id.clone());
     proposal.register = false;
-    proposal.decisions = items
+    // Decisions are about the saved setup; agents named for one run are not.
+    let decided = if args.agents.is_some() {
+        &[][..]
+    } else {
+        &items[..]
+    };
+    proposal.decisions = decided
         .iter()
         .zip(&results)
         .filter_map(|(item, result)| {
@@ -151,6 +178,33 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
         .map_err(AppError::db)?;
     Ok(respond(result, false, evidence))
+}
+
+/// Agents named for one run: at least one, each able to have some kind of
+/// item set up here, and only with a saved setup.
+fn check_named_agents(run: &Run, agents: &[String], proposing: bool) -> Result<(), AppError> {
+    if proposing {
+        return Err(AppError::invalid_input(
+            "agents applies a saved setup for this run only; name agents in items or the \
+             proposal instead",
+        ));
+    }
+    if agents.is_empty() {
+        return Err(AppError::invalid_input(
+            "agents must name at least one agent; omit it to use the saved setup's agents",
+        ));
+    }
+    let kinds = [ItemKind::Skill, ItemKind::Instruction, ItemKind::Mcp];
+    match agents
+        .iter()
+        .find(|agent| !kinds.iter().any(|kind| run.supports(*kind, agent)))
+    {
+        Some(agent) => Err(AppError::invalid_input(format!(
+            "{agent} cannot have a Skill, Instruction bundle or MCP connection set up in this \
+             project"
+        ))),
+        None => Ok(()),
+    }
 }
 
 pub(super) fn load_setup(ctx: &HostCtx, project_id: &str) -> Result<Option<SavedSetup>, AppError> {
@@ -301,7 +355,7 @@ pub(super) mod tests {
 
     use serde_json::{json, Value};
 
-    use crate::core::error::AppError;
+    use crate::core::error::{AppError, ErrorKind};
     use crate::core::host::{HostCtx, NoopEvents};
     use crate::core::host_dispatch::dispatch;
     use crate::core::skill_store::{ProjectRecord, SkillStore};
@@ -636,6 +690,71 @@ pub(super) mod tests {
             ]
         );
         assert!(!fixture.path(".a").exists(), "nothing was deployed");
+    }
+
+    /// Adds `agent_b`, reading its own folder `.b/skills`.
+    fn with_agent_b(fixture: &Fixture) {
+        let tmp = fixture.repo._tmp.path();
+        let tools = json!([
+            { "key": "agent_a", "display_name": "Agent A", "skills_dir": tmp.join("agents/a/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+            { "key": "agent_b", "display_name": "Agent B", "skills_dir": tmp.join("agents/b/skills"),
+              "project_relative_skills_dir": ".b/skills" },
+        ]);
+        fixture
+            .ctx
+            .store
+            .set_setting("custom_tools", &tools.to_string())
+            .unwrap();
+        std::fs::create_dir_all(tmp.join("agents/b")).unwrap();
+    }
+
+    #[test]
+    fn agents_named_in_a_request_apply_to_that_run_only() {
+        let fixture = Fixture::new();
+        with_agent_b(&fixture);
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        let saved = || {
+            fixture
+                .ctx
+                .store
+                .resource_state_get("project_setup", "p1")
+                .unwrap()
+        };
+        let before = saved();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "agents": ["agent_b"] }))
+            .unwrap();
+
+        assert_eq!(result["outcome"], "verified_changed", "{result}");
+        assert_eq!(result["agents"], json!(["agent_b"]));
+        assert!(fixture.path(".b/skills/review").exists());
+        assert!(!fixture.path(".a").exists());
+        assert_eq!(saved(), before, "the saved setup is unchanged");
+        let reused = fixture.apply("op-1").unwrap_err();
+        assert!(
+            reused.message.contains("different request"),
+            "{}",
+            reused.message
+        );
+    }
+
+    #[test]
+    fn named_agents_must_be_known_and_never_mean_every_agent() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        let before = destinations(&fixture);
+
+        for agents in [json!([]), json!(["not_an_agent"])] {
+            let error = fixture
+                .apply_with(json!({ "operation_id": "op-1", "agents": agents }))
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::InvalidInput, "{}", error.message);
+        }
+
+        assert_eq!(destinations(&fixture), before);
     }
 
     #[test]

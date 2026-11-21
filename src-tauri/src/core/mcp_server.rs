@@ -391,6 +391,14 @@ fn apply_tool() -> Value {
                         "required": ["kind", "id", "agents"],
                     },
                 },
+                "agents": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1,
+                    "description": "Agents for this run only, in place of each saved item's \
+                        agents; the saved setup is unchanged. Omit to use the saved agents. \
+                        Not with items or confirm.",
+                },
                 "confirm": {
                     "type": "object",
                     "description": "A proposal returned earlier, with choice set on each \
