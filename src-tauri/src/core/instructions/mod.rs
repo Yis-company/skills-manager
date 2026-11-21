@@ -646,6 +646,14 @@ fn safe_file_path(s: &str) -> Result<PathBuf, AppError> {
     Ok(p)
 }
 
+/// The agents that read a bundle file at `path` in a project.
+pub fn project_file_readers(path: &str) -> impl Iterator<Item = &'static str> + '_ {
+    AGENT_DIRS
+        .iter()
+        .map(|(agent, _)| *agent)
+        .filter(move |agent| supported_instruction_file(agent, path, true))
+}
+
 fn supported_instruction_file(agent: &str, path: &str, project: bool) -> bool {
     let p = Path::new(path);
     let name = p.file_name().and_then(|v| v.to_str()).unwrap_or("");

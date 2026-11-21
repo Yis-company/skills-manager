@@ -29,6 +29,8 @@ pub const PAGE_SIZE: usize = 50;
 pub const MAX_CANDIDATES: usize = 10;
 /// The most items a saved setup, a proposal or a confirmation may hold.
 pub const MAX_ITEMS: usize = 500;
+/// The most agents one item, or one run, may name.
+pub const MAX_AGENTS: usize = 64;
 /// The `resource_state` kind that holds each project's saved setup.
 const SETUP_KIND: &str = "project_setup";
 
@@ -47,13 +49,14 @@ pub struct SetupItem {
     pub id: String,
     /// Always explicit: an empty list never means every agent.
     pub agents: Vec<String>,
-    /// For an MCP connection, the effective value the user approved, kept
-    /// verbatim. See [`items::mcp::mcp_value`].
+    /// For an MCP connection, the effective value the user approved for each
+    /// agent, by agent key, kept verbatim. See [`items::mcp::mcp_value`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved: Option<Value>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Ordered as the Library lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemKind {
     Skill,
@@ -96,6 +99,16 @@ fn check_size(items: usize) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Refuse a list of more than [`MAX_AGENTS`] agents.
+fn check_agents(agents: usize) -> Result<(), AppError> {
+    if agents > MAX_AGENTS {
+        return Err(AppError::invalid_input(format!(
+            "An item or a run names at most {MAX_AGENTS} agents; this one names {agents}"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 enum Request {
@@ -113,10 +126,23 @@ enum Request {
     },
 }
 
+fn parse(request: Value) -> Result<Request, AppError> {
+    serde_json::from_value(request)
+        .map_err(|e| AppError::invalid_input(format!("Invalid Project setup request: {e}")))
+}
+
+/// Whether `request` may write, checked on `ctx` without writing: false for
+/// discovery, inspection and a first setup's proposal, and an error for an
+/// apply that cannot run.
+pub fn writes(ctx: &HostCtx, request: &Value) -> Result<bool, AppError> {
+    match parse(request.clone())? {
+        Request::Apply(args) => apply::writes(ctx, &args),
+        Request::Discover { .. } | Request::Inspect { .. } => Ok(false),
+    }
+}
+
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
-    let request: Request = serde_json::from_value(request)
-        .map_err(|e| AppError::invalid_input(format!("Invalid Project setup request: {e}")))?;
-    match request {
+    match parse(request)? {
         Request::Discover {
             checkout_path,
             cursor,
@@ -232,38 +258,74 @@ fn project_json(project: &ProjectRecord, path: &Path) -> Value {
 }
 
 /// One page of Skills, Instruction bundles and MCP connections, in that
-/// order. The cursor is the offset of the page's first item.
+/// order and by ID within each kind. The cursor is the last item's kind and
+/// ID, `kind:id`, so items added or removed elsewhere never shift a page.
+/// Skills are paged in the store; a kind is read only when the page reaches it.
 fn library_page(ctx: &HostCtx, cursor: Option<&str>) -> Result<Value, AppError> {
-    let start: usize = match cursor {
-        None => 0,
-        Some(cursor) => cursor
-            .parse()
-            .map_err(|_| AppError::invalid_input("Invalid Library cursor"))?,
+    let after: Option<(ItemKind, &str)> = match cursor {
+        None => None,
+        Some(cursor) => {
+            let invalid = || AppError::invalid_input("Invalid Library cursor");
+            let (kind, id) = cursor.split_once(':').ok_or_else(invalid)?;
+            let kind = serde_json::from_value(json!(kind)).map_err(|_| invalid())?;
+            Some((kind, id))
+        }
     };
-    let option =
-        |kind: &str, item: &Value| json!({ "kind": kind, "id": item["id"], "name": item["name"] });
-    let mut items: Vec<Value> = ctx
-        .store
-        .get_all_skills()
-        .map_err(AppError::db)?
+    // One more than a page, to tell whether another page follows.
+    let mut items: Vec<(ItemKind, String, Value)> = Vec::new();
+    for kind in [ItemKind::Skill, ItemKind::Instruction, ItemKind::Mcp] {
+        let after_id = match after {
+            Some((last, _)) if kind < last => continue,
+            Some((last, id)) if kind == last => Some(id),
+            _ => None,
+        };
+        let wanted = PAGE_SIZE + 1 - items.len();
+        if wanted == 0 {
+            break;
+        }
+        let found: Vec<(String, Value)> = match kind {
+            ItemKind::Skill => ctx
+                .store
+                .get_skills_after(after_id, wanted)
+                .map_err(AppError::db)?
+                .into_iter()
+                .map(|skill| (skill.id, json!(skill.name)))
+                .collect(),
+            ItemKind::Instruction => {
+                let reply = crate::core::instructions::dispatch(ctx, json!({ "action": "list" }))?;
+                listed_after(&reply["items"], after_id, wanted)
+            }
+            ItemKind::Mcp => {
+                let reply = crate::core::mcps::dispatch(ctx, json!({ "action": "list" }))?;
+                listed_after(&reply["definitions"], after_id, wanted)
+            }
+        };
+        items.extend(found.into_iter().map(|(id, name)| (kind, id, name)));
+    }
+    let next_cursor = (items.len() > PAGE_SIZE).then(|| {
+        items.truncate(PAGE_SIZE);
+        let (kind, id, _) = &items[PAGE_SIZE - 1];
+        format!("{}:{id}", json!(kind).as_str().unwrap_or_default())
+    });
+    let items: Vec<Value> = items
         .into_iter()
-        .map(|skill| json!({ "kind": "skill", "id": skill.id, "name": skill.name }))
+        .map(|(kind, id, name)| json!({ "kind": kind, "id": id, "name": name }))
         .collect();
-    let instructions = crate::core::instructions::dispatch(ctx, json!({ "action": "list" }))?;
-    items.extend(listed(&instructions, "items").map(|item| option("instruction", item)));
-    let mcps = crate::core::mcps::dispatch(ctx, json!({ "action": "list" }))?;
-    items.extend(listed(&mcps, "definitions").map(|item| option("mcp", item)));
-
-    let end = items.len().min(start.saturating_add(PAGE_SIZE));
-    let next_cursor = (end < items.len()).then(|| end.to_string());
-    Ok(json!({
-        "items": items.get(start..end).unwrap_or_default(),
-        "next_cursor": next_cursor,
-    }))
+    Ok(json!({ "items": items, "next_cursor": next_cursor }))
 }
 
-fn listed<'a>(reply: &'a Value, key: &str) -> impl Iterator<Item = &'a Value> {
-    reply[key].as_array().into_iter().flatten()
+/// Up to `limit` of `listed`'s items after `after`, by ID, as ID and name.
+fn listed_after(listed: &Value, after: Option<&str>, limit: usize) -> Vec<(String, Value)> {
+    let mut items: Vec<(String, Value)> = listed
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| Some((item["id"].as_str()?.to_owned(), item["name"].clone())))
+        .filter(|(id, _)| after.is_none_or(|after| id.as_str() > after))
+        .collect();
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    items.truncate(limit);
+    items
 }
 
 #[cfg(test)]
@@ -438,6 +500,39 @@ mod tests {
         assert_eq!(rest.len(), 5);
         assert_eq!(rest[4]["id"], "s54");
         assert_eq!(second["library"]["next_cursor"], Value::Null);
+    }
+
+    #[test]
+    fn a_library_cursor_stays_put_when_an_earlier_item_is_added() {
+        let host = Host::new();
+        let checkout = host.dir("app");
+        for n in 0..55 {
+            let name = format!("skill-{n:02}");
+            let dir = write_skill_dir(&name);
+            host.repo
+                .store
+                .insert_skill(&sample_skill(&format!("s{n:02}"), &name, &dir))
+                .unwrap();
+        }
+        let first = host.discover(json!({ "checkout_path": checkout })).unwrap();
+        let dir = write_skill_dir("early");
+        host.repo
+            .store
+            .insert_skill(&sample_skill("a00", "early", &dir))
+            .unwrap();
+
+        let cursor = first["library"]["next_cursor"].clone();
+        let second = host
+            .discover(json!({ "checkout_path": checkout, "cursor": cursor }))
+            .unwrap();
+
+        let ids: Vec<&Value> = second["library"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| &item["id"])
+            .collect();
+        assert_eq!(ids, ["s50", "s51", "s52", "s53", "s54"]);
     }
 
     #[test]

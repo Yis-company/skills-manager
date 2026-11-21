@@ -9,11 +9,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::apply::{respond, summarize};
+use super::apply::{respond, summarize, Outcome};
 use super::items::instruction::instruction_deletes;
-use super::items::mcp::mcp_value;
-use super::items::skill::with_readers;
-use super::items::{sorted_agents, Planned, Run, Status, Step};
+use super::items::mcp::{approval, effective_values};
+use super::items::{sorted_agents, with_readers, Planned, Run, Status, Step};
 use super::{save_setup, ItemKind, SavedSetup, SetupItem};
 use crate::commands::projects::add_project_core;
 use crate::core::error::AppError;
@@ -41,8 +40,9 @@ pub(super) struct Decision {
     agents: Vec<String>,
     reason: Reason,
     name: Option<String>,
-    /// What approving saves: the item for a first setup, the MCP value, the
-    /// full agent list, or the files an Instruction bundle would delete.
+    /// What approving saves: the item for a first setup, the MCP values by
+    /// agent, the full agent list, or the files an Instruction bundle would
+    /// delete.
     proposed: Value,
     choices: Vec<Choice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,12 +65,16 @@ pub(super) enum Reason {
 }
 
 impl Reason {
-    /// The decision an item result's `reason` asks for, when a confirmation
-    /// can resolve it.
-    pub(super) fn of_result(reason: &str) -> Option<Self> {
-        serde_json::from_value(json!(reason))
-            .ok()
-            .filter(|reason| *reason != Self::FirstSetup)
+    /// The name an item result's `reason` carries.
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::FirstSetup => "first_setup",
+            Self::ApprovalNeeded => "approval_needed",
+            Self::ValueChanged => "value_changed",
+            Self::UnapprovedAgents => "unapproved_agents",
+            Self::WouldDelete => "would_delete",
+            Self::ConfirmedAbsent => "confirmed_absent",
+        }
     }
 }
 
@@ -100,7 +104,7 @@ pub(super) fn propose(scope: &Value, operation_id: &str, proposal: Proposal) -> 
     result["agents"] = json!(sorted_agents(
         proposal.decisions.iter().map(|decision| &decision.agents)
     ));
-    result["outcome"] = json!("confirmation_needed");
+    result["outcome"] = json!(Outcome::ConfirmationNeeded);
     result["next_action"] = json!(CONFIRM);
     result["proposal"] = json!(proposal);
     respond(result, false, false)
@@ -235,7 +239,10 @@ pub(super) fn confirmed(
                     }
                     *item = replacement;
                 }
-                (Reason::WouldDelete, _) => *deletes_approved = true,
+                (Reason::WouldDelete, _) => {
+                    *deletes_approved = serde_json::from_value(decision.proposed.clone())
+                        .map_err(|e| AppError::invalid_input(format!("Invalid files: {e}")))?;
+                }
                 (Reason::UnapprovedAgents, _) => {
                     item.agents = serde_json::from_value(decision.proposed.clone())
                         .map_err(|e| AppError::invalid_input(format!("Invalid agents: {e}")))?;
@@ -274,27 +281,33 @@ pub(super) fn decide(
         ),
         (_, _, None) => return Ok(None),
         (Reason::FirstSetup, kind, Some(record)) => {
+            let agents = with_readers(run, item)?;
+            let approved = match kind {
+                ItemKind::Mcp => {
+                    let item = SetupItem {
+                        agents: agents.clone(),
+                        ..item.clone()
+                    };
+                    Some(effective_values(run, &item, record)?)
+                }
+                _ => None,
+            };
             let item = SetupItem {
-                agents: with_readers(run, item),
-                approved: (kind == ItemKind::Mcp).then(|| mcp_value(record)),
+                agents,
+                approved,
                 ..item.clone()
             };
             (json!(item), approve())
         }
         (Reason::ApprovalNeeded | Reason::ValueChanged, ItemKind::Mcp, Some(record)) => {
-            let value = mcp_value(record);
-            let current = match &item.approved {
-                None => Reason::ApprovalNeeded,
-                Some(approved) if *approved != value => Reason::ValueChanged,
-                Some(_) => return Ok(None),
-            };
-            if current != reason {
+            let effective = effective_values(run, item, record)?;
+            if approval(item, &effective) != Some(reason) {
                 return Ok(None);
             }
-            (value, approve())
+            (effective, approve())
         }
-        (Reason::UnapprovedAgents, ItemKind::Skill, Some(_)) => {
-            let agents = with_readers(run, item);
+        (Reason::UnapprovedAgents, ItemKind::Skill | ItemKind::Instruction, Some(_)) => {
+            let agents = with_readers(run, item)?;
             if agents == item.agents {
                 return Ok(None);
             }
@@ -327,9 +340,9 @@ pub(super) fn decide(
 fn library_item(run: &Run, item: &SetupItem) -> Result<Option<Value>, AppError> {
     Ok(match item.kind {
         ItemKind::Skill => run
-            .skill(&item.id)
+            .skill(&item.id)?
             .map(|skill| json!({ "name": skill.name })),
         ItemKind::Instruction => run.instruction(&item.id)?.cloned(),
-        ItemKind::Mcp => run.mcp_definition(&item.id).cloned(),
+        ItemKind::Mcp => run.mcp_definition(&item.id)?.cloned(),
     })
 }

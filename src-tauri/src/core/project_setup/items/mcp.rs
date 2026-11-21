@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
-use super::{Run, Status, Step};
-use crate::core::error::ErrorKind;
+use super::{Reason, Run, Status, Step};
+use crate::core::error::{AppError, ErrorKind};
 use crate::core::host::HostCtx;
 use crate::core::mcps;
 use crate::core::project_setup::{ItemKind, SetupItem};
@@ -19,10 +19,58 @@ pub fn mcp_value(definition: &Value) -> Value {
     })
 }
 
+/// What each of the item's agents would run, by agent key: the Library's
+/// value with any override that agent's existing deployment applies here.
+pub(in crate::core::project_setup) fn effective_values(
+    run: &Run,
+    item: &SetupItem,
+    definition: &Value,
+) -> Result<Value, AppError> {
+    let mut values = serde_json::Map::new();
+    for agent in item
+        .agents
+        .iter()
+        .filter(|a| run.supports(ItemKind::Mcp, a))
+    {
+        let mut value = mcp_value(definition);
+        if let Some(server) = run.mcp_override(agent, &item.id)?.map(|o| &o["server"]) {
+            for (key, field) in server.as_object().into_iter().flatten() {
+                value["server"][key] = field.clone();
+            }
+        }
+        values.insert(agent.clone(), value);
+    }
+    Ok(values.into())
+}
+
+/// The decision the item's approval needs now, if any: every agent's
+/// effective value must be the one approved for it.
+pub(in crate::core::project_setup) fn approval(
+    item: &SetupItem,
+    effective: &Value,
+) -> Option<Reason> {
+    let Some(approved) = &item.approved else {
+        return Some(Reason::ApprovalNeeded);
+    };
+    let values = effective.as_object()?;
+    if values
+        .iter()
+        .any(|(agent, value)| approved.get(agent).is_some_and(|a| a != value))
+    {
+        return Some(Reason::ValueChanged);
+    }
+    values
+        .keys()
+        .any(|agent| approved.get(agent).is_none())
+        .then_some(Reason::ApprovalNeeded)
+}
+
 /// The agents to set an MCP connection up for, or why none can be.
 pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step> {
-    let Some(definition) = run.mcp_definition(&item.id) else {
-        return Err(Step::because(Status::Missing, "confirmed_absent"));
+    let definition = match run.mcp_definition(&item.id) {
+        Ok(Some(definition)) => definition,
+        Ok(None) => return Err(Step::asks(Status::Missing, Reason::ConfirmedAbsent)),
+        Err(error) => return Err(Step::error(error)),
     };
     let agents: Vec<String> = item
         .agents
@@ -33,12 +81,10 @@ pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step
     if agents.is_empty() {
         return Err(Step::because(Status::Blocked, "no_supported_agent"));
     }
-    match &item.approved {
-        None => Err(Step::because(Status::NeedsReview, "approval_needed")),
-        Some(approved) if *approved != mcp_value(definition) => {
-            Err(Step::because(Status::NeedsReview, "value_changed"))
-        }
-        Some(_) => Ok(agents),
+    let effective = effective_values(run, item, definition).map_err(Step::error)?;
+    match approval(item, &effective) {
+        Some(reason) => Err(Step::asks(Status::NeedsReview, reason)),
+        None => Ok(agents),
     }
 }
 
@@ -139,13 +185,15 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<St
 }
 
 /// One kind per operation, in order. `update` with equal summaries is an
-/// entry that already matches.
+/// entry that already matches, unless it matches only because an edit there
+/// was kept.
 fn change_kinds(preview: &Value) -> Vec<&str> {
     preview["changes"]
         .as_array()
         .into_iter()
         .flatten()
         .map(|change| match change["kind"].as_str() {
+            Some("update") if change["keptEdits"] == true => "kept_edits",
             Some("update") if change["beforeSummary"] == change["afterSummary"] => "unchanged",
             Some(kind) => kind,
             None => "",

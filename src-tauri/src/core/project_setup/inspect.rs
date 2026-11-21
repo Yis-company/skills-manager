@@ -5,14 +5,16 @@
 //! never repairs a receipt. A receipt with no result, or no receipt at all,
 //! is Outcome unknown: a missing receipt is not proof that nothing was
 //! written. A destination that matches is reported as verified state, never
-//! as this operation's change.
+//! as this operation's change. The destination is checked for the items and
+//! agents the operation ran, as its receipt records them, and otherwise for
+//! the saved setup. A checkout that is not registered has no destination.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::apply::{load_setup, without_evidence, RECEIPT_KIND};
-use super::find_project;
-use super::items::{check_saved, counts, Run, Status};
+use super::apply::{load_setup, receipt as find_receipt, without_evidence, Outcome};
+use super::items::{check_setup, counts, Run, Status};
+use super::{find_project, SetupItem};
 use crate::core::error::AppError;
 use crate::core::git_backup_store::effective_device_name;
 use crate::core::host::HostCtx;
@@ -34,14 +36,8 @@ pub(super) fn inspect(
     evidence: bool,
 ) -> Result<Value, AppError> {
     let (checkout, project) = find_project(ctx, checkout_path)?;
-    let project = project.ok_or_else(|| {
-        AppError::invalid_input("This checkout is not a registered project; discover it first")
-    })?;
     let host = effective_device_name(&ctx.store);
-    let receipt = ctx
-        .store
-        .resource_state_get(RECEIPT_KIND, operation_id)
-        .map_err(AppError::db)?;
+    let receipt = find_receipt(ctx, operation_id)?;
     if let Some(receipt) = &receipt {
         let intent = &receipt["intent"];
         if intent["host"] != host.as_str() || intent["checkout_path"] != json!(checkout) {
@@ -55,14 +51,22 @@ pub(super) fn inspect(
         Some(receipt) if receipt["result"].is_object() => ReceiptState::Result,
         Some(_) => ReceiptState::IntentOnly,
     };
+    let targets: Option<Vec<SetupItem>> = receipt
+        .as_ref()
+        .and_then(|receipt| serde_json::from_value(receipt["targets"].clone()).ok());
     let mut recorded = receipt.map_or(Value::Null, |receipt| receipt["result"].clone());
     without_evidence(&mut recorded, evidence);
 
-    let project_id = project.id.clone();
-    let (destination, holds, recovery_possible) = match load_setup(ctx, &project.id)? {
-        None => (Value::Null, false, false),
-        Some(setup) => {
-            let items = check_saved(&Run::new(ctx, project, false)?, &setup);
+    let project_id = project.as_ref().map(|project| project.id.clone());
+    let setup = match &project {
+        Some(project) => load_setup(ctx, &project.id)?,
+        None => None,
+    };
+    let (destination, holds, recovery_possible) = match (project, setup) {
+        (None, _) | (_, None) => (Value::Null, false, false),
+        (Some(project), Some(setup)) => {
+            let checked = targets.as_deref().unwrap_or(&setup.items);
+            let items = check_setup(&Run::new(ctx, project, false)?, checked);
             let count = |status| items.iter().filter(|item| item.status == status).count();
             let holds = count(Status::Unchanged) == items.len();
             let mut destination = json!({
@@ -83,7 +87,9 @@ pub(super) fn inspect(
     };
 
     let next_action = match (receipt_state, holds, recovery_possible) {
-        _ if destination.is_null() => "Discover this checkout: it has no saved Project setup.",
+        (ReceiptState::Result, _, _) if destination.is_null() => {
+            "Discover this checkout: it has no saved Project setup."
+        }
         (ReceiptState::Result, true, _) => "None: the checkout matches its saved setup.",
         (_, true, _) => {
             "None: the checkout matches its saved setup. This operation's own effect is \
@@ -105,7 +111,7 @@ pub(super) fn inspect(
     };
     let outcome = match receipt_state {
         ReceiptState::Result => recorded["outcome"].clone(),
-        _ => json!("outcome_unknown"),
+        _ => json!(Outcome::Unknown),
     };
     Ok(json!({
         "operation_id": operation_id,
@@ -127,7 +133,7 @@ mod tests {
 
     use serde_json::{json, Value};
 
-    use super::super::apply::tests::{destinations, item, one_of_each, Fixture};
+    use super::super::apply::tests::{destinations, item, one_of_each, with_agent_b, Fixture};
     use crate::core::error::{AppError, ErrorKind};
     use crate::core::host::{HostCtx, NoopEvents};
     use crate::core::host_dispatch::dispatch;
@@ -271,6 +277,49 @@ mod tests {
         assert!(next.contains("unknown"), "{next}");
         assert_eq!(destinations(&fixture), before);
         assert_eq!(receipt(&fixture, "op-never"), None);
+    }
+
+    #[test]
+    fn an_operation_run_for_named_agents_is_checked_against_those_agents() {
+        let fixture = Fixture::new();
+        with_agent_b(&fixture);
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        fixture
+            .apply_with(json!({ "operation_id": "op-1", "agents": ["agent_b"] }))
+            .unwrap();
+
+        let inspected = inspect(
+            &fixture,
+            json!({ "operation_id": "op-1", "evidence": true }),
+        )
+        .unwrap();
+
+        assert_eq!(inspected["destination"]["state"], "matches", "{inspected}");
+        assert_eq!(
+            item(&inspected["destination"], "skill")["agents"],
+            json!(["agent_b"])
+        );
+        assert_eq!(inspected["recovery_possible"], false);
+    }
+
+    #[test]
+    fn an_unregistered_checkout_is_outcome_unknown() {
+        let fixture = Fixture::new();
+        let fresh = fixture.repo._tmp.path().join("work/fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+
+        let inspected = inspect(
+            &fixture,
+            json!({ "operation_id": "op-1", "checkout_path": fresh }),
+        )
+        .unwrap();
+
+        assert_eq!(inspected["outcome"], "outcome_unknown");
+        assert_eq!(inspected["receipt"], "missing");
+        assert_eq!(inspected["project_id"], Value::Null);
+        assert_eq!(inspected["destination"], Value::Null);
+        assert_inspect_later(&inspected);
     }
 
     #[test]

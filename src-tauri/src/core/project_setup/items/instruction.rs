@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::{missing, worst, Run, Status, Step};
+use super::{missing, AgentStep, Reason, Run, Status, Step};
 use crate::core::error::AppError;
 use crate::core::instructions;
 use crate::core::project_setup::{ItemKind, SetupItem};
@@ -51,62 +51,116 @@ pub(in crate::core::project_setup) fn instruction_deletes(
     Ok(files)
 }
 
+/// Every agent that reads a file the bundle writes. A file such as root
+/// `AGENTS.md` is read by several agents, so writing it for one sets it up
+/// for all of them.
+pub(super) fn instruction_readers(run: &Run, item: &SetupItem) -> Result<Vec<String>, AppError> {
+    let Some(bundle) = run.instruction(&item.id)? else {
+        return Ok(Vec::new());
+    };
+    let mut readers = Vec::new();
+    for file in bundle["files"].as_array().into_iter().flatten() {
+        let path = file["path"].as_str().unwrap_or_default();
+        for reader in instructions::project_file_readers(path) {
+            if !readers.iter().any(|known| known == reader) {
+                readers.push(reader.to_owned());
+            }
+        }
+    }
+    Ok(readers)
+}
+
+/// Apply an Instruction bundle for each of its agents. Files it would delete
+/// are deleted only when they are exactly `deletes_approved`.
 pub(super) fn apply_instruction(
     run: &Run,
     item: &SetupItem,
-    allow_delete: bool,
-) -> Result<Step, AppError> {
+    deletes_approved: &[String],
+) -> Result<Vec<AgentStep>, AppError> {
+    let whole = |step: Step| Ok(vec![(None, step)]);
     match run.instruction(&item.id) {
         Ok(Some(_)) => {}
-        Ok(None) => return Ok(Step::because(Status::Missing, "confirmed_absent")),
-        Err(error) => return Ok(missing(error)),
+        Ok(None) => return whole(Step::asks(Status::Missing, Reason::ConfirmedAbsent)),
+        Err(error) => return whole(missing(error)),
     }
     let agents: Vec<&String> = instruction_agents(run, item).collect();
     if agents.is_empty() {
-        return Ok(Step::because(Status::Blocked, "no_supported_agent"));
+        return whole(Step::because(Status::Blocked, "no_supported_agent"));
+    }
+    if instruction_readers(run, item)?
+        .iter()
+        .any(|reader| !item.agents.contains(reader))
+    {
+        return whole(Step::asks(Status::NeedsReview, Reason::UnapprovedAgents));
     }
     if run.instruction_recovery_pending {
-        return Ok(Step::because(Status::Blocked, "pending_recovery"));
+        return whole(Step::because(Status::Blocked, "pending_recovery"));
     }
     agents
         .into_iter()
         .map(|agent| {
-            let preview = |dry_run: bool| instruction_preview(run, item, agent, dry_run);
-            let has = |preview: &Value, status: &str| changes(preview, status).next().is_some();
-            let unchanged = |preview: &Value| {
-                preview["changes"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .all(|change| change["status"] == "unchanged")
-            };
-            let planned = preview(true)?;
-            if has(&planned, "conflict") {
-                return Ok(Step::because(Status::NeedsReview, "edited_here"));
-            }
-            if has(&planned, "delete") && !allow_delete {
-                return Ok(Step::because(Status::NeedsReview, "would_delete"));
-            }
-            if unchanged(&planned) {
-                return Ok(Step::of(Status::Unchanged));
-            }
-            if !run.write {
-                return Ok(Step::of(Status::NotApplied));
-            }
-            let stored = preview(false)?;
-            let applied = instructions::dispatch(
-                run.ctx,
-                json!({ "action": "apply", "preview_id": stored["preview_id"] }),
-            )?;
-            if applied["status"] != "complete" {
-                return Ok(Step::failed("apply_incomplete", false));
-            }
-            Ok(if unchanged(&preview(true)?) {
-                Step::of(Status::Changed)
-            } else {
-                Step::failed("verification_failed", false)
-            })
+            let step = apply_for(run, item, agent, deletes_approved)?;
+            Ok((Some(agent.clone()), step))
         })
-        .collect::<Result<Vec<_>, AppError>>()
-        .map(worst)
+        .collect()
+}
+
+fn apply_for(
+    run: &Run,
+    item: &SetupItem,
+    agent: &str,
+    deletes_approved: &[String],
+) -> Result<Step, AppError> {
+    let preview = |dry_run: bool| instruction_preview(run, item, agent, dry_run);
+    let planned = preview(true)?;
+    if changes(&planned, "conflict").next().is_some() {
+        return Ok(Step::because(Status::NeedsReview, "edited_here"));
+    }
+    // The Library is unchanged, but the file there was edited or removed.
+    if changes(&planned, "unchanged").any(|change| !in_place(change)) {
+        return Ok(Step::because(Status::NeedsReview, "edited_here"));
+    }
+    let deletes: Vec<String> = changes(&planned, "delete")
+        .map(|c| format!("{agent}:{}", c["path"].as_str().unwrap_or_default()))
+        .collect();
+    let approved: Vec<&String> = deletes_approved
+        .iter()
+        .filter(|file| file.starts_with(&format!("{agent}:")))
+        .collect();
+    if !deletes.is_empty() && deletes.iter().collect::<Vec<_>>() != approved {
+        return Ok(Step::asks(Status::NeedsReview, Reason::WouldDelete));
+    }
+    if all_in_place(&planned) {
+        return Ok(Step::of(Status::Unchanged));
+    }
+    if !run.write {
+        return Ok(Step::of(Status::NotApplied));
+    }
+    let stored = preview(false)?;
+    let applied = instructions::dispatch(
+        run.ctx,
+        json!({ "action": "apply", "preview_id": stored["preview_id"] }),
+    )?;
+    if applied["status"] != "complete" {
+        return Ok(Step::failed("apply_incomplete", false));
+    }
+    Ok(if all_in_place(&preview(true)?) {
+        Step::of(Status::Changed)
+    } else {
+        Step::failed("verification_failed", false)
+    })
+}
+
+/// Whether a change's file is on disk as the Library has it, or absent when
+/// the Library dropped it.
+fn in_place(change: &Value) -> bool {
+    change["status"] == "unchanged" && change["previous"] == change["incoming"]
+}
+
+fn all_in_place(preview: &Value) -> bool {
+    preview["changes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .all(in_place)
 }

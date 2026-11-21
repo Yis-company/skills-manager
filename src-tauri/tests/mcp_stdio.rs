@@ -356,7 +356,7 @@ fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_wri
         })
         .unwrap();
     let item = json!({ "kind": "mcp", "id": definition["id"], "agents": ["claude_code"],
-        "approved": project_setup::mcp_value(definition) });
+        "approved": { "claude_code": project_setup::mcp_value(definition) } });
     project_setup::save_setup(&store, "p1", 0, vec![serde_json::from_value(item).unwrap()])
         .unwrap();
     drop(store);

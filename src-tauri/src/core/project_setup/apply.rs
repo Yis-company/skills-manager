@@ -10,12 +10,12 @@
 //! Each item is checked and applied by [`super::items`]; decisions and their
 //! confirmation are in [`super::confirm`].
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::confirm::{confirmed, decide, propose, save_confirmed, Plan, Proposal, Reason, CONFIRM};
 use super::items::{check_items, counts, sorted_agents, ItemResult, Planned, Run, Status};
-use super::{check_size, find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
+use super::{check_agents, check_size, find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
 use crate::commands::projects::new_project_deploy_mode;
 use crate::core::error::AppError;
 use crate::core::git_backup_store::effective_device_name;
@@ -49,23 +49,76 @@ pub(super) struct Args {
     agents: Option<Vec<String>>,
 }
 
-pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
-    let (operation_id, evidence) = (args.operation_id.as_str(), args.evidence);
-    if operation_id.trim().is_empty() || operation_id.len() > MAX_OPERATION_ID {
+/// Refuse a malformed request before reading anything for it.
+fn check_args(args: &Args) -> Result<(), AppError> {
+    let id = &args.operation_id;
+    if id.trim().is_empty() || id.chars().count() > MAX_OPERATION_ID {
         return Err(AppError::invalid_input(format!(
             "operation_id must be 1-{MAX_OPERATION_ID} characters"
         )));
     }
-    check_size(args.items.as_ref().map_or(0, Vec::len))?;
-    if let Some(confirm) = &args.confirm {
-        check_size(confirm["decisions"].as_array().map_or(0, Vec::len))?;
+    check_agents(args.agents.as_ref().map_or(0, Vec::len))?;
+    if let Some(items) = &args.items {
+        check_size(items.len())?;
+        for item in items {
+            check_agents(item.agents.len())?;
+        }
     }
+    if let Some(confirm) = &args.confirm {
+        let decisions = confirm["decisions"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        check_size(decisions.len())?;
+        for decision in decisions {
+            check_agents(decision["agents"].as_array().map_or(0, Vec::len))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether applying `args` may write; see [`super::writes`]. A proposal
+/// only reads, and a request with nothing to apply fails here.
+pub(super) fn writes(ctx: &HostCtx, args: &Args) -> Result<bool, AppError> {
+    check_args(args)?;
+    if args.confirm.is_some() {
+        return Ok(true);
+    }
+    if args.items.is_some() {
+        return Ok(false);
+    }
+    let (_, project) = find_project(ctx, &args.checkout_path)?;
+    match project {
+        Some(project) if load_setup(ctx, &project.id)?.is_some() => Ok(true),
+        _ => Err(no_saved_setup()),
+    }
+}
+
+fn no_saved_setup() -> AppError {
+    AppError::invalid_input("This checkout has no saved Project setup; pass items to propose one")
+}
+
+pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
+    check_args(&args)?;
+    let (operation_id, evidence) = (args.operation_id.as_str(), args.evidence);
     let (checkout, project) = find_project(ctx, &args.checkout_path)?;
+    let host = effective_device_name(&ctx.store);
+    // What the caller asked, without what this operation itself changes
+    // (the project ID and the setup version), so a retry matches it.
+    let mut intent = json!({ "host": host, "checkout_path": checkout });
+    if let Some(confirm) = &args.confirm {
+        intent["confirm"] = confirm.clone();
+    }
+    if let Some(agents) = &args.agents {
+        intent["agents"] = json!(agents);
+    }
+    // A retry answers from its receipt before anything is checked again.
+    if args.items.is_none() && receipt(ctx, operation_id)?.is_some() {
+        return answer_from_receipt(ctx, operation_id, &intent, evidence);
+    }
     let saved: Option<SavedSetup> = match &project {
         Some(project) => load_setup(ctx, &project.id)?,
         None => None,
     };
-    let host = effective_device_name(&ctx.store);
 
     // Read before the claim: a failure here must not leave a claimed receipt.
     let record = match project {
@@ -105,11 +158,7 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         (_, Some(_), _) => return Err(AppError::invalid_input(
             "items propose a first setup only; this request has a saved setup or a confirmation",
         )),
-        (None, None, None) => {
-            return Err(AppError::invalid_input(
-                "This checkout has no saved Project setup; pass items to propose one",
-            ))
-        }
+        (None, None, None) => return Err(no_saved_setup()),
         (saved, None, Some(confirm)) => confirmed(&run, &proposal, saved, confirm)?,
         (Some(saved), None, None) => Plan {
             items: saved
@@ -127,13 +176,7 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
             save: false,
         },
     };
-    let mut intent = scope.clone();
-    if let Some(confirm) = &args.confirm {
-        intent["confirm"] = confirm.clone();
-    }
-    if let Some(agents) = &args.agents {
-        intent["agents"] = json!(agents);
-    }
+    let items: Vec<SetupItem> = plan.items.iter().map(|p| p.item.clone()).collect();
 
     let now = chrono::Utc::now().timestamp_millis();
     ctx.store
@@ -143,7 +186,8 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
             RECEIPT_PRUNE_LIMIT,
         )
         .map_err(AppError::db)?;
-    let claim = json!({ "version": 1, "intent": intent });
+    // The items as resolved for this run, so inspection checks the same ones.
+    let claim = json!({ "version": 1, "intent": intent, "targets": items });
     if !ctx
         .store
         .resource_state_put_versioned(RECEIPT_KIND, operation_id, 0, &claim)
@@ -151,17 +195,21 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
     {
         return answer_from_receipt(ctx, operation_id, &intent, evidence);
     }
+    let settle = |outcome: (&str, Value)| {
+        let mut receipt = claim.clone();
+        receipt["version"] = json!(2);
+        receipt[outcome.0] = outcome.1;
+        receipt["settled_at"] = json!(chrono::Utc::now().timestamp_millis());
+        ctx.store
+            .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
+            .map_err(AppError::db)
+    };
 
-    let items: Vec<SetupItem> = plan.items.iter().map(|p| p.item.clone()).collect();
     if plan.save {
         match save_confirmed(&mut run, &proposal, items.clone()) {
             Ok(version) => proposal.setup_version = version,
             Err(error) => {
-                let receipt = json!({ "version": 2, "intent": intent, "error": error.message,
-                                      "settled_at": chrono::Utc::now().timestamp_millis() });
-                ctx.store
-                    .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
-                    .map_err(AppError::db)?;
+                settle(("error", json!(error)))?;
                 return Err(error);
             }
         }
@@ -182,21 +230,14 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
     proposal.decisions = decided
         .iter()
         .zip(&results)
-        .filter_map(|(item, result)| {
-            let reason = Reason::of_result(result.reason.as_deref()?)?;
-            decide(&run, item, reason).ok().flatten()
-        })
+        .filter_map(|(item, result)| decide(&run, item, result.asks?).ok().flatten())
         .collect();
     if !proposal.decisions.is_empty() {
         result["next_action"] = json!(CONFIRM);
         result["proposal"] = json!(proposal);
     }
     result["items"] = json!(results);
-    let receipt = json!({ "version": 2, "intent": intent, "result": result,
-                          "settled_at": chrono::Utc::now().timestamp_millis() });
-    ctx.store
-        .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
-        .map_err(AppError::db)?;
+    settle(("result", result.clone()))?;
     Ok(respond(result, false, evidence))
 }
 
@@ -254,30 +295,36 @@ fn unregistered(ctx: &HostCtx, path: String) -> Result<ProjectRecord, AppError> 
     })
 }
 
+pub(super) fn receipt(ctx: &HostCtx, operation_id: &str) -> Result<Option<Value>, AppError> {
+    ctx.store
+        .resource_state_get(RECEIPT_KIND, operation_id)
+        .map_err(AppError::db)
+}
+
 fn answer_from_receipt(
     ctx: &HostCtx,
     operation_id: &str,
     intent: &Value,
     evidence: bool,
 ) -> Result<Value, AppError> {
-    let receipt = ctx
-        .store
-        .resource_state_get(RECEIPT_KIND, operation_id)
-        .map_err(AppError::db)?
-        .unwrap_or_default();
+    let receipt = receipt(ctx, operation_id)?.unwrap_or_default();
     if receipt["intent"] != *intent {
         return Err(AppError::invalid_input(
             "This operation_id was used for a different request; use a new one",
         ));
     }
-    if let Some(message) = receipt["error"].as_str() {
-        return Err(AppError::invalid_input(message));
+    if !receipt["error"].is_null() {
+        return Err(
+            serde_json::from_value(receipt["error"].clone()).unwrap_or_else(|_| {
+                AppError::internal("This operation_id recorded an unreadable error")
+            }),
+        );
     }
     if receipt["result"].is_object() {
         return Ok(respond(receipt["result"].clone(), true, evidence));
     }
     let mut unknown = summarize(intent, operation_id, &[]);
-    unknown["outcome"] = json!("outcome_unknown");
+    unknown["outcome"] = json!(Outcome::Unknown);
     unknown["next_action"] = json!(
         "Another request with this operation_id has not recorded a result. \
          Ask again later with the same operation_id; do not retry under a new one."
@@ -298,10 +345,25 @@ pub(super) fn without_evidence(result: &mut Value, evidence: bool) {
     }
 }
 
+/// An apply's outcome. See `apply_project_setup`'s output schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Outcome {
+    VerifiedChanged,
+    VerifiedNoChange,
+    PartialSuccess,
+    NeedsReview,
+    RetryableFailure,
+    #[serde(rename = "outcome_unknown")]
+    Unknown,
+    ConfirmationNeeded,
+}
+
 /// The outcome of a run and its next safe action. Changed and unchanged
 /// items are settled; any other item needs a decision, a retry or recovery.
-fn outcome(items: &[ItemResult]) -> (&'static str, &'static str) {
-    let changed = items.iter().any(|item| item.status == Status::Changed);
+/// An item changed for one agent and held for another counts as both.
+fn outcome(items: &[ItemResult]) -> (Outcome, &'static str) {
+    let changed = items.iter().any(ItemResult::changed);
     let mut unsettled = items
         .iter()
         .filter(|item| !matches!(item.status, Status::Changed | Status::Unchanged))
@@ -309,19 +371,19 @@ fn outcome(items: &[ItemResult]) -> (&'static str, &'static str) {
     if unsettled.peek().is_none() {
         return if changed {
             (
-                "verified_changed",
+                Outcome::VerifiedChanged,
                 "None: the changes were applied and verified.",
             )
         } else {
             (
-                "verified_no_change",
+                Outcome::VerifiedNoChange,
                 "None: the checkout matches its saved setup.",
             )
         };
     }
     if changed {
         return (
-            "partial_success",
+            Outcome::PartialSuccess,
             "Independent items were applied and verified. Ask again with the same \
              operation_id and evidence: true to list the items that need a decision, retry \
              or recovery.",
@@ -329,13 +391,13 @@ fn outcome(items: &[ItemResult]) -> (&'static str, &'static str) {
     }
     if unsettled.all(|item| item.retryable == Some(true)) {
         return (
-            "retryable_failure",
+            Outcome::RetryableFailure,
             "Nothing was changed. Apply again under a new operation_id: apply checks each \
              destination before writing and never overwrites edits.",
         );
     }
     (
-        "needs_review",
+        Outcome::NeedsReview,
         "Nothing was changed. Ask again with the same operation_id and evidence: true to \
          list the items that need a decision or recovery.",
     )
@@ -491,9 +553,11 @@ pub(super) mod tests {
         }
     }
 
+    /// The Library value of `definition`, approved for Claude Code and Codex.
     pub(crate) fn approved(definition: &Value) -> Value {
-        json!({ "transport": definition["transport"], "server": definition["server"],
-                "auth": definition.get("auth") })
+        let value = json!({ "transport": definition["transport"], "server": definition["server"],
+                            "auth": definition.get("auth") });
+        json!({ "claude_code": value, "codex": value })
     }
 
     /// One of each kind: a Skill for agent_a, and an Instruction bundle and an
@@ -713,7 +777,7 @@ pub(super) mod tests {
     }
 
     /// Adds `agent_b`, reading its own folder `.b/skills`.
-    fn with_agent_b(fixture: &Fixture) {
+    pub(crate) fn with_agent_b(fixture: &Fixture) {
         let tmp = fixture.repo._tmp.path();
         let tools = json!([
             { "key": "agent_a", "display_name": "Agent A", "skills_dir": tmp.join("agents/a/skills"),
@@ -881,7 +945,7 @@ pub(super) mod tests {
         let fixture = Fixture::new();
         let mcp = fixture.mcp("docs");
         let mut stale = approved(&mcp);
-        stale["server"]["args"] = json!(["-y", "older"]);
+        stale["claude_code"]["server"]["args"] = json!(["-y", "older"]);
         fixture.save_setup(json!([
             { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"], "approved": stale },
         ]));
@@ -894,6 +958,46 @@ pub(super) mod tests {
         assert_eq!(item(&result, "mcp")["reason"], "value_changed");
         assert_eq!(result["outcome"], "needs_review");
         assert!(!fixture.path(".mcp.json").exists());
+    }
+
+    #[test]
+    fn an_mcp_override_for_one_agent_needs_its_effective_value_approved() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        let target = json!({ "agentKey": "claude_code", "projectId": "p1" });
+        let preview = fixture.request(
+            "mcps_request",
+            json!({ "action": "preview", "target": target, "operations": [{
+                "kind": "deploy", "definitionId": mcp["id"],
+                "overrideConfig": { "server": { "args": ["-y", "docs", "--beta"] } } }] }),
+        );
+        fixture.request(
+            "mcps_request",
+            json!({ "action": "apply", "previewId": preview["previewId"] }),
+        );
+        fixture.save_setup(json!([
+            { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"], "approved": approved(&mcp) },
+        ]));
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(item(&result, "mcp")["reason"], "value_changed", "{result}");
+        let proposed = &decision(&result, "mcp")["proposed"];
+        assert_eq!(
+            proposed["claude_code"]["server"]["args"],
+            json!(["-y", "docs", "--beta"]),
+            "{proposed}"
+        );
+        let applied = confirm_with(
+            &fixture,
+            &fixture.checkout,
+            "op-2",
+            confirm(&result, "approve"),
+        )
+        .unwrap();
+        assert_eq!(applied["outcome"], "verified_no_change", "{applied}");
     }
 
     #[test]
@@ -1026,20 +1130,9 @@ pub(super) mod tests {
         assert_eq!(again["outcome"], first["outcome"]);
         assert_eq!(again["counts"], first["counts"]);
 
-        let saved = fixture
-            .ctx
-            .store
-            .resource_state_get("project_setup", "p1")
-            .unwrap();
-        let items = saved.unwrap()["items"].clone();
-        super::super::save_setup(
-            &fixture.ctx.store,
-            "p1",
-            1,
-            serde_json::from_value(items).unwrap(),
-        )
-        .unwrap();
-        let error = fixture.apply("op-1").unwrap_err();
+        let error = fixture
+            .apply_with(json!({ "operation_id": "op-1", "agents": ["claude_code"] }))
+            .unwrap_err();
         assert!(
             error.message.contains("different request"),
             "{}",
@@ -1196,7 +1289,7 @@ pub(super) mod tests {
         assert_eq!(skill["name"], "review");
         assert_eq!(skill["agents"], json!(["agent_a"]));
         assert_eq!(skill["choices"], json!(["approve", "skip"]));
-        let server = &decision(&proposed, "mcp")["proposed"]["approved"]["server"];
+        let server = &decision(&proposed, "mcp")["proposed"]["approved"]["claude_code"]["server"];
         assert_eq!(server["command"], "npx");
         assert_eq!(server["args"], json!(["-y", "docs"]));
         assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
@@ -1278,7 +1371,7 @@ pub(super) mod tests {
         let change = decision(&proposed, "mcp");
         assert_eq!(change["reason"], "value_changed");
         assert_eq!(
-            change["proposed"]["server"]["args"],
+            change["proposed"]["claude_code"]["server"]["args"],
             json!(["-y", "docs@2"])
         );
         assert_eq!(change["choices"], json!(["approve", "skip"]));
@@ -1414,6 +1507,263 @@ pub(super) mod tests {
         assert_eq!(applied["outcome"], "verified_changed", "{applied}");
         assert!(!fixture.path(".claude/rules/extra.md").exists());
         assert!(fixture.path(".a/skills/review").exists());
+    }
+
+    #[test]
+    fn a_hand_edited_managed_mcp_entry_needs_review_instead_of_no_change() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        fixture.apply("op-1").unwrap();
+        let path = fixture.path(".mcp.json");
+        let mut config: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        config["mcpServers"]["docs"]["args"] = json!(["-y", "docs", "--verbose"]);
+        std::fs::write(&path, config.to_string()).unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-2", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(item(&result, "mcp")["status"], "needs_review", "{result}");
+        assert_eq!(item(&result, "mcp")["reason"], "edited_here");
+        assert_eq!(
+            mcp_entry(&fixture, "docs")["args"],
+            json!(["-y", "docs", "--verbose"])
+        );
+    }
+
+    #[test]
+    fn a_deleted_instruction_file_needs_review_instead_of_no_change() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        fixture.apply("op-1").unwrap();
+        std::fs::remove_file(fixture.path("CLAUDE.md")).unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-2", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(item(&result, "instruction")["status"], "needs_review");
+        assert_eq!(item(&result, "instruction")["reason"], "edited_here");
+        assert_eq!(result["outcome"], "needs_review");
+    }
+
+    #[test]
+    fn a_confirmation_replayed_with_its_operation_id_returns_the_recorded_result() {
+        let fixture = Fixture::new();
+        let (fresh, _, proposed) = propose_first_setup(&fixture);
+        let confirmation = confirm(&proposed, "approve");
+        let first = confirm_with(&fixture, &fresh, "op-2", confirmation.clone()).unwrap();
+
+        let again = confirm_with(&fixture, &fresh, "op-2", confirmation).unwrap();
+
+        assert_eq!(again["from_receipt"], true, "{again}");
+        assert_eq!(again["outcome"], first["outcome"]);
+        assert_eq!(again["project_id"], first["project_id"]);
+    }
+
+    #[test]
+    fn one_agent_changed_and_another_blocked_is_a_partial_success() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        fixture.save_setup(json!([
+            { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code", "codex"],
+              "approved": approved(&mcp) },
+        ]));
+        let own = json!({ "type": "stdio", "command": "my-docs" });
+        std::fs::write(
+            fixture.path(".mcp.json"),
+            json!({ "mcpServers": { "docs": own } }).to_string(),
+        )
+        .unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        let docs = &result["items"][0];
+        assert_eq!(result["outcome"], "partial_success", "{result}");
+        let targets = docs["targets"].as_array().unwrap();
+        let status = |agent: &str| {
+            targets
+                .iter()
+                .find(|t| t["agent"] == agent)
+                .map(|t| t["status"].clone())
+        };
+        assert_eq!(status("claude_code"), Some(json!("needs_review")), "{docs}");
+        assert_eq!(status("codex"), Some(json!("changed")), "{docs}");
+        assert_eq!(mcp_entry(&fixture, "docs"), own);
+    }
+
+    #[test]
+    fn an_operation_id_of_128_characters_is_accepted_whatever_its_bytes() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+
+        let accepted = fixture.apply(&"é".repeat(128));
+        let refused = fixture.apply(&"é".repeat(129)).unwrap_err();
+
+        assert!(accepted.is_ok(), "{accepted:?}");
+        assert!(
+            refused.message.contains("characters"),
+            "{}",
+            refused.message
+        );
+    }
+
+    #[test]
+    fn a_recorded_error_replays_with_its_own_kind() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        fixture.apply("op-1").unwrap();
+        let store = &fixture.ctx.store;
+        let mut receipt = store
+            .resource_state_get("project_setup_receipt", "op-1")
+            .unwrap()
+            .unwrap();
+        let receipt = receipt.as_object_mut().unwrap();
+        receipt.remove("result");
+        receipt.insert(
+            "error".into(),
+            json!(AppError::target_conflict("taken", Vec::new())),
+        );
+        store
+            .resource_state_put("project_setup_receipt", "op-1", &json!(receipt))
+            .unwrap();
+
+        let error = fixture.apply("op-1").unwrap_err();
+
+        assert_eq!(error.kind, ErrorKind::TargetConflict, "{}", error.message);
+        assert_eq!(error.message, "taken");
+    }
+
+    #[test]
+    fn a_skill_linked_to_another_folder_with_the_same_content_needs_review() {
+        let fixture = Fixture::new();
+        let library = fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        let elsewhere = fixture.repo._tmp.path().join("elsewhere/review");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::copy(library.join("SKILL.md"), elsewhere.join("SKILL.md")).unwrap();
+        std::fs::create_dir_all(fixture.path(".a/skills")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, fixture.path(".a/skills/review")).unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(item(&result, "skill")["status"], "needs_review", "{result}");
+        assert_eq!(item(&result, "skill")["reason"], "edited_here");
+        assert!(resolves_to(&fixture.path(".a/skills/review"), &elsewhere));
+    }
+
+    #[test]
+    fn an_instruction_written_to_a_shared_file_needs_its_other_readers_approved() {
+        let fixture = Fixture::new();
+        let bundle = fixture.instruction(json!({ "AGENTS.md": "Be brief.\n" }));
+        fixture.save_setup(json!([
+            { "kind": "instruction", "id": bundle, "agents": ["claude_code"] },
+        ]));
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(
+            item(&result, "instruction")["reason"],
+            "unapproved_agents",
+            "{result}"
+        );
+        assert!(!fixture.path("AGENTS.md").exists());
+        let readers = decision(&result, "instruction")["proposed"].clone();
+        assert!(
+            readers.as_array().unwrap().contains(&json!("codex")),
+            "{readers}"
+        );
+        let applied = confirm_with(
+            &fixture,
+            &fixture.checkout,
+            "op-2",
+            confirm(&result, "approve"),
+        )
+        .unwrap();
+        assert_eq!(applied["outcome"], "verified_changed", "{applied}");
+    }
+
+    #[test]
+    fn an_unreadable_mcp_definition_does_not_block_a_skill() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        let definitions = crate::core::resource_store::root().join("mcps");
+        let file = definitions.join(format!("{}.json", mcp["id"].as_str().unwrap()));
+        assert!(file.is_file(), "{file:?}");
+        std::fs::write(&file, "not json").unwrap();
+
+        let result = fixture.apply("op-1").unwrap();
+
+        assert_eq!(result["outcome"], "verified_changed", "{result}");
+    }
+
+    #[test]
+    fn more_than_64_agents_are_refused() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        let agents = vec!["agent_a"; 65];
+
+        let named = fixture
+            .apply_with(json!({ "operation_id": "op-1", "agents": agents }))
+            .unwrap_err();
+        let fresh = fixture.repo._tmp.path().join("work/fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+        let proposed = fixture
+            .apply_with(json!({ "checkout_path": fresh, "operation_id": "op-2",
+                "items": [{ "kind": "skill", "id": "s1", "agents": agents }] }))
+            .unwrap_err();
+
+        for error in [named, proposed] {
+            assert_eq!(error.kind, ErrorKind::InvalidInput);
+            assert!(error.message.contains("64"), "{}", error.message);
+        }
+    }
+
+    #[test]
+    fn a_deletion_runs_only_when_exactly_those_files_were_approved() {
+        use super::super::items::{check_items, Planned, Run};
+        let fixture = Fixture::new();
+        let saved = fixture.request(
+            "instructions_request",
+            json!({ "action": "save", "name": "Rules",
+                    "files": { "CLAUDE.md": "a\n", ".claude/rules/extra.md": "b\n" } }),
+        );
+        let id = saved["item"]["id"].as_str().unwrap();
+        fixture.save_setup(json!([{ "kind": "instruction", "id": id, "agents": ["claude_code"] }]));
+        fixture.apply("op-1").unwrap();
+        fixture.request(
+            "instructions_request",
+            json!({ "action": "save", "id": id, "name": "Rules", "files": { "CLAUDE.md": "a\n" },
+                    "expected_revision": saved["item"]["revision"] }),
+        );
+        let project = fixture.ctx.store.get_project_by_id("p1").unwrap().unwrap();
+        let run = Run::new(&fixture.ctx, project, true).unwrap();
+        let planned = |approved: &[&str]| Planned {
+            deletes_approved: approved.iter().map(|file| file.to_string()).collect(),
+            ..Planned::new(
+                serde_json::from_value(
+                    json!({ "kind": "instruction", "id": id, "agents": ["claude_code"] }),
+                )
+                .unwrap(),
+            )
+        };
+
+        let other = check_items(&run, &[planned(&["claude_code:.claude/rules/other.md"])]);
+        assert_eq!(other[0].reason.as_deref(), Some("would_delete"));
+        assert!(fixture.path(".claude/rules/extra.md").exists());
+
+        let exact = check_items(&run, &[planned(&["claude_code:.claude/rules/extra.md"])]);
+        assert_eq!(json!(exact[0].status), "changed");
+        assert!(!fixture.path(".claude/rules/extra.md").exists());
     }
 
     /// Run with `--ignored --nocapture` to measure; the timing goes in the PR.

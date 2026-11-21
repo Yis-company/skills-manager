@@ -3,12 +3,14 @@
 //! edited, unapproved or ambiguous is reported and left untouched, while
 //! independent items carry on.
 
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{ItemKind, SavedSetup, SetupItem};
+use super::confirm::Reason;
+use super::{ItemKind, SetupItem};
 use crate::commands::projects::{agent_skill_groups, available_agent_keys};
 use crate::core::error::{AppError, ErrorKind};
 use crate::core::host::HostCtx;
@@ -20,9 +22,9 @@ pub(super) mod instruction;
 pub(super) mod mcp;
 pub(super) mod skill;
 
-use instruction::apply_instruction;
+use instruction::{apply_instruction, instruction_readers};
 use mcp::{apply_mcps, check_mcp};
-use skill::apply_skill;
+use skill::{apply_skill, skill_readers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +57,21 @@ pub(super) struct ItemResult {
     /// holds the rest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) unsupported: Vec<String>,
+    /// Each agent's own result, when the agents' results differ.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) targets: Vec<TargetResult>,
+    /// The decision `reason` asks for, when a confirmation can resolve it.
+    #[serde(skip)]
+    pub(super) asks: Option<Reason>,
+}
+
+/// One agent's result for an item.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct TargetResult {
+    pub(super) agent: String,
+    pub(super) status: Status,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) reason: Option<String>,
 }
 
 #[derive(Clone)]
@@ -62,6 +79,7 @@ pub(super) struct Step {
     pub(super) status: Status,
     pub(super) reason: Option<String>,
     pub(super) retryable: bool,
+    pub(super) asks: Option<Reason>,
 }
 
 impl Step {
@@ -70,12 +88,20 @@ impl Step {
             status,
             reason: None,
             retryable: false,
+            asks: None,
         }
     }
     pub(super) fn because(status: Status, reason: impl Into<String>) -> Self {
         Self {
             reason: Some(reason.into()),
             ..Self::of(status)
+        }
+    }
+    /// A result a confirmation can resolve: `reason` names its decision.
+    pub(super) fn asks(status: Status, reason: Reason) -> Self {
+        Self {
+            asks: Some(reason),
+            ..Self::because(status, reason.name())
         }
     }
     /// A failure; `retryable` when applying again may succeed as it is.
@@ -96,11 +122,11 @@ impl Step {
 }
 
 /// An item one request runs, with its one-run hold (a skip or a restore to
-/// wait for) and whether the files its Instruction bundle deletes are approved.
+/// wait for) and the files its Instruction bundle may delete, as `agent:path`.
 pub(super) struct Planned {
     pub(super) item: SetupItem,
     pub(super) held: Option<Step>,
-    pub(super) deletes_approved: bool,
+    pub(super) deletes_approved: Vec<String>,
 }
 
 impl Planned {
@@ -108,44 +134,46 @@ impl Planned {
         Self {
             item,
             held: None,
-            deletes_approved: false,
+            deletes_approved: Vec::new(),
         }
     }
 }
 
-/// Check each saved item against its destination; see [`check_items`].
-pub(super) fn check_saved(run: &Run, setup: &SavedSetup) -> Vec<ItemResult> {
-    let plan: Vec<_> = setup.items.iter().cloned().map(Planned::new).collect();
+/// Check each item against its destination; see [`check_items`].
+pub(super) fn check_setup(run: &Run, items: &[SetupItem]) -> Vec<ItemResult> {
+    let plan: Vec<_> = items.iter().cloned().map(Planned::new).collect();
     check_items(run, &plan)
 }
+
+/// One step for a whole item, or one agent's step.
+type AgentStep = (Option<String>, Step);
 
 /// Check each planned item against its destination and, when `run` writes,
 /// apply and verify it.
 pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
     // Each item's steps, one per agent where it varies by agent. MCP
     // connections are queued and applied in batches per agent config.
-    let mut steps: Vec<Vec<Step>> = Vec::with_capacity(plan.len());
+    let mut steps: Vec<Vec<AgentStep>> = Vec::with_capacity(plan.len());
     let mut queued: Vec<(String, usize)> = Vec::new();
     for (index, planned) in plan.iter().enumerate() {
         let item = &planned.item;
-        steps.push(Vec::new());
-        if let Some(held) = &planned.held {
-            steps[index].push(held.clone());
-            continue;
-        }
-        let step = match item.kind {
-            _ if item.agents.is_empty() => Ok(Step::because(Status::Blocked, "no_agents")),
-            ItemKind::Skill => apply_skill(run, item),
-            ItemKind::Instruction => apply_instruction(run, item, planned.deletes_approved),
-            ItemKind::Mcp => match check_mcp(run, item) {
+        let whole = |step: Result<Step, AppError>| vec![(None, step.unwrap_or_else(Step::error))];
+        steps.push(match (&planned.held, item.kind) {
+            (Some(held), _) => vec![(None, held.clone())],
+            _ if item.agents.is_empty() => whole(Ok(Step::because(Status::Blocked, "no_agents"))),
+            (None, ItemKind::Skill) => whole(apply_skill(run, item)),
+            (None, ItemKind::Instruction) => {
+                apply_instruction(run, item, &planned.deletes_approved)
+                    .unwrap_or_else(|error| vec![(None, Step::error(error))])
+            }
+            (None, ItemKind::Mcp) => match check_mcp(run, item) {
                 Ok(agents) => {
                     queued.extend(agents.into_iter().map(|agent| (agent, index)));
-                    continue;
+                    Vec::new()
                 }
-                Err(step) => Ok(step),
+                Err(step) => vec![(None, step)],
             },
-        };
-        steps[index].push(step.unwrap_or_else(Step::error));
+        });
     }
     queued.sort();
     for batch in queued.chunk_by(|a, b| a.0 == b.0) {
@@ -155,13 +183,26 @@ pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
             .map(|(_, index)| (*index, &plan[*index].item))
             .collect();
         for ((index, _), step) in batch.iter().zip(apply_mcps(run, agent, &batch)) {
-            steps[*index].push(step);
+            steps[*index].push((Some(agent.clone()), step));
         }
     }
     plan.iter()
         .zip(steps)
         .map(|(Planned { item, .. }, steps)| {
-            let step = worst(steps);
+            let step = worst(steps.iter().map(|(_, step)| step.clone()));
+            let mut targets: Vec<TargetResult> = steps
+                .into_iter()
+                .filter_map(|(agent, step)| {
+                    Some(TargetResult {
+                        agent: agent?,
+                        status: step.status,
+                        reason: step.reason,
+                    })
+                })
+                .collect();
+            if targets.iter().all(|target| target.status == step.status) {
+                targets.clear();
+            }
             let (agents, unsupported) = item
                 .agents
                 .iter()
@@ -172,12 +213,42 @@ pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
                 id: item.id.clone(),
                 agents,
                 unsupported,
+                targets,
                 status: step.status,
                 reason: step.reason,
                 retryable: (step.status == Status::Failed).then_some(step.retryable),
+                asks: step.asks,
             }
         })
         .collect()
+}
+
+impl ItemResult {
+    /// Whether this item, or any of its agents, changed.
+    pub(super) fn changed(&self) -> bool {
+        self.status == Status::Changed
+            || self
+                .targets
+                .iter()
+                .any(|target| target.status == Status::Changed)
+    }
+}
+
+/// An item's agents followed by every other agent that would read what it
+/// writes: each sees the item, so each must be approved.
+pub(super) fn with_readers(run: &Run, item: &SetupItem) -> Result<Vec<String>, AppError> {
+    let readers = match item.kind {
+        ItemKind::Skill => skill_readers(run, item),
+        ItemKind::Instruction => instruction_readers(run, item)?,
+        ItemKind::Mcp => Vec::new(),
+    };
+    let mut agents = item.agents.clone();
+    for reader in readers {
+        if !agents.contains(&reader) {
+            agents.push(reader);
+        }
+    }
+    Ok(agents)
 }
 
 /// How many `items` have each of `statuses`, by status name.
@@ -203,7 +274,9 @@ pub(super) fn sorted_agents<'a>(lists: impl Iterator<Item = &'a Vec<String>>) ->
     agents
 }
 
-/// Lookups made once per request rather than once per item.
+/// Lookups made once per request rather than once per item. The Library is
+/// read only for the kinds and Skills a request names, so an unreadable item
+/// of another kind never blocks it.
 pub(super) struct Run<'a> {
     pub(super) ctx: &'a HostCtx,
     pub(super) project: ProjectRecord,
@@ -212,11 +285,12 @@ pub(super) struct Run<'a> {
     pub(super) skill_groups: Vec<(AgentSkillConfig, Vec<String>)>,
     pub(super) available_skill_groups: HashSet<String>,
     pub(super) instruction_recovery_pending: bool,
-    /// The Library's Skills, by ID.
-    skills: BTreeMap<String, SkillRecord>,
+    /// The Library's Skills looked up so far, by ID; `None` for one it lacks.
+    skills: RefCell<BTreeMap<String, Option<SkillRecord>>>,
     /// The Library's Instruction bundles, as listed.
-    instructions: Vec<Value>,
-    pub(super) mcp_definitions: Vec<Value>,
+    instructions: OnceCell<Vec<Value>>,
+    /// The Library's MCP connections, and this project's MCP deployments.
+    mcps: OnceCell<(Vec<Value>, Vec<Value>)>,
     /// Agents with project-scoped MCP configuration.
     pub(super) mcp_agents: Vec<String>,
 }
@@ -241,27 +315,13 @@ impl<'a> Run<'a> {
             })
             .filter_map(|target| target["agentKey"].as_str().map(str::to_owned))
             .collect();
-        let definitions = mcps::dispatch(ctx, json!({ "action": "list" }))?;
-        let instructions = instructions::dispatch(ctx, json!({ "action": "list" }))?;
         Ok(Self {
-            skills: ctx
-                .store
-                .get_all_skills()
-                .map_err(AppError::db)?
-                .into_iter()
-                .map(|skill| (skill.id.clone(), skill))
-                .collect(),
-            instructions: instructions["items"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default(),
+            skills: RefCell::default(),
+            instructions: OnceCell::new(),
+            mcps: OnceCell::new(),
             skill_groups: agent_skill_groups(&ctx.store),
             available_skill_groups: available_agent_keys(&ctx.store, &project),
             instruction_recovery_pending: instructions::recovery_pending(ctx)?,
-            mcp_definitions: definitions["definitions"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default(),
             mcp_agents,
             ctx,
             project,
@@ -284,14 +344,29 @@ impl<'a> Run<'a> {
     }
 
     /// The Library's Skill with this ID.
-    pub(super) fn skill(&self, id: &str) -> Option<&SkillRecord> {
-        self.skills.get(id)
+    pub(super) fn skill(&self, id: &str) -> Result<Option<SkillRecord>, AppError> {
+        if let Some(found) = self.skills.borrow().get(id) {
+            return Ok(found.clone());
+        }
+        let found = self.ctx.store.get_skill_by_id(id).map_err(AppError::db)?;
+        self.skills
+            .borrow_mut()
+            .insert(id.to_owned(), found.clone());
+        Ok(found)
     }
 
     /// The Library's Instruction bundle with this ID, or `None` when the
     /// Library confirms it is gone.
     pub(super) fn instruction(&self, id: &str) -> Result<Option<&Value>, AppError> {
-        if let Some(found) = self.instructions.iter().find(|item| item["id"] == id) {
+        let listed = match self.instructions.get() {
+            Some(listed) => listed,
+            None => {
+                let reply = instructions::dispatch(self.ctx, json!({ "action": "list" }))?;
+                let listed = reply["items"].as_array().cloned().unwrap_or_default();
+                self.instructions.get_or_init(|| listed)
+            }
+        };
+        if let Some(found) = listed.iter().find(|item| item["id"] == id) {
             return Ok(Some(found));
         }
         // Listing skips a bundle it cannot read; only a lookup tells that
@@ -305,21 +380,51 @@ impl<'a> Run<'a> {
         }
     }
 
+    fn mcps(&self) -> Result<&(Vec<Value>, Vec<Value>), AppError> {
+        if let Some(found) = self.mcps.get() {
+            return Ok(found);
+        }
+        let listed = |reply: Value, key: &str| reply[key].as_array().cloned().unwrap_or_default();
+        let definitions = listed(
+            mcps::dispatch(self.ctx, json!({ "action": "list" }))?,
+            "definitions",
+        );
+        let deployments: Vec<Value> = listed(
+            mcps::dispatch(self.ctx, json!({ "action": "deployments" }))?,
+            "deployments",
+        )
+        .into_iter()
+        .filter(|d| !self.project.id.is_empty() && d["target"]["projectId"] == self.project.id)
+        .collect();
+        Ok(self.mcps.get_or_init(|| (definitions, deployments)))
+    }
+
     /// The Library's MCP connection with this ID.
-    pub(super) fn mcp_definition(&self, id: &str) -> Option<&Value> {
-        self.mcp_definitions.iter().find(|d| d["id"] == id)
+    pub(super) fn mcp_definition(&self, id: &str) -> Result<Option<&Value>, AppError> {
+        Ok(self.mcps()?.0.iter().find(|d| d["id"] == id))
+    }
+
+    /// The override an agent's existing deployment of this MCP connection
+    /// applies in this project, if any.
+    pub(super) fn mcp_override(&self, agent: &str, id: &str) -> Result<Option<&Value>, AppError> {
+        Ok(self
+            .mcps()?
+            .1
+            .iter()
+            .find(|d| d["target"]["agentKey"] == agent && d["definitionId"] == id)
+            .map(|d| &d["overrideConfig"])
+            .filter(|o| !o.is_null()))
     }
 }
 
 /// Not found means the Library confirms the item is gone; any other failure
 /// to read it leaves the question open.
 fn missing(error: AppError) -> Step {
-    let reason = if error.kind == ErrorKind::NotFound {
-        "confirmed_absent"
+    if error.kind == ErrorKind::NotFound {
+        Step::asks(Status::Missing, Reason::ConfirmedAbsent)
     } else {
-        "unavailable"
-    };
-    Step::because(Status::Missing, reason)
+        Step::because(Status::Missing, "unavailable")
+    }
 }
 
 /// The worst of several agents' steps for one item.

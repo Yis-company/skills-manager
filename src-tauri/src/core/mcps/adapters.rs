@@ -388,6 +388,7 @@ pub fn preview(
                 changes.push(json!({"name":name,"kind":"remove","warnings":[]}));
             }
         } else {
+            let rendered = desired.clone();
             if let Some(base) = base {
                 normalize(&cfg.agent, &name, base)?;
                 if existing != Some(base) {
@@ -423,7 +424,9 @@ pub fn preview(
             } else {
                 None
             };
-            changes.push(json!({"name":final_name,"kind":if reviewed_existing.is_some(){"update"}else{"add"},"beforeSummary":reviewed_existing.map(summary),"afterSummary":summary(result),"warnings":[]}));
+            // keptEdits: the result keeps an edit made there, so it differs
+            // from what the definition renders.
+            changes.push(json!({"name":final_name,"kind":if reviewed_existing.is_some(){"update"}else{"add"},"beforeSummary":reviewed_existing.map(summary),"afterSummary":summary(result),"keptEdits":rendered.as_ref()!=Some(result),"warnings":[]}));
         }
         if !names.insert(precondition_name.clone()) {
             return Err(AppError::invalid_input(

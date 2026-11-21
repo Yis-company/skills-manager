@@ -121,7 +121,7 @@ impl Machine {
             { "kind": "skill", "id": skill_id, "agents": ["claude_code"] },
             { "kind": "instruction", "id": bundle["item"]["id"], "agents": ["claude_code"] },
             { "kind": "mcp", "id": definition["id"], "agents": ["claude_code"],
-              "approved": project_setup::mcp_value(definition) },
+              "approved": { "claude_code": project_setup::mcp_value(definition) } },
         ]);
         project_setup::save_setup(&store, "p1", 0, serde_json::from_value(items).unwrap()).unwrap();
     }

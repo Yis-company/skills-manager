@@ -1,13 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use super::{Run, Status, Step};
+use super::{Reason, Run, Status, Step};
 use crate::commands::projects::{
     agent_skill_configs, ensure_safe_skill_relative_path, is_copy_project,
 };
 use crate::core::error::AppError;
 use crate::core::project_scanner::AgentSkillConfig;
-use crate::core::project_setup::{ItemKind, SetupItem};
-use crate::core::skill_store::SkillRecord;
+use crate::core::project_setup::SetupItem;
 use crate::core::{content_hash, project_deploy, sync_engine};
 
 /// What sits at a deployment slot, compared with what belongs there.
@@ -18,23 +17,25 @@ enum Slot {
     Different,
 }
 
-/// A link to `expected`, or content equal to it, is the same. An unedited
-/// copy behind the Library reads as different: the accepted v1 limit.
+/// A link is the same only when it leads to `expected`; a real folder, when
+/// its content equals it. An unedited copy behind the Library reads as
+/// different: the accepted v1 limit.
 fn slot(path: &Path, expected: &Path) -> Slot {
-    if std::fs::symlink_metadata(path).is_err() {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
         return Slot::Absent;
-    }
-    let same_target = path.canonicalize().ok().is_some_and(|target| {
-        expected
-            .canonicalize()
-            .is_ok_and(|expected| expected == target)
-    });
-    let same_content = || {
-        path.is_dir()
+    };
+    let same = if meta.file_type().is_symlink() {
+        path.canonicalize().ok().is_some_and(|target| {
+            expected
+                .canonicalize()
+                .is_ok_and(|expected| expected == target)
+        })
+    } else {
+        meta.is_dir()
             && content_hash::hash_directory(path).ok()
                 == content_hash::hash_directory(expected).ok()
     };
-    if same_target || same_content() {
+    if same {
         Slot::Same
     } else {
         Slot::Different
@@ -71,24 +72,15 @@ fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Ve
     (groups, readers)
 }
 
-/// An item's agents followed by any other agent that would read a Skill.
-pub(in crate::core::project_setup) fn with_readers(run: &Run, item: &SetupItem) -> Vec<String> {
-    let mut agents = item.agents.clone();
-    if item.kind == ItemKind::Skill {
-        for reader in skill_targets(run, item).1 {
-            if !agents.contains(&reader) {
-                agents.push(reader);
-            }
-        }
-    }
-    agents
+/// Every agent that would read the folders a Skill deploys to.
+pub(super) fn skill_readers(run: &Run, item: &SetupItem) -> Vec<String> {
+    skill_targets(run, item).1
 }
 
 pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
     let (ctx, project) = (run.ctx, &run.project);
-    let skill: &SkillRecord = match run.skill(&item.id) {
-        Some(skill) => skill,
-        None => return Ok(Step::because(Status::Missing, "confirmed_absent")),
+    let Some(skill) = run.skill(&item.id)? else {
+        return Ok(Step::asks(Status::Missing, Reason::ConfirmedAbsent));
     };
     let source = PathBuf::from(&skill.central_path);
     if !source.is_dir() {
@@ -104,7 +96,7 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError>
         return Ok(Step::because(Status::Blocked, "no_supported_agent"));
     }
     if readers.iter().any(|reader| !item.agents.contains(reader)) {
-        return Ok(Step::because(Status::NeedsReview, "unapproved_agents"));
+        return Ok(Step::asks(Status::NeedsReview, Reason::UnapprovedAgents));
     }
 
     // Each slot and what must be there: the library skill, or in copy mode
