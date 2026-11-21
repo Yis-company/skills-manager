@@ -9,7 +9,7 @@
 //! returns a recorded result, and otherwise reports Outcome unknown: apply is
 //! never sent again, since a missing receipt is not proof that nothing ran.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -25,8 +25,10 @@ const COMMAND: &str = "project_setup_request";
 
 pub(super) struct Hosts<'a> {
     cli: &'a CliCommand,
-    /// By host ID.
+    /// By host ID, kept open: each `serve` start rewrites state on its host.
     sessions: RefCell<HashMap<String, RemoteSession>>,
+    /// Built on first use and shared by every call.
+    runtime: OnceCell<tokio::runtime::Runtime>,
 }
 
 impl<'a> Hosts<'a> {
@@ -34,7 +36,19 @@ impl<'a> Hosts<'a> {
         Self {
             cli,
             sessions: RefCell::default(),
+            runtime: OnceCell::new(),
         }
+    }
+
+    fn runtime(&self) -> Result<&tokio::runtime::Runtime, AppError> {
+        if let Some(runtime) = self.runtime.get() {
+            return Ok(runtime);
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(AppError::internal)?;
+        Ok(self.runtime.get_or_init(|| runtime))
     }
 
     /// Answer `request` on the SSH host registered here as `name`.
@@ -45,10 +59,7 @@ impl<'a> Hosts<'a> {
         request: Map<String, Value>,
     ) -> Result<Value, AppError> {
         let host = resolve(local, name)?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(AppError::internal)?;
+        let runtime = self.runtime()?;
         let send = |session: &RemoteSession, request: &Map<String, Value>| {
             runtime.block_on(session.call(COMMAND, json!({ "request": request })))
         };
