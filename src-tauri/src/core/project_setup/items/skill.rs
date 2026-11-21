@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use super::{Reason, Run, Status, Step};
+use super::{AgentStep, Reason, Run, Status, Step};
 use crate::commands::projects::{
     agent_skill_configs, ensure_safe_skill_relative_path, is_copy_project,
 };
@@ -95,14 +95,17 @@ pub(super) fn skill_readers(run: &Run, item: &SetupItem) -> Vec<String> {
     skill_targets(run, item).1
 }
 
-pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
+/// Set a Skill up for each of its agents. Every slot is written and
+/// checked even when another fails, so each agent reports its own result.
+pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Vec<AgentStep>, AppError> {
+    let whole = |step: Step| Ok(vec![(None, step)]);
     let (ctx, project) = (run.ctx, &run.project);
     let Some(skill) = run.skill(&item.id)? else {
-        return Ok(Step::asks(Status::Missing, Reason::ConfirmedAbsent));
+        return whole(Step::asks(Status::Missing, Reason::ConfirmedAbsent));
     };
     let source = PathBuf::from(&skill.central_path);
     if !source.is_dir() {
-        return Ok(Step::because(Status::Missing, "unavailable"));
+        return whole(Step::because(Status::Missing, "unavailable"));
     }
     let dir_name = sync_engine::target_dir_name(&source, &skill.name);
     ensure_safe_skill_relative_path(&dir_name)?;
@@ -111,23 +114,24 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError>
 
     let (groups, readers) = skill_targets(run, item);
     if groups.is_empty() {
-        return Ok(Step::because(Status::Blocked, "no_supported_agent"));
+        return whole(Step::because(Status::Blocked, "no_supported_agent"));
     }
     if readers.iter().any(|reader| !item.agents.contains(reader)) {
-        return Ok(Step::asks(Status::NeedsReview, Reason::UnapprovedAgents));
+        return whole(Step::asks(Status::NeedsReview, Reason::UnapprovedAgents));
     }
 
-    // Each slot and what must be there: the library skill, or in copy mode
-    // the vendored copy and links to it.
-    let mut slots: Vec<(PathBuf, PathBuf)> = Vec::new();
+    // Each slot, what must be there, and the agents that read it: the
+    // library skill, or in copy mode the vendored copy, read by every
+    // agent, and links to it.
+    let mut slots: Vec<(PathBuf, PathBuf, Vec<String>)> = Vec::new();
     let vendored = project_deploy::vendored_path(root, &dir_name, true);
     if copy_mode {
         if !vendored.1 {
-            return Ok(Step::because(Status::NeedsReview, "disabled_here"));
+            return whole(Step::because(Status::NeedsReview, "disabled_here"));
         }
-        slots.push((vendored.0.clone(), source.clone()));
+        slots.push((vendored.0.clone(), source.clone(), readers.clone()));
     }
-    for (config, _) in groups.iter().copied() {
+    for (config, members) in groups.iter().copied() {
         let folder = root.join(&config.relative_skills_dir);
         if root
             .join(format!("{}-disabled", config.relative_skills_dir))
@@ -135,62 +139,97 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError>
             .symlink_metadata()
             .is_ok()
         {
-            return Ok(Step::because(Status::NeedsReview, "disabled_here"));
+            return whole(Step::because(Status::NeedsReview, "disabled_here"));
         }
         if copy_mode && project_deploy::is_vendored_dir(&config.relative_skills_dir) {
             continue;
         }
         let expected = if copy_mode { &vendored.0 } else { &source };
         let path = folder.join(&dir_name);
-        if !slots.iter().any(|(existing, _)| *existing == path) {
-            slots.push((path, expected.clone()));
+        match slots.iter_mut().find(|(existing, ..)| *existing == path) {
+            Some((.., agents)) => agents.extend(members.iter().cloned()),
+            None => slots.push((path, expected.clone(), members.clone())),
         }
     }
-    if !slots.iter().all(|(path, _)| inside(root, path)) {
-        return Ok(Step::because(Status::Blocked, "outside_checkout"));
+    if !slots.iter().all(|(path, ..)| inside(root, path)) {
+        return whole(Step::because(Status::Blocked, "outside_checkout"));
     }
     let states: Vec<Slot> = slots
         .iter()
-        .map(|(path, expected)| slot(path, expected))
+        .map(|(path, expected, _)| slot(path, expected))
         .collect();
     if states.contains(&Slot::Different) {
-        return Ok(Step::because(Status::NeedsReview, "edited_here"));
+        return whole(Step::because(Status::NeedsReview, "edited_here"));
     }
     if states.iter().all(|state| *state == Slot::Same) {
-        return Ok(Step::of(Status::Unchanged));
+        return whole(Step::of(Status::Unchanged));
     }
     if !run.write {
-        return Ok(Step::of(Status::NotApplied));
+        return whole(Step::of(Status::NotApplied));
     }
 
+    // Each slot's write error, if any.
+    let mut errors: Vec<Option<String>> = vec![None; slots.len()];
     if copy_mode {
         let keys: Vec<String> = groups
             .iter()
             .map(|(config, _)| config.key.clone())
             .collect();
         let configs = agent_skill_configs(&ctx.store);
-        let failed = project_deploy::deploy_copy_mode(root, &configs, &source, &dir_name, &keys)
-            .map_err(AppError::io)?;
-        if let Some(failure) = failed.first() {
-            return Ok(Step::failed(failure.error.clone(), true));
+        match project_deploy::deploy_copy_mode(root, &configs, &source, &dir_name, &keys) {
+            Err(error) => errors.fill(Some(format!("{error:#}"))),
+            Ok(failed) => {
+                for failure in failed {
+                    let Some((config, _)) = groups.iter().find(|(c, _)| c.key == failure.agent)
+                    else {
+                        continue;
+                    };
+                    let path = root.join(&config.relative_skills_dir).join(&dir_name);
+                    if let Some(n) = slots.iter().position(|(p, ..)| *p == path) {
+                        errors[n] = Some(failure.error);
+                    }
+                }
+            }
         }
     } else {
         let configured = ctx.store.get_setting("sync_mode").map_err(AppError::db)?;
-        for ((path, _), state) in slots.iter().zip(&states) {
-            if *state == Slot::Absent {
+        let mode = sync_engine::sync_mode_for_tool(&groups[0].0.key, configured.as_deref());
+        for (n, (path, ..)) in slots.iter().enumerate() {
+            if states[n] == Slot::Absent {
                 let folder = path.parent().unwrap_or(root);
-                let mode = sync_engine::sync_mode_for_tool(&groups[0].0.key, configured.as_deref());
-                project_deploy::deploy_skill(&source, folder, &dir_name, mode)
-                    .map_err(AppError::io)?;
+                if let Err(error) = project_deploy::deploy_skill(&source, folder, &dir_name, mode) {
+                    errors[n] = Some(format!("{error:#}"));
+                }
             }
         }
     }
-    let verified = slots
+
+    // Each agent: changed when every slot it reads now holds the skill and
+    // one was written, failed otherwise.
+    let verified: Vec<bool> = slots
         .iter()
-        .all(|(path, expected)| slot(path, expected) == Slot::Same);
-    Ok(if verified {
-        Step::of(Status::Changed)
-    } else {
-        Step::failed("verification_failed", false)
-    })
+        .map(|(path, expected, _)| slot(path, expected) == Slot::Same)
+        .collect();
+    let agents = item
+        .agents
+        .iter()
+        .filter(|agent| slots.iter().any(|(.., readers)| readers.contains(agent)));
+    Ok(agents
+        .map(|agent| {
+            let read: Vec<usize> = (0..slots.len())
+                .filter(|n| slots[*n].2.contains(agent))
+                .collect();
+            let step = match read.iter().find(|n| !verified[**n]) {
+                Some(n) => match &errors[*n] {
+                    Some(error) => Step::failed(error.clone(), true),
+                    None => Step::failed("verification_failed", false),
+                },
+                None if read.iter().any(|n| states[*n] == Slot::Absent) => {
+                    Step::of(Status::Changed)
+                }
+                None => Step::of(Status::Unchanged),
+            };
+            (Some(agent.clone()), step)
+        })
+        .collect())
 }

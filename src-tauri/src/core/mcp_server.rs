@@ -477,9 +477,9 @@ fn apply_tool() -> Value {
                         "confirmation_needed",
                     ],
                     "description": "partial_success: some items changed, others need a \
-                        decision, retry or recovery. needs_review: nothing changed and an \
-                        item needs a decision or recovery. retryable_failure: nothing changed \
-                        and every unsettled item failed in a way a new apply may fix.",
+                        decision, retry or recovery. needs_review: no change was verified \
+                        and an item needs a decision or recovery. retryable_failure: no change \
+                        was verified and every unsettled item failed in a way a new apply may fix.",
                 },
                 "agents": { "type": "array", "items": { "type": "string" } },
                 "counts": {

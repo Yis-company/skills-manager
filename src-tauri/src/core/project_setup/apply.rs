@@ -392,14 +392,14 @@ fn outcome(items: &[ItemResult]) -> (Outcome, &'static str) {
     if unsettled.all(|item| item.retryable == Some(true)) {
         return (
             Outcome::RetryableFailure,
-            "Nothing was changed. Apply again under a new operation_id: apply checks each \
-             destination before writing and never overwrites edits.",
+            "No change was verified. Apply again under a new operation_id: apply checks \
+             each destination before writing and never overwrites edits.",
         );
     }
     (
         Outcome::NeedsReview,
-        "Nothing was changed. Ask again with the same operation_id and evidence: true to \
-         list the items that need a decision or recovery.",
+        "No change was verified. Ask again with the same operation_id and evidence: true \
+         to list the items that need a decision, retry or recovery.",
     )
 }
 
@@ -1819,5 +1819,89 @@ pub(super) mod tests {
         assert_eq!(item(&result, "skill")["status"], "blocked", "{result}");
         assert_eq!(item(&result, "skill")["reason"], "outside_checkout");
         assert_eq!(std::fs::read_dir(&shared).unwrap().count(), 0);
+    }
+
+    /// Each agent's status in an item's `targets`.
+    fn target_status(item: &Value, agent: &str) -> Value {
+        item["targets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|t| t["agent"] == agent)
+            .map_or(Value::Null, |t| t["status"].clone())
+    }
+
+    #[test]
+    fn a_skill_written_for_one_agent_before_another_fails_is_a_partial_success() {
+        let fixture = Fixture::new();
+        with_agent_b(&fixture);
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([
+            { "kind": "skill", "id": "s1", "agents": ["agent_a", "agent_b"] },
+        ]));
+        std::fs::write(fixture.path(".b"), "not a folder").unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        let skill = item(&result, "skill");
+        assert_eq!(result["outcome"], "partial_success", "{result}");
+        assert_eq!(target_status(skill, "agent_a"), "changed", "{skill}");
+        assert_eq!(target_status(skill, "agent_b"), "failed", "{skill}");
+        assert!(fixture.path(".a/skills/review").exists());
+    }
+
+    #[test]
+    fn a_vendored_skill_whose_agent_link_fails_is_a_partial_success() {
+        let fixture = Fixture::new();
+        let mut project = fixture.ctx.store.get_project_by_id("p1").unwrap().unwrap();
+        project.deploy_mode = "copy".into();
+        fixture.ctx.store.delete_project("p1").unwrap();
+        fixture.ctx.store.insert_project(&project).unwrap();
+        fixture.skill("s1", "review");
+        let mut agents = vec!["agent_a".to_string()];
+        for (config, members) in crate::commands::projects::agent_skill_groups(&fixture.ctx.store) {
+            if crate::core::project_deploy::is_vendored_dir(&config.relative_skills_dir) {
+                agents.extend(members);
+            }
+        }
+        let reader = agents[1].clone();
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": agents }]));
+        std::fs::write(fixture.path(".a"), "not a folder").unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        let skill = item(&result, "skill");
+        assert_eq!(result["outcome"], "partial_success", "{result}");
+        assert_eq!(target_status(skill, "agent_a"), "failed", "{skill}");
+        assert_eq!(target_status(skill, &reader), "changed", "{skill}");
+        assert!(fixture.path(".agents/skills/review/SKILL.md").is_file());
+    }
+
+    #[test]
+    fn an_instruction_written_for_one_agent_before_another_fails_is_a_partial_success() {
+        let fixture = Fixture::new();
+        // Codex reads none of the bundle's files, so its part fails after
+        // Claude Code's was written.
+        let bundle = fixture.instruction(json!({ "CLAUDE.md": "Be brief.\n" }));
+        fixture.save_setup(json!([
+            { "kind": "instruction", "id": bundle, "agents": ["claude_code", "codex"] },
+        ]));
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        let instruction = item(&result, "instruction");
+        assert_eq!(result["outcome"], "partial_success", "{result}");
+        assert_eq!(target_status(instruction, "claude_code"), "changed", "{instruction}");
+        assert_eq!(target_status(instruction, "codex"), "failed", "{instruction}");
+        assert_eq!(
+            std::fs::read_to_string(fixture.path("CLAUDE.md")).unwrap(),
+            "Be brief.\n"
+        );
     }
 }

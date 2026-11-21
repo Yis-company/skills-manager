@@ -96,13 +96,14 @@ pub(super) fn apply_instruction(
     if run.instruction_recovery_pending {
         return whole(Step::because(Status::Blocked, "pending_recovery"));
     }
-    agents
+    // One agent's failure never hides what was written for the others.
+    Ok(agents
         .into_iter()
         .map(|agent| {
-            let step = apply_for(run, item, agent, deletes_approved)?;
-            Ok((Some(agent.clone()), step))
+            let step = apply_for(run, item, agent, deletes_approved).unwrap_or_else(Step::error);
+            (Some(agent.clone()), step)
         })
-        .collect()
+        .collect())
 }
 
 fn apply_for(

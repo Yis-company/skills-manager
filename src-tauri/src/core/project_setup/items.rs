@@ -161,7 +161,9 @@ pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
         steps.push(match (&planned.held, item.kind) {
             (Some(held), _) => vec![(None, held.clone())],
             _ if item.agents.is_empty() => whole(Ok(Step::because(Status::Blocked, "no_agents"))),
-            (None, ItemKind::Skill) => whole(apply_skill(run, item)),
+            (None, ItemKind::Skill) => {
+                apply_skill(run, item).unwrap_or_else(|error| vec![(None, Step::error(error))])
+            }
             (None, ItemKind::Instruction) => {
                 apply_instruction(run, item, &planned.deletes_approved)
                     .unwrap_or_else(|error| vec![(None, Step::error(error))])
