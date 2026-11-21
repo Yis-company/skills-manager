@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use app_lib::core::error::AppError;
 use app_lib::core::host::{HostCtx, NoopEvents};
-use app_lib::core::mcp_server::{self, Library};
+use app_lib::core::mcp_server::{self, Server};
 use app_lib::core::project_setup;
 use app_lib::core::remote_session::RemoteSession;
 use app_lib::core::skill_store::{ProjectRecord, RemoteHostRecord, SkillStore};
@@ -160,7 +160,7 @@ impl Local {
         cli: impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static,
         messages: &[Value],
     ) -> Vec<Value> {
-        run(&Library::new(&self.ctx, &refuse_writes, &cli), messages)
+        run(&Server::new(&self.ctx, &refuse_writes, &cli), messages)
     }
 
     /// One tool call; its result.
@@ -184,10 +184,10 @@ fn tool_call(id: u64, name: &str, arguments: Value) -> Value {
 }
 
 /// Answer `messages` on `library`, the way `cli mcp` does.
-fn run(library: &Library, messages: &[Value]) -> Vec<Value> {
+fn run(server: &Server, messages: &[Value]) -> Vec<Value> {
     let input: String = messages.iter().map(|m| format!("{m}\n")).collect();
     let mut output = Vec::new();
-    mcp_server::run(input.as_bytes(), &mut output, library).unwrap();
+    mcp_server::run(input.as_bytes(), &mut output, server).unwrap();
     String::from_utf8(output)
         .unwrap()
         .lines()
@@ -488,15 +488,15 @@ fn two_simultaneous_calls_with_the_same_operation_id_apply_once() {
         let calls: Vec<_> = (0..2)
             .map(|_| {
                 scope.spawn(|| {
-                    let library = Library::new(&local.ctx, &refuse_writes, &cli);
+                    let server = Server::new(&local.ctx, &refuse_writes, &cli);
                     // Two `serve` startups on one library can collide; this
                     // test races the applies, so each session starts first.
                     let started = warming.lock().unwrap();
-                    run(&library, &[call(1, "discover_project_setup",
+                    run(&server, &[call(1, "discover_project_setup",
                         json!({ "host": HOST, "checkout_path": checkout }))]);
                     drop(started);
                     barrier.wait();
-                    run(&library, &[call(2, "apply_project_setup",
+                    run(&server, &[call(2, "apply_project_setup",
                         json!({ "host": HOST, "checkout_path": checkout, "operation_id": "op-1" }))])
                         .remove(0)["result"]
                         .take()
@@ -577,7 +577,7 @@ fn discovery_and_inspection_on_a_host_change_nothing_after_serve_starts() {
     let checkout = remote.checkout();
     apply_on_host(&local, remote.cli(), &checkout);
     let cli = remote.cli();
-    let library = Library::new(&local.ctx, &refuse_writes, &cli);
+    let server = Server::new(&local.ctx, &refuse_writes, &cli);
     let discover = |id| {
         tool_call(
             id,
@@ -586,11 +586,11 @@ fn discovery_and_inspection_on_a_host_change_nothing_after_serve_starts() {
         )
     };
     // The first call starts `serve`, which may refresh the library.
-    run(&library, &[discover(1)]);
+    run(&server, &[discover(1)]);
     let before = state(&remote);
 
     let lines = run(
-        &library,
+        &server,
         &[
             discover(2),
             tool_call(

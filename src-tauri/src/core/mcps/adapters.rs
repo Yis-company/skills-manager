@@ -659,20 +659,26 @@ pub fn apply(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
 }
 
 /// The name Agents Manager's own MCP server is registered under.
-const SELF_SERVER_NAME: &str = "skills-manager";
+pub const SELF_SERVER_NAME: &str = "skills-manager";
+
+/// A coding agent Agents Manager's own MCP server registers with, by agent key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Client {
+    Codex,
+    ClaudeCode,
+}
 
 /// Register `command mcp` as a user-scope stdio MCP server for Codex or Claude
 /// Code. An equivalent entry is left as it is; a different entry under the
 /// same name is a conflict and is never replaced.
-pub fn register_self(ctx: &HostCtx, agent_key: &str, command: &Path) -> Result<Value, AppError> {
-    let next_step = match agent_key {
-        "codex" => "Start a new Codex session, or a new thread in T3, to load it.",
-        "claude_code" => "Start a new Claude Code session to load it.",
-        _ => {
-            return Err(AppError::invalid_input(
-                "Register with codex or claude only",
-            ))
-        }
+pub fn register_self(ctx: &HostCtx, client: Client, command: &Path) -> Result<Value, AppError> {
+    let (agent_key, next_step) = match client {
+        Client::Codex => (
+            "codex",
+            "Start a new Codex session, or a new thread in T3, to load it.",
+        ),
+        Client::ClaudeCode => ("claude_code", "Start a new Claude Code session to load it."),
     };
     if !command.is_file() {
         return Err(AppError::not_found(format!(

@@ -21,8 +21,8 @@ use serde_json::{json, Value};
 
 use super::error::AppError;
 use super::host::HostCtx;
-use super::project_setup;
 use super::remote_session::CliCommand;
+use super::{mcps, project_setup};
 
 mod remote;
 
@@ -42,17 +42,17 @@ const HOST_DESCRIPTION: &str = "The name of a registered SSH host to run on inst
     unlike a reachable host whose Sync is offline. A host on another version is refused, \
     never installed or updated.";
 
-/// How the server reaches the library: read-only, and writable on demand;
-/// and SSH hosts, through `cli` ([`super::remote_host::cli_command`] outside
+/// What the server answers from: this computer's library, read-only and
+/// writable on demand, and registered SSH hosts, through `cli` ([`super::remote_host::cli_command`] outside
 /// tests).
-pub struct Library<'a> {
+pub struct Server<'a> {
     read_only: &'a HostCtx,
     open_writable: &'a dyn Fn() -> Result<HostCtx, AppError>,
     writable: OnceCell<HostCtx>,
     hosts: remote::Hosts<'a>,
 }
 
-impl<'a> Library<'a> {
+impl<'a> Server<'a> {
     pub fn new(
         read_only: &'a HostCtx,
         open_writable: &'a dyn Fn() -> Result<HostCtx, AppError>,
@@ -76,7 +76,7 @@ impl<'a> Library<'a> {
 }
 
 /// Answer JSON-RPC messages from `reader` on `writer` until `reader` ends.
-pub fn run(mut reader: impl BufRead, mut writer: impl Write, ctx: &Library) -> io::Result<()> {
+pub fn run(mut reader: impl BufRead, mut writer: impl Write, server: &Server) -> io::Result<()> {
     let mut line = Vec::new();
     loop {
         line.clear();
@@ -87,7 +87,7 @@ pub fn run(mut reader: impl BufRead, mut writer: impl Write, ctx: &Library) -> i
             continue;
         }
         let reply = match serde_json::from_slice::<Value>(&line) {
-            Ok(message) => answer(ctx, &message),
+            Ok(message) => answer(server, &message),
             Err(err) => Some(failure(
                 Value::Null,
                 PARSE_ERROR,
@@ -104,7 +104,7 @@ pub fn run(mut reader: impl BufRead, mut writer: impl Write, ctx: &Library) -> i
 }
 
 /// The reply to one message, or `None` for a notification or a response.
-fn answer(ctx: &Library, message: &Value) -> Option<Value> {
+fn answer(server: &Server, message: &Value) -> Option<Value> {
     let id = message.get("id")?.clone();
     let method = message.get("method")?.as_str().unwrap_or_default();
     let params = &message["params"];
@@ -112,7 +112,7 @@ fn answer(ctx: &Library, message: &Value) -> Option<Value> {
         "initialize" => Ok(initialize(params)),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": [discover_tool(), apply_tool(), inspect_tool()] })),
-        "tools/call" => call_tool(ctx, params),
+        "tools/call" => call_tool(server, params),
         _ => Err((METHOD_NOT_FOUND, format!("Method not found: {method}"))),
     };
     Some(match result {
@@ -135,7 +135,7 @@ fn initialize(params: &Value) -> Value {
         "protocolVersion": version,
         "capabilities": { "tools": {} },
         "serverInfo": {
-            "name": "agents-manager",
+            "name": mcps::SELF_SERVER_NAME,
             "title": "Agents Manager",
             "version": env!("CARGO_PKG_VERSION"),
         },
@@ -149,7 +149,7 @@ fn initialize(params: &Value) -> Value {
 
 /// A tool's own failure is a result the agent reads (`isError`), not a
 /// protocol error; only an unknown tool is one.
-fn call_tool(ctx: &Library, params: &Value) -> Result<Value, (i64, String)> {
+fn call_tool(server: &Server, params: &Value) -> Result<Value, (i64, String)> {
     let name = params["name"].as_str().unwrap_or_default();
     let action = match name {
         DISCOVER => "discover",
@@ -172,11 +172,11 @@ fn call_tool(ctx: &Library, params: &Value) -> Result<Value, (i64, String)> {
     let proposes = request.contains_key("items") && !request.contains_key("confirm");
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         if let Some(host) = &host {
-            return ctx.hosts.call(ctx.read_only, host, request);
+            return server.hosts.call(server.read_only, host, request);
         }
         let ctx = match action {
-            "apply" if !proposes => ctx.writable()?,
-            _ => ctx.read_only,
+            "apply" if !proposes => server.writable()?,
+            _ => server.read_only,
         };
         project_setup::dispatch(ctx, Value::Object(request))
     }))

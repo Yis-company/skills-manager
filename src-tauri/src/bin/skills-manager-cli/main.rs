@@ -193,13 +193,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Mcp(McpArgs {
             command: Some(McpCommand::Register { client }),
         }) => {
-            let agent_key = match client {
-                McpClient::Codex => "codex",
-                McpClient::Claude => "claude_code",
+            let client = match client {
+                McpClient::Codex => mcps::Client::Codex,
+                McpClient::Claude => mcps::Client::ClaudeCode,
             };
             let command = std::env::current_exe()?.canonicalize()?;
             let ctx = HostCtx::headless(store);
-            let report = mcps::register_self(&ctx, agent_key, &command)?;
+            let report = mcps::register_self(&ctx, client, &command)?;
             print_json(&report, cli.json);
             Ok(())
         }
@@ -213,11 +213,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     .map(HostCtx::headless)
                     .map_err(|e| AppError::internal(format!("{e:#}")))
             };
-            let library = mcp_server::Library::new(&ctx, &open_writable, &remote_host::cli_command);
+            let server = mcp_server::Server::new(&ctx, &open_writable, &remote_host::cli_command);
             Ok(mcp_server::run(
                 io::stdin().lock(),
                 io::stdout().lock(),
-                &library,
+                &server,
             )?)
         }
     }

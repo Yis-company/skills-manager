@@ -40,28 +40,50 @@ pub(super) struct Decision {
     id: String,
     /// The agents the item targets now.
     agents: Vec<String>,
-    /// `first_setup`, or the item's result reason.
-    reason: String,
+    reason: Reason,
     name: Option<String>,
     /// What approving saves: the item for a first setup, the MCP value, the
     /// full agent list, or the files an Instruction bundle would delete.
     proposed: Value,
-    choices: Vec<String>,
+    choices: Vec<Choice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    choice: Option<String>,
+    choice: Option<Choice>,
     /// The Library ID to use instead, with `replace`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     replacement: Option<String>,
 }
 
-/// Item results whose reason a confirmation can resolve.
-pub(super) const DECISION_REASONS: &[&str] = &[
-    "approval_needed",
-    "value_changed",
-    "unapproved_agents",
-    "would_delete",
-    "confirmed_absent",
-];
+/// Why a decision is asked: a first setup, or an item result's reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Reason {
+    FirstSetup,
+    ApprovalNeeded,
+    ValueChanged,
+    UnapprovedAgents,
+    WouldDelete,
+    ConfirmedAbsent,
+}
+
+impl Reason {
+    /// The decision an item result's `reason` asks for, when a confirmation
+    /// can resolve it.
+    pub(super) fn of_result(reason: &str) -> Option<Self> {
+        serde_json::from_value(json!(reason))
+            .ok()
+            .filter(|reason| *reason != Self::FirstSetup)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Choice {
+    Approve,
+    Skip,
+    Restore,
+    Replace,
+    Revise,
+}
 pub(super) const CONFIRM: &str =
     "Show the proposal's decisions to the user. To go ahead, call again with \
     a new operation_id and confirm: the proposal, with a choice on each decision.";
@@ -145,13 +167,13 @@ pub(super) fn confirmed(
     let mut planned: Vec<Planned> = original.iter().cloned().map(Planned::new).collect();
     let mut keep = vec![true; planned.len()];
     for decision in confirm.decisions {
-        let choice = decision.choice.clone().unwrap_or_default();
-        if !decision.choices.contains(&choice) {
+        let Some(choice) = decision.choice.filter(|c| decision.choices.contains(c)) else {
             return Err(AppError::invalid_input(format!(
-                "Choose one of {:?} for {}",
-                decision.choices, decision.id
+                "Choose one of {} for {}",
+                json!(decision.choices),
+                decision.id
             )));
-        }
+        };
         let asked = SetupItem {
             kind: decision.kind,
             id: decision.id.clone(),
@@ -174,11 +196,11 @@ pub(super) fn confirmed(
             replacement: None,
             ..decision.clone()
         };
-        if decide(run, &current, &decision.reason)? != Some(echoed) {
+        if decide(run, &current, decision.reason)? != Some(echoed) {
             return Err(stale());
         }
         if first {
-            if choice == "approve" {
+            if choice == Choice::Approve {
                 let item = serde_json::from_value(decision.proposed)
                     .map_err(|e| AppError::invalid_input(format!("Invalid proposed item: {e}")))?;
                 planned.push(Planned::new(item));
@@ -192,11 +214,13 @@ pub(super) fn confirmed(
                 held,
                 deletes_approved,
             } = &mut planned[n];
-            match (decision.reason.as_str(), choice.as_str()) {
-                (_, "skip") => *held = Some(Step::because(Status::Blocked, "skipped")),
-                (_, "restore") => *held = Some(Step::because(Status::Missing, "awaiting_restore")),
-                (_, "revise") => keep[n] = false,
-                (_, "replace") => {
+            match (decision.reason, choice) {
+                (_, Choice::Skip) => *held = Some(Step::because(Status::Blocked, "skipped")),
+                (_, Choice::Restore) => {
+                    *held = Some(Step::because(Status::Missing, "awaiting_restore"))
+                }
+                (_, Choice::Revise) => keep[n] = false,
+                (_, Choice::Replace) => {
                     let replacement = SetupItem {
                         id: decision.replacement.clone().ok_or_else(|| {
                             AppError::invalid_input("replace needs a replacement Library ID")
@@ -212,8 +236,8 @@ pub(super) fn confirmed(
                     }
                     *item = replacement;
                 }
-                ("would_delete", _) => *deletes_approved = true,
-                ("unapproved_agents", _) => {
+                (Reason::WouldDelete, _) => *deletes_approved = true,
+                (Reason::UnapprovedAgents, _) => {
                     item.agents = serde_json::from_value(decision.proposed.clone())
                         .map_err(|e| AppError::invalid_input(format!("Invalid agents: {e}")))?;
                 }
@@ -240,17 +264,17 @@ pub(super) fn confirmed(
 pub(super) fn decide(
     run: &Run,
     item: &SetupItem,
-    reason: &str,
+    reason: Reason,
 ) -> Result<Option<Decision>, AppError> {
     let found = library_item(run, item)?;
-    let approve = || vec!["approve".to_owned(), "skip".to_owned()];
+    let approve = || vec![Choice::Approve, Choice::Skip];
     let (proposed, choices) = match (reason, item.kind, &found) {
-        ("confirmed_absent", _, None) => (
+        (Reason::ConfirmedAbsent, _, None) => (
             Value::Null,
-            vec!["restore".into(), "replace".into(), "revise".into()],
+            vec![Choice::Restore, Choice::Replace, Choice::Revise],
         ),
         (_, _, None) => return Ok(None),
-        ("first_setup", kind, Some(record)) => {
+        (Reason::FirstSetup, kind, Some(record)) => {
             let item = SetupItem {
                 agents: with_readers(run, item),
                 approved: (kind == ItemKind::Mcp).then(|| mcp_value(record)),
@@ -258,11 +282,11 @@ pub(super) fn decide(
             };
             (json!(item), approve())
         }
-        ("approval_needed" | "value_changed", ItemKind::Mcp, Some(record)) => {
+        (Reason::ApprovalNeeded | Reason::ValueChanged, ItemKind::Mcp, Some(record)) => {
             let value = mcp_value(record);
             let current = match &item.approved {
-                None => "approval_needed",
-                Some(approved) if *approved != value => "value_changed",
+                None => Reason::ApprovalNeeded,
+                Some(approved) if *approved != value => Reason::ValueChanged,
                 Some(_) => return Ok(None),
             };
             if current != reason {
@@ -270,14 +294,14 @@ pub(super) fn decide(
             }
             (value, approve())
         }
-        ("unapproved_agents", ItemKind::Skill, Some(_)) => {
+        (Reason::UnapprovedAgents, ItemKind::Skill, Some(_)) => {
             let agents = with_readers(run, item);
             if agents == item.agents {
                 return Ok(None);
             }
             (json!(agents), approve())
         }
-        ("would_delete", ItemKind::Instruction, Some(_)) => {
+        (Reason::WouldDelete, ItemKind::Instruction, Some(_)) => {
             let files = instruction_deletes(run, item)?;
             if files.is_empty() {
                 return Ok(None);
@@ -290,7 +314,7 @@ pub(super) fn decide(
         kind: item.kind,
         id: item.id.clone(),
         agents: item.agents.clone(),
-        reason: reason.to_owned(),
+        reason,
         name: found.and_then(|record| record["name"].as_str().map(str::to_owned)),
         proposed,
         choices,

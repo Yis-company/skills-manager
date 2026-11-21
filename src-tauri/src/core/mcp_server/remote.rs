@@ -16,6 +16,7 @@ use serde_json::{json, Map, Value};
 
 use crate::core::error::{AppError, ErrorKind};
 use crate::core::host::{HostCtx, NoopEvents};
+use crate::core::project_setup::ReceiptState;
 use crate::core::remote_session::{CliCommand, RemoteSession};
 use crate::core::skill_store::RemoteHostRecord;
 
@@ -78,10 +79,10 @@ impl<'a> Hosts<'a> {
                 inspect.insert("action".into(), json!("inspect"));
                 let found = send(session, &inspect)
                     .map_err(|e| unknown(format!("inspecting it failed: {}", e.message)))?;
-                match found["receipt"].as_str() {
+                match serde_json::from_value(found["receipt"].clone()) {
                     // Apply claims the receipt before any write, so nothing ran.
-                    Some("missing") => send(session, &request),
-                    Some("result") => {
+                    Ok(ReceiptState::Missing) => send(session, &request),
+                    Ok(ReceiptState::Result) => {
                         let mut recorded = found["recorded"].clone();
                         recorded["from_receipt"] = json!(true);
                         Ok(recorded)

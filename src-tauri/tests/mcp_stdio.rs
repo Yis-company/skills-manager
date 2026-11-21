@@ -170,6 +170,7 @@ fn the_handshake_matches_what_codex_and_claude_code_send() {
         assert_eq!(init["protocolVersion"], version, "{client}");
         assert!(init["capabilities"]["tools"].is_object());
         assert_eq!(init["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(init["serverInfo"]["name"], "skills-manager");
 
         let tools = reply(&lines, 2)["result"]["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 3);

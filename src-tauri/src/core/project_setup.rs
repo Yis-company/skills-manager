@@ -20,6 +20,7 @@ mod apply;
 mod confirm;
 mod inspect;
 mod items;
+pub use inspect::ReceiptState;
 pub use items::mcp::mcp_value;
 
 /// Library options per page.

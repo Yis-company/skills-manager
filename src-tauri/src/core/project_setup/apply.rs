@@ -12,9 +12,7 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::confirm::{
-    confirmed, decide, propose, save_confirmed, Plan, Proposal, CONFIRM, DECISION_REASONS,
-};
+use super::confirm::{confirmed, decide, propose, save_confirmed, Plan, Proposal, Reason, CONFIRM};
 use super::items::{check_items, counts, sorted_agents, ItemResult, Planned, Run, Status};
 use super::{find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
 use crate::commands::projects::new_project_deploy_mode;
@@ -80,7 +78,7 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
             proposal.decisions = items
                 .iter()
                 .map(|item| {
-                    decide(&run, item, "first_setup")?.ok_or_else(|| {
+                    decide(&run, item, Reason::FirstSetup)?.ok_or_else(|| {
                         AppError::invalid_input(format!("{} is not in the Library", item.id))
                     })
                 })
@@ -139,8 +137,7 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         .iter()
         .zip(&results)
         .filter_map(|(item, result)| {
-            let reason = result.reason.as_deref()?;
-            DECISION_REASONS.contains(&reason).then_some(())?;
+            let reason = Reason::of_result(result.reason.as_deref()?)?;
             decide(&run, item, reason).ok().flatten()
         })
         .collect();

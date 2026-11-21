@@ -7,6 +7,7 @@
 //! written. A destination that matches is reported as verified state, never
 //! as this operation's change.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::apply::{load_setup, without_evidence, RECEIPT_KIND};
@@ -15,6 +16,16 @@ use super::items::{check_saved, counts, Run, Status};
 use crate::core::error::AppError;
 use crate::core::git_backup_store::effective_device_name;
 use crate::core::host::HostCtx;
+
+/// What this host recorded for an `operation_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptState {
+    Missing,
+    /// Claimed, with no result recorded yet.
+    IntentOnly,
+    Result,
+}
 
 pub(super) fn inspect(
     ctx: &HostCtx,
@@ -40,9 +51,9 @@ pub(super) fn inspect(
         }
     }
     let receipt_state = match &receipt {
-        None => "missing",
-        Some(receipt) if receipt["result"].is_object() => "result",
-        Some(_) => "intent_only",
+        None => ReceiptState::Missing,
+        Some(receipt) if receipt["result"].is_object() => ReceiptState::Result,
+        Some(_) => ReceiptState::IntentOnly,
     };
     let mut recorded = receipt.map_or(Value::Null, |receipt| receipt["result"].clone());
     without_evidence(&mut recorded, evidence);
@@ -71,12 +82,12 @@ pub(super) fn inspect(
 
     let next_action = match (receipt_state, holds, recovery_possible) {
         _ if destination.is_null() => "Discover this checkout: it has no saved Project setup.",
-        ("result", true, _) => "None: the checkout matches its saved setup.",
+        (ReceiptState::Result, true, _) => "None: the checkout matches its saved setup.",
         (_, true, _) => {
             "None: the checkout matches its saved setup. This operation's own effect is \
              unknown, and no write was repeated."
         }
-        ("intent_only", false, _) => {
+        (ReceiptState::IntentOnly, false, _) => {
             "Another request may still hold this operation_id. Inspect again later with the \
              same operation_id. If it stays unknown, apply under a new operation_id: apply \
              checks each destination before writing and never overwrites edits."
@@ -91,7 +102,7 @@ pub(super) fn inspect(
         }
     };
     let outcome = match receipt_state {
-        "result" => recorded["outcome"].clone(),
+        ReceiptState::Result => recorded["outcome"].clone(),
         _ => json!("outcome_unknown"),
     };
     Ok(json!({

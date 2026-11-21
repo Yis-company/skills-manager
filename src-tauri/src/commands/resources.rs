@@ -22,11 +22,11 @@ pub async fn mcps_request(ctx: State<'_, HostCtx>, request: Value) -> Result<Val
 #[tauri::command]
 pub async fn register_mcp_client(
     ctx: State<'_, HostCtx>,
-    agent_key: String,
+    agent_key: mcps::Client,
 ) -> Result<Value, AppError> {
     let ctx = ctx.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        mcps::register_self(&ctx, &agent_key, &crate::core::cli_bridge::bridge_path())
+        mcps::register_self(&ctx, agent_key, &crate::core::cli_bridge::bridge_path())
     })
     .await?
 }
