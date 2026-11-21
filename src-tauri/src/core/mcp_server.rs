@@ -9,12 +9,16 @@
 //! Tool names, inputs and output fields are frozen at version 1: add optional
 //! fields or new tools, never change what callers rely on.
 //!
-//! The library opens read-only. The first apply that may write opens it for
-//! writing, once. A request naming a `host` runs on that registered SSH host
+//! Each call reads through a fresh read-only connection, so a library created
+//! or changed after the server started is seen. The first apply that may
+//! write opens the library for writing, once, after the request is checked
+//! read-only. A request naming a `host` runs on that registered SSH host
 //! instead; see [`remote`].
+//!
+//! A message longer than [`MAX_FRAME`] is refused before it is read whole.
 
 use std::cell::OnceCell;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::panic::{self, AssertUnwindSafe};
 
 use serde_json::{json, Value};
@@ -30,8 +34,12 @@ mod remote;
 const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const PARSE_ERROR: i64 = -32700;
+const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
+
+/// The longest message accepted, in bytes, without its newline.
+pub const MAX_FRAME: usize = 4 << 20;
 
 const DISCOVER: &str = "discover_project_setup";
 const APPLY: &str = "apply_project_setup";
@@ -42,11 +50,11 @@ const HOST_DESCRIPTION: &str = "The name of a registered SSH host to run on inst
     unlike a reachable host whose Sync is offline. A host on another version is refused, \
     never installed or updated.";
 
-/// What the server answers from: this computer's library, read-only and
-/// writable on demand, and registered SSH hosts, through `cli` ([`super::remote_host::cli_command`] outside
-/// tests).
+/// What the server answers from: this computer's library, opened read-only
+/// for each call and writable on demand, and registered SSH hosts, through
+/// `cli` ([`super::remote_host::cli_command`] outside tests).
 pub struct Server<'a> {
-    read_only: &'a HostCtx,
+    open_read_only: &'a dyn Fn() -> Result<HostCtx, AppError>,
     open_writable: &'a dyn Fn() -> Result<HostCtx, AppError>,
     writable: OnceCell<HostCtx>,
     hosts: remote::Hosts<'a>,
@@ -54,12 +62,12 @@ pub struct Server<'a> {
 
 impl<'a> Server<'a> {
     pub fn new(
-        read_only: &'a HostCtx,
+        open_read_only: &'a dyn Fn() -> Result<HostCtx, AppError>,
         open_writable: &'a dyn Fn() -> Result<HostCtx, AppError>,
         cli: &'a CliCommand,
     ) -> Self {
         Self {
-            read_only,
+            open_read_only,
             open_writable,
             writable: OnceCell::new(),
             hosts: remote::Hosts::new(cli),
@@ -80,13 +88,26 @@ pub fn run(mut reader: impl BufRead, mut writer: impl Write, server: &Server) ->
     let mut line = Vec::new();
     loop {
         line.clear();
-        if reader.read_until(b'\n', &mut line)? == 0 {
+        let read = reader
+            .by_ref()
+            .take(MAX_FRAME as u64 + 1)
+            .read_until(b'\n', &mut line)?;
+        if read == 0 {
             return Ok(());
         }
-        if line.iter().all(u8::is_ascii_whitespace) {
+        let too_long = read > MAX_FRAME && line.last() != Some(&b'\n');
+        if !too_long && line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
         let reply = match serde_json::from_slice::<Value>(&line) {
+            _ if too_long => {
+                skip_line(&mut reader)?;
+                Some(failure(
+                    Value::Null,
+                    INVALID_REQUEST,
+                    format!("Message longer than {MAX_FRAME} bytes"),
+                ))
+            }
             Ok(message) => answer(server, &message),
             Err(err) => Some(failure(
                 Value::Null,
@@ -99,6 +120,26 @@ pub fn run(mut reader: impl BufRead, mut writer: impl Write, server: &Server) ->
             bytes.push(b'\n');
             writer.write_all(&bytes)?;
             writer.flush()?;
+        }
+    }
+}
+
+/// Discard the rest of the current line without keeping it.
+fn skip_line(reader: &mut impl BufRead) -> io::Result<()> {
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        match buffer.iter().position(|byte| *byte == b'\n') {
+            Some(end) => {
+                reader.consume(end + 1);
+                return Ok(());
+            }
+            None => {
+                let len = buffer.len();
+                reader.consume(len);
+            }
         }
     }
 }
@@ -168,17 +209,20 @@ fn call_tool(server: &Server, params: &Value) -> Result<Value, (i64, String)> {
         Some(Value::String(host)) => Some(host),
         Some(_) => return Err((INVALID_PARAMS, "host must be a string".into())),
     };
-    // Proposing a first setup reads only; confirming it writes.
-    let proposes = request.contains_key("items") && !request.contains_key("confirm");
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        let read_only = (server.open_read_only)()?;
         if let Some(host) = &host {
-            return server.hosts.call(server.read_only, host, request);
+            return server.hosts.call(&read_only, host, request);
         }
-        let ctx = match action {
-            "apply" if !proposes => server.writable()?,
-            _ => server.read_only,
+        let request = Value::Object(request);
+        // Checked read-only first: a request that cannot write never opens
+        // the library for writing.
+        let ctx = if project_setup::writes(&read_only, &request)? {
+            server.writable()?
+        } else {
+            &read_only
         };
-        project_setup::dispatch(ctx, Value::Object(request))
+        project_setup::dispatch(ctx, request)
     }))
     .unwrap_or_else(|_| Err(AppError::internal(format!("{name} panicked"))));
     Ok(match outcome {
@@ -350,8 +394,8 @@ fn apply_tool() -> Value {
         "title": "Apply Project setup",
         "description": "Apply the saved Project setup to one exact registered checkout on this \
             computer or the named host and verify the result, in one call. Absent items are \
-            deployed; items that already match are left alone; edited, unapproved or ambiguous \
-            items are reported and never overwritten, while independent items continue. Reusing \
+            added to their agents; items that already match are left alone; edited, unapproved \
+            or ambiguous items are reported and never overwritten, while independent items continue. Reusing \
             an operation_id returns the recorded result instead of applying again. Per-item \
             results come only with evidence: true. A checkout with no saved setup gets a \
             proposal for the items passed; items that need approval get one too. Send a \
@@ -387,7 +431,11 @@ fn apply_tool() -> Value {
                         "properties": {
                             "kind": kind,
                             "id": { "type": "string" },
-                            "agents": { "type": "array", "items": { "type": "string" } },
+                            "agents": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "maxItems": project_setup::MAX_AGENTS,
+                            },
                         },
                         "required": ["kind", "id", "agents"],
                     },
@@ -396,6 +444,7 @@ fn apply_tool() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "minItems": 1,
+                    "maxItems": project_setup::MAX_AGENTS,
                     "description": "Agents for this run only, in place of each saved item's \
                         agents; the saved setup is unchanged. Omit to use the saved agents. \
                         Not with items or confirm.",
@@ -536,7 +585,10 @@ fn inspect_tool() -> Value {
                 "operation_id": { "type": "string" },
                 "host": { "type": "string" },
                 "checkout_path": { "type": "string" },
-                "project_id": { "type": "string" },
+                "project_id": {
+                    "type": ["string", "null"],
+                    "description": "Null when the checkout is not a registered project.",
+                },
                 "outcome": {
                     "type": "string",
                     "enum": [

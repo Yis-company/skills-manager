@@ -160,7 +160,10 @@ impl Local {
         cli: impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static,
         messages: &[Value],
     ) -> Vec<Value> {
-        run(&Server::new(&self.ctx, &refuse_writes, &cli), messages)
+        run(
+            &Server::new(&|| Ok(self.ctx.clone()), &refuse_writes, &cli),
+            messages,
+        )
     }
 
     /// One tool call; its result.
@@ -357,6 +360,41 @@ fn a_host_name_must_pick_exactly_one_registered_host() {
     assert!(asked.lock().unwrap().is_empty());
 }
 
+#[test]
+fn a_host_whose_connection_details_change_is_reached_at_its_new_address() {
+    let local = Local::new();
+    let (old, new) = (Machine::new(), Machine::new());
+    new.one_of_each();
+    let (old_cli, new_cli) = (old.cli(), new.cli());
+    let cli = move |host: &RemoteHostRecord, args: &[&str]| match host.ssh_target.as_str() {
+        "me@build" => old_cli(host, args),
+        _ => new_cli(host, args),
+    };
+    let read_only = || Ok(local.ctx.clone());
+    let server = Server::new(&read_only, &refuse_writes, &cli);
+    let discover = |checkout: &Path| {
+        let found = run(
+            &server,
+            &[tool_call(
+                1,
+                "discover_project_setup",
+                json!({ "host": HOST, "checkout_path": checkout }),
+            )],
+        );
+        found[0]["result"]["structuredContent"].clone()
+    };
+    assert_eq!(discover(&old.checkout())["project"], Value::Null);
+
+    local
+        .ctx
+        .store
+        .update_remote_host("h1", HOST, "me@new-build", None)
+        .unwrap();
+
+    let found = discover(&new.checkout());
+    assert_eq!(found["project"]["id"], "p1", "{found}");
+}
+
 /// `remote` reached through `tests/fixtures/lost_response.py` the first time,
 /// which loses the first request (`before_admission`) or its reply
 /// (`after_admission`), and directly after that. Counts the starts.
@@ -418,6 +456,37 @@ fn a_reply_lost_after_commit_reconciles_from_the_receipt_without_writing_again()
     assert_eq!(result["outcome"], "verified_changed", "{result}");
     assert_eq!(result["from_receipt"], true, "{result}");
     assert_eq!(result["counts"]["changed"], 3);
+    assert_eq!(starts.load(Ordering::SeqCst), 2, "one reconnect, no more");
+}
+
+#[test]
+fn a_lost_reply_to_a_proposal_is_asked_for_again_once() {
+    let local = Local::new();
+    let remote = Machine::new();
+    remote.one_of_each();
+    let saved = remote
+        .store()
+        .resource_state_get("project_setup", "p1")
+        .unwrap()
+        .unwrap();
+    let items: Vec<Value> = saved["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| json!({ "kind": item["kind"], "id": item["id"], "agents": item["agents"] }))
+        .collect();
+    let fresh = remote.tmp.path().join("work/fresh");
+    std::fs::create_dir_all(&fresh).unwrap();
+    let starts = Arc::new(AtomicUsize::new(0));
+
+    let result = local.tool(
+        losing_once(&remote, "after_admission", starts.clone()),
+        "apply_project_setup",
+        json!({ "host": HOST, "checkout_path": fresh, "operation_id": "op-1", "items": items }),
+    );
+
+    let proposed = &result["structuredContent"];
+    assert_eq!(proposed["outcome"], "confirmation_needed", "{result}");
     assert_eq!(starts.load(Ordering::SeqCst), 2, "one reconnect, no more");
 }
 
@@ -489,7 +558,8 @@ fn two_simultaneous_calls_with_the_same_operation_id_apply_once() {
         let calls: Vec<_> = (0..2)
             .map(|_| {
                 scope.spawn(|| {
-                    let server = Server::new(&local.ctx, &refuse_writes, &cli);
+                    let read_only = || Ok(local.ctx.clone());
+    let server = Server::new(&read_only, &refuse_writes, &cli);
                     // Two `serve` startups on one library can collide; this
                     // test races the applies, so each session starts first.
                     let started = warming.lock().unwrap();
@@ -578,7 +648,8 @@ fn discovery_and_inspection_on_a_host_change_nothing_after_serve_starts() {
     let checkout = remote.checkout();
     apply_on_host(&local, remote.cli(), &checkout);
     let cli = remote.cli();
-    let server = Server::new(&local.ctx, &refuse_writes, &cli);
+    let read_only = || Ok(local.ctx.clone());
+    let server = Server::new(&read_only, &refuse_writes, &cli);
     let discover = |id| {
         tool_call(
             id,

@@ -207,13 +207,21 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             // Reading Sync status runs `git status`, which may otherwise
             // refresh the library's index file.
             std::env::set_var("GIT_OPTIONAL_LOCKS", "0");
-            let ctx = HostCtx::headless(store);
+            drop(store);
+            let open_read_only = || {
+                app_lib::core::skill_store::SkillStore::open_resource_read_only(
+                    &central_repo::db_path(),
+                )
+                .map(|store| HostCtx::headless(std::sync::Arc::new(store)))
+                .map_err(|e| AppError::internal(format!("{e:#}")))
+            };
             let open_writable = || {
                 app_state::initialize_cli_store()
                     .map(HostCtx::headless)
                     .map_err(|e| AppError::internal(format!("{e:#}")))
             };
-            let server = mcp_server::Server::new(&ctx, &open_writable, &remote_host::cli_command);
+            let server =
+                mcp_server::Server::new(&open_read_only, &open_writable, &remote_host::cli_command);
             Ok(mcp_server::run(
                 io::stdin().lock(),
                 io::stdout().lock(),

@@ -452,3 +452,98 @@ fn a_first_setup_is_proposed_then_confirmed_through_apply() {
             .unwrap();
     assert_eq!(config["mcpServers"]["docs"]["command"], "npx");
 }
+
+fn save_docs_definition(machine: &Machine) -> Value {
+    let saved = machine
+        .cli()
+        .args(["--json", "mcps", "save", "--input", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            let definition = json!({ "definition": { "name": "docs", "transport": "stdio",
+                "server": { "command": "npx", "args": ["-y", "docs"] } } });
+            writeln!(child.stdin.take().unwrap(), "{definition}")?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    assert!(saved.status.success());
+    let saved: Value = serde_json::from_slice(&saved.stdout).unwrap();
+    saved["definition"].clone()
+}
+
+#[test]
+fn a_setup_confirmed_at_cold_start_is_discovered_in_the_same_session() {
+    let machine = Machine::new();
+    let definition = save_docs_definition(&machine);
+    for entry in std::fs::read_dir(machine.base()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.to_string_lossy().contains("skills-manager.db") {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    let checkout = machine.tmp.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let apply = |id, arguments: Value| {
+        request(
+            id,
+            "tools/call",
+            json!({ "name": "apply_project_setup", "arguments": arguments }),
+        )
+    };
+    let proposed = machine.mcp(&[apply(
+        1,
+        json!({ "checkout_path": checkout,
+        "operation_id": "op-1",
+        "items": [{ "kind": "mcp", "id": definition["id"], "agents": ["claude_code"] }] }),
+    )]);
+    let mut confirm = reply(&proposed, 1)["result"]["structuredContent"]["proposal"].clone();
+    confirm["decisions"][0]["choice"] = json!("approve");
+
+    let lines = machine.mcp(&[
+        apply(
+            2,
+            json!({ "checkout_path": checkout, "operation_id": "op-2", "confirm": confirm }),
+        ),
+        discover(3, &checkout),
+    ]);
+
+    let applied = &reply(&lines, 2)["result"]["structuredContent"];
+    assert_eq!(applied["outcome"], "verified_changed", "{applied}");
+    let found = &reply(&lines, 3)["result"]["structuredContent"];
+    assert_eq!(found["project"]["id"], applied["project_id"], "{found}");
+    assert_eq!(found["saved_setup"]["version"], 1, "{found}");
+}
+
+#[test]
+fn an_apply_with_nothing_to_apply_is_refused_without_creating_the_library() {
+    let machine = Machine::new();
+    let checkout = machine.tmp.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+
+    let lines = machine.mcp(&[request(
+        1,
+        "tools/call",
+        json!({ "name": "apply_project_setup",
+                "arguments": { "checkout_path": checkout, "operation_id": "op-1" } }),
+    )]);
+
+    let result = &reply(&lines, 1)["result"];
+    assert_eq!(result["isError"], true, "{result}");
+    assert!(!machine.base().exists(), "the library was created");
+}
+
+#[test]
+fn a_message_over_4_mib_is_refused_and_the_stream_goes_on() {
+    let machine = Machine::new();
+    let padding = "x".repeat(5 << 20);
+
+    let lines = machine.mcp(&[
+        request(1, "ping", json!({ "padding": padding })),
+        request(2, "ping", json!({})),
+    ]);
+
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["error"]["code"], -32600, "{}", lines[0]);
+    assert_eq!(reply(&lines, 2)["result"], json!({}));
+}

@@ -4,10 +4,12 @@
 //!
 //! Each host's session opens with [`RemoteSession::spawn`], which refuses
 //! another version and never installs or updates the host, and stays open
-//! while the server runs, so `serve` starts once. When the link drops during
-//! apply, the server reconnects once and inspects the same `operation_id`. It
-//! returns a recorded result, and otherwise reports Outcome unknown: apply is
-//! never sent again, since a missing receipt is not proof that nothing ran.
+//! while the server runs, so `serve` starts once, and is started again when
+//! the host's connection details change. When the link drops, the server
+//! reconnects once. A request that only reads is sent again. An apply that may
+//! write is not: the server inspects the same `operation_id` and returns a
+//! recorded result, and otherwise reports Outcome unknown, since a missing
+//! receipt is not proof that nothing ran.
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
@@ -26,7 +28,9 @@ const COMMAND: &str = "project_setup_request";
 pub(super) struct Hosts<'a> {
     cli: &'a CliCommand,
     /// By host ID, kept open: each `serve` start rewrites state on its host.
-    sessions: RefCell<HashMap<String, RemoteSession>>,
+    /// Each with the record it was started from: a session is reused only
+    /// while the host's connection details still match it.
+    sessions: RefCell<HashMap<String, (RemoteHostRecord, RemoteSession)>>,
     /// Built on first use and shared by every call.
     runtime: OnceCell<tokio::runtime::Runtime>,
 }
@@ -64,15 +68,24 @@ impl<'a> Hosts<'a> {
             runtime.block_on(session.call(COMMAND, json!({ "request": request })))
         };
         let mut sessions = self.sessions.borrow_mut();
-        if !sessions.get(&host.id).is_some_and(RemoteSession::is_alive) {
+        let reusable = sessions
+            .get(&host.id)
+            .is_some_and(|(started, session)| session.is_alive() && same_address(started, &host));
+        if !reusable {
             sessions.remove(&host.id);
-            sessions.insert(host.id.clone(), connect(self.cli, &host)?);
+            let session = connect(self.cli, &host)?;
+            sessions.insert(host.id.clone(), (host.clone(), session));
         }
 
-        match send(&sessions[&host.id], &request) {
+        match send(&sessions[&host.id].1, &request) {
             // Project setup itself raises no network errors: this is the link.
-            Err(error) if error.kind == ErrorKind::Network && request["action"] == "apply" => {
+            Err(error) if error.kind == ErrorKind::Network => {
                 sessions.remove(&host.id);
+                if writes_nothing(&request) {
+                    let session = connect(self.cli, &host)?;
+                    let session = &sessions.entry(host.id.clone()).or_insert((host, session)).1;
+                    return send(session, &request);
+                }
                 let unknown = |why: String| {
                     AppError::network(format!(
                         "Outcome unknown: the connection to {name} was lost during apply, and \
@@ -83,7 +96,7 @@ impl<'a> Hosts<'a> {
                 };
                 let session = RemoteSession::spawn(self.cli, &host, Arc::new(NoopEvents))
                     .map_err(|e| unknown(format!("reconnecting failed: {}", e.message)))?;
-                let session = sessions.entry(host.id).or_insert(session);
+                let session = &sessions.entry(host.id.clone()).or_insert((host, session)).1;
                 let mut inspect: Map<String, Value> = ["checkout_path", "operation_id", "evidence"]
                     .into_iter()
                     .filter_map(|key| Some((key.to_string(), request.get(key)?.clone())))
@@ -103,6 +116,19 @@ impl<'a> Hosts<'a> {
             answered => answered,
         }
     }
+}
+
+/// Whether `request` only reads: discovery, inspection, or an apply that
+/// builds a first setup's proposal. Only these are sent again after the link
+/// drops.
+fn writes_nothing(request: &Map<String, Value>) -> bool {
+    request["action"] != "apply"
+        || (request.contains_key("items") && !request.contains_key("confirm"))
+}
+
+/// Whether a session started for `started` reaches the machine `host` names.
+fn same_address(started: &RemoteHostRecord, host: &RemoteHostRecord) -> bool {
+    (&started.ssh_target, &started.cli_path) == (&host.ssh_target, &host.cli_path)
 }
 
 /// The one registered SSH host with this name.
