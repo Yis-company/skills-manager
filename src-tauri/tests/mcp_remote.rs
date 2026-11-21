@@ -422,7 +422,7 @@ fn a_reply_lost_after_commit_reconciles_from_the_receipt_without_writing_again()
 }
 
 #[test]
-fn a_request_lost_before_it_was_claimed_is_resumed_once() {
+fn a_request_lost_with_no_receipt_is_outcome_unknown_and_never_replayed() {
     let local = Local::new();
     let remote = Machine::new();
     remote.one_of_each();
@@ -434,11 +434,12 @@ fn a_request_lost_before_it_was_claimed_is_resumed_once() {
         &remote.checkout(),
     );
 
-    let result = &result["structuredContent"];
-    assert_eq!(result["outcome"], "verified_changed", "{result}");
-    assert_eq!(result["from_receipt"], false, "{result}");
-    assert!(remote.checkout().join(".mcp.json").is_file());
-    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    // A missing receipt is not proof that nothing ran, so apply is not sent again.
+    let text = error_text(&result);
+    assert!(text.contains("Outcome unknown"), "{result}");
+    assert!(text.contains("Inspect again later"), "{result}");
+    assert!(!remote.checkout().join(".mcp.json").exists());
+    assert_eq!(starts.load(Ordering::SeqCst), 2, "one reconnect, no more");
 }
 
 #[test]

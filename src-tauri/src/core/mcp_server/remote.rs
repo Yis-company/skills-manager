@@ -5,8 +5,9 @@
 //! Each host's session opens with [`RemoteSession::spawn`], which refuses
 //! another version and never installs or updates the host, and stays open
 //! while the server runs, so `serve` starts once. When the link drops during
-//! apply, the server reconnects once and inspects the same `operation_id`:
-//! work is resumed only when no request has claimed it.
+//! apply, the server reconnects once and inspects the same `operation_id`. It
+//! returns a recorded result, and otherwise reports Outcome unknown: apply is
+//! never sent again, since a missing receipt is not proof that nothing ran.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -64,9 +65,9 @@ impl<'a> Hosts<'a> {
                 let unknown = |why: String| {
                     AppError::network(format!(
                         "Outcome unknown: the connection to {name} was lost during apply, and \
-                         {why}. Call inspect_project_setup_result with the same host and \
-                         operation_id once {name} is reachable; do not apply under a new \
-                         operation_id until then."
+                         {why}. Leave the checkout as it is. Inspect again later: call \
+                         inspect_project_setup_result with the same host and operation_id; do \
+                         not apply under a new operation_id until then."
                     ))
                 };
                 let session = RemoteSession::spawn(self.cli, &host, Arc::new(NoopEvents))
@@ -80,8 +81,6 @@ impl<'a> Hosts<'a> {
                 let found = send(session, &inspect)
                     .map_err(|e| unknown(format!("inspecting it failed: {}", e.message)))?;
                 match serde_json::from_value(found["receipt"].clone()) {
-                    // Apply claims the receipt before any write, so nothing ran.
-                    Ok(ReceiptState::Missing) => send(session, &request),
                     Ok(ReceiptState::Result) => {
                         let mut recorded = found["recorded"].clone();
                         recorded["from_receipt"] = json!(true);
