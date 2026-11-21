@@ -1637,6 +1637,7 @@ pub(super) mod tests {
         assert_eq!(error.message, "taken");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_skill_linked_to_another_folder_with_the_same_content_needs_review() {
         let fixture = Fixture::new();
