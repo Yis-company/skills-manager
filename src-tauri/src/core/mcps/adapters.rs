@@ -2,7 +2,12 @@ use super::{
     model::{AuthRefs, Definition, DefinitionInput, Operation, ServerConfig, Target, Transport},
     store,
 };
-use crate::core::{error::AppError, host::HostCtx, repo_lock::RepoLock, resource_store};
+use crate::core::{
+    error::{AppError, TargetConflictDetail},
+    host::HostCtx,
+    repo_lock::RepoLock,
+    resource_store,
+};
 use serde_json::{json, Map, Value};
 use std::{
     fs,
@@ -651,6 +656,90 @@ pub fn apply(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
         );
     }
     Ok(json!({"applied":true,"changes":changed}))
+}
+
+/// The name Agents Manager's own MCP server is registered under.
+const SELF_SERVER_NAME: &str = "skills-manager";
+
+/// Register `command mcp` as a user-scope stdio MCP server for Codex or Claude
+/// Code. An equivalent entry is left as it is; a different entry under the
+/// same name is a conflict and is never replaced.
+pub fn register_self(ctx: &HostCtx, agent_key: &str, command: &Path) -> Result<Value, AppError> {
+    let next_step = match agent_key {
+        "codex" => "Start a new Codex session, or a new thread in T3, to load it.",
+        "claude_code" => "Start a new Claude Code session to load it.",
+        _ => {
+            return Err(AppError::invalid_input(
+                "Register with codex or claude only",
+            ))
+        }
+    };
+    if !command.is_file() {
+        return Err(AppError::not_found(format!(
+            "Agents Manager CLI not found at {}",
+            command.display()
+        )));
+    }
+    let def = Definition {
+        id: String::new(),
+        name: SELF_SERVER_NAME.into(),
+        transport: Transport::Stdio,
+        server: ServerConfig {
+            command: Some(command.to_string_lossy().into_owned()),
+            args: vec!["mcp".into()],
+            ..ServerConfig::default()
+        },
+        auth: None,
+        source: None,
+        revision: String::new(),
+        updated_at: String::new(),
+    };
+    let cfg = resolve(
+        ctx,
+        &Target {
+            agent_key: agent_key.into(),
+            project_id: None,
+        },
+    )?;
+    let entry = render_entry(agent_key, &def)?;
+    let _lock = RepoLock::acquire_foreground("register MCP server").map_err(AppError::db)?;
+    let original = read_snapshot(&cfg)?;
+    let existing = entries_from_snapshot(&cfg, original.as_deref())?
+        .into_iter()
+        .find(|(name, _)| name == SELF_SERVER_NAME);
+    let report = |status: &str| json!({"status":status,"serverName":SELF_SERVER_NAME,"configPath":cfg.path.to_string_lossy(),"nextStep":next_step});
+    if let Some((_, current)) = existing {
+        let wanted = normalize(agent_key, SELF_SERVER_NAME, &entry)?;
+        if normalize(agent_key, SELF_SERVER_NAME, &current).ok() == Some(wanted) {
+            return Ok(report("unchanged"));
+        }
+        return Err(AppError::target_conflict(
+            format!(
+                "A different MCP server named {SELF_SERVER_NAME} is already registered in {}; remove or rename it, then register again",
+                cfg.path.display()
+            ),
+            vec![TargetConflictDetail {
+                path: cfg.path.to_string_lossy().into_owned(),
+                reason: format!("{SELF_SERVER_NAME} is registered with a different command"),
+            }],
+        ));
+    }
+    let raw = original.as_deref().unwrap_or_default();
+    let patched = patch_text(
+        cfg.format,
+        raw,
+        cfg.entry_path[0],
+        SELF_SERVER_NAME,
+        Some(&entry),
+    )?;
+    verify_scoped_patch(
+        &cfg,
+        original.as_deref(),
+        &patched,
+        &[json!({"name":SELF_SERVER_NAME,"present":true,"entry":entry})],
+    )?;
+    resource_store::atomic_write(&cfg.path, patched.as_bytes()).map_err(AppError::io)?;
+    Ok(report("added"))
 }
 
 fn verify_scoped_patch(
