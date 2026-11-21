@@ -76,7 +76,9 @@ pub(super) fn inspect(
             if evidence {
                 destination["items"] = json!(items);
             }
-            (destination, holds, count(Status::NotApplied) > 0)
+            // Only a settled operation leaves work a new apply may take up.
+            let settled = receipt_state == ReceiptState::Result;
+            (destination, holds, settled && count(Status::NotApplied) > 0)
         }
     };
 
@@ -87,10 +89,10 @@ pub(super) fn inspect(
             "None: the checkout matches its saved setup. This operation's own effect is \
              unknown, and no write was repeated."
         }
-        (ReceiptState::IntentOnly, false, _) => {
-            "Another request may still hold this operation_id. Inspect again later with the \
-             same operation_id. If it stays unknown, apply under a new operation_id: apply \
-             checks each destination before writing and never overwrites edits."
+        (ReceiptState::Missing | ReceiptState::IntentOnly, false, _) => {
+            "Outcome unknown: a request may still hold this operation_id, or its result was \
+             lost. Leave the checkout as it is. Inspect again later with the same \
+             operation_id."
         }
         (_, false, true) => {
             "Apply under a new operation_id to set up the items not applied: apply checks \
@@ -209,8 +211,47 @@ mod tests {
             item(&inspected["destination"], "mcp")["status"],
             "unchanged"
         );
-        assert_eq!(inspected["recovery_possible"], true);
+        assert_eq!(inspected["recovery_possible"], false);
+        assert_inspect_later(&inspected);
         assert_eq!((destinations(&fixture), receipt(&fixture, "op-1")), before);
+    }
+
+    /// Outcome unknown leaves the work alone: the only next step is a later
+    /// inspection, never an apply under a new operation_id.
+    fn assert_inspect_later(inspected: &Value) {
+        let next = inspected["next_action"].as_str().unwrap();
+        assert!(next.contains("Inspect again later"), "{next}");
+        assert!(!next.contains("new operation_id"), "{next}");
+    }
+
+    #[test]
+    fn an_unknown_id_on_a_differing_checkout_offers_only_a_later_inspection() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        fixture.apply("op-1").unwrap();
+        std::fs::remove_file(fixture.path(".a/skills/review")).unwrap();
+
+        let inspected = inspect(&fixture, json!({ "operation_id": "op-never" })).unwrap();
+
+        assert_eq!(inspected["outcome"], "outcome_unknown");
+        assert_eq!(inspected["destination"]["state"], "differs");
+        assert_eq!(inspected["recovery_possible"], false);
+        assert_inspect_later(&inspected);
+    }
+
+    #[test]
+    fn a_recorded_result_with_items_not_applied_offers_a_new_apply() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        fixture.apply("op-1").unwrap();
+        std::fs::remove_file(fixture.path(".a/skills/review")).unwrap();
+
+        let inspected = inspect(&fixture, json!({ "operation_id": "op-1" })).unwrap();
+
+        assert_eq!(inspected["receipt"], "result");
+        assert_eq!(inspected["recovery_possible"], true);
+        let next = inspected["next_action"].as_str().unwrap();
+        assert!(next.contains("new operation_id"), "{next}");
     }
 
     #[test]

@@ -546,8 +546,9 @@ fn inspect_tool() -> Value {
                 },
                 "recovery_possible": {
                     "type": "boolean",
-                    "description": "Some items are not applied, and apply under a new \
-                        operation_id would set them up.",
+                    "description": "The operation recorded its result and some items are \
+                        not applied, so apply under a new operation_id would set them up. \
+                        Always false while the outcome is unknown.",
                 },
                 "next_action": { "type": "string" },
             },
