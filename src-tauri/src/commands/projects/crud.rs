@@ -62,7 +62,7 @@ pub fn get_projects_core(ctx: &HostCtx) -> Result<Vec<ProjectDto>, AppError> {
 /// The mode a new project gets: the caller's choice, else the user's
 /// `default_project_deploy_mode` setting. An unset or unknown stored value
 /// means link, so the setting can never make adding a project fail.
-fn new_project_deploy_mode(
+pub(crate) fn new_project_deploy_mode(
     store: &SkillStore,
     requested: Option<String>,
 ) -> Result<String, AppError> {

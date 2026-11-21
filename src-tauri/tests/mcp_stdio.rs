@@ -406,3 +406,48 @@ fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_wri
     assert_eq!(changed(&before.0, &after.0), Vec::<PathBuf>::new());
     assert_eq!(changed(&before.1, &after.1), Vec::<PathBuf>::new());
 }
+
+#[test]
+fn a_first_setup_is_proposed_then_confirmed_through_apply() {
+    let machine = Machine::new();
+    let saved = machine
+        .cli()
+        .args(["--json", "mcps", "save", "--input", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            let definition = json!({ "definition": { "name": "docs", "transport": "stdio",
+                "server": { "command": "npx", "args": ["-y", "docs"] } } });
+            writeln!(child.stdin.take().unwrap(), "{definition}")?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    assert!(saved.status.success());
+    let definition: Value = serde_json::from_slice(&saved.stdout).unwrap();
+    let checkout = machine.tmp.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let apply = |arguments: Value| {
+        let lines = machine.mcp(&[request(
+            1,
+            "tools/call",
+            json!({ "name": "apply_project_setup", "arguments": arguments }),
+        )]);
+        reply(&lines, 1)["result"]["structuredContent"].clone()
+    };
+
+    let proposed = apply(json!({ "checkout_path": checkout, "operation_id": "op-1",
+        "items": [{ "kind": "mcp", "id": definition["definition"]["id"], "agents": ["claude_code"] }] }));
+    assert_eq!(proposed["outcome"], "confirmation_needed", "{proposed}");
+    assert_eq!(std::fs::read_dir(&checkout).unwrap().count(), 0);
+
+    let mut confirm = proposed["proposal"].clone();
+    confirm["decisions"][0]["choice"] = json!("approve");
+    let applied = apply(json!({ "checkout_path": checkout, "operation_id": "op-2",
+        "confirm": confirm }));
+    assert_eq!(applied["outcome"], "verified_changed", "{applied}");
+    let config: Value =
+        serde_json::from_str(&std::fs::read_to_string(checkout.join(".mcp.json")).unwrap())
+            .unwrap();
+    assert_eq!(config["mcpServers"]["docs"]["command"], "npx");
+}

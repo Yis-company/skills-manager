@@ -9,7 +9,7 @@
 
 use serde_json::{json, Value};
 
-use super::apply::{check_items, load_setup, Run, Status, RECEIPT_KIND};
+use super::apply::{check_saved, load_setup, Run, Status, RECEIPT_KIND};
 use super::find_project;
 use crate::core::error::AppError;
 use crate::core::git_backup_store::effective_device_name;
@@ -60,7 +60,7 @@ pub(super) fn inspect(
                 path: checkout.to_string_lossy().into_owned(),
                 ..project
             };
-            let items = check_items(&Run::new(ctx, project, false)?, &setup);
+            let items = check_saved(&Run::new(ctx, project, false)?, &setup);
             let count = |status| items.iter().filter(|item| item.status == status).count();
             let holds = count(Status::Unchanged) == items.len();
             let mut destination = json!({

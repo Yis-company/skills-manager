@@ -10,6 +10,12 @@
 //! cleanly replaceable destination is written, then checked again; anything
 //! edited, unapproved or ambiguous is reported and left untouched, while
 //! independent items carry on.
+//!
+//! What needs a decision comes back as one grouped proposal: a whole first
+//! setup, or the items that need approval. The caller confirms by sending the
+//! proposal back with a choice on each decision. Each decision is rebuilt
+//! from the current state and must match, or the confirmation is stale; only
+//! then is the checkout registered, the setup saved and applied.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -17,10 +23,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
+use super::{find_project, save_setup, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
 use crate::commands::projects::{
-    agent_skill_configs, agent_skill_groups, available_agent_keys, ensure_safe_skill_relative_path,
-    is_copy_project,
+    add_project_core, agent_skill_configs, agent_skill_groups, available_agent_keys,
+    ensure_safe_skill_relative_path, is_copy_project, new_project_deploy_mode,
 };
 use crate::core::error::{AppError, ErrorKind};
 use crate::core::git_backup_store::effective_device_name;
@@ -83,38 +89,144 @@ pub fn mcp_value(definition: &Value) -> Value {
     })
 }
 
-pub(super) fn apply(
-    ctx: &HostCtx,
-    checkout_path: &str,
-    operation_id: &str,
+/// The apply action's arguments.
+#[derive(Deserialize)]
+pub(super) struct Args {
+    checkout_path: String,
+    operation_id: String,
+    #[serde(default)]
     evidence: bool,
-) -> Result<Value, AppError> {
+    /// A first setup's selection, to propose for confirmation.
+    #[serde(default)]
+    items: Option<Vec<SetupItem>>,
+    /// An earlier proposal, sent back with a `choice` on each decision.
+    #[serde(default)]
+    confirm: Option<Value>,
+}
+
+/// The decisions a request needs, grouped for one confirmation, and the
+/// state they were made against. Confirming one that no longer matches the
+/// current state is refused as stale.
+#[derive(Debug, Serialize, Deserialize)]
+struct Proposal {
+    checkout_path: PathBuf,
+    project_id: Option<String>,
+    /// Whether confirming registers the checkout, with `deploy_mode`.
+    register: bool,
+    deploy_mode: String,
+    /// The saved setup's version, 0 for none.
+    setup_version: u64,
+    decisions: Vec<Decision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct Decision {
+    kind: ItemKind,
+    id: String,
+    /// The agents the item targets now.
+    agents: Vec<String>,
+    /// `first_setup`, or the item's result reason.
+    reason: String,
+    name: Option<String>,
+    /// What approving saves: the item for a first setup, the MCP value, the
+    /// full agent list, or the files an Instruction bundle would delete.
+    proposed: Value,
+    choices: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    choice: Option<String>,
+    /// The Library ID to use instead, with `replace`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replacement: Option<String>,
+}
+
+/// Item results whose reason a confirmation can resolve.
+const DECISION_REASONS: &[&str] = &[
+    "approval_needed",
+    "value_changed",
+    "unapproved_agents",
+    "would_delete",
+    "confirmed_absent",
+];
+const CONFIRM: &str = "Show the proposal's decisions to the user. To go ahead, call again with \
+    a new operation_id and confirm: the proposal, with a choice on each decision.";
+
+/// The items one request runs: each with its one-run hold (a skip or a
+/// restore to wait for) and whether its Instruction deletions are approved.
+struct Plan {
+    items: Vec<(SetupItem, Option<Step>, bool)>,
+    /// Whether the selection must be saved first.
+    save: bool,
+}
+
+pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
+    let (operation_id, evidence) = (args.operation_id.as_str(), args.evidence);
     if operation_id.trim().is_empty() || operation_id.len() > MAX_OPERATION_ID {
         return Err(AppError::invalid_input(format!(
             "operation_id must be 1-{MAX_OPERATION_ID} characters"
         )));
     }
-    let (checkout, project) = find_project(ctx, checkout_path)?;
-    let project = project.ok_or_else(|| {
-        AppError::invalid_input("This checkout is not a registered project; discover it first")
-    })?;
-    let setup = load_setup(ctx, &project.id)?
-        .ok_or_else(|| AppError::invalid_input("This project has no saved Project setup"))?;
+    let (checkout, project) = find_project(ctx, &args.checkout_path)?;
+    let saved: Option<SavedSetup> = match &project {
+        Some(project) => load_setup(ctx, &project.id)?,
+        None => None,
+    };
     let host = effective_device_name(&ctx.store);
-    let intent = json!({
-        "host": host,
-        "checkout_path": checkout,
-        "project_id": project.id,
-        "setup_version": setup.version,
-    });
 
     // `checkout` is canonical and the project's exact path, so it is the root.
     // Read before the claim: a failure here must not leave a claimed receipt.
-    let project = ProjectRecord {
-        path: checkout.to_string_lossy().into_owned(),
-        ..project
+    let root = checkout.to_string_lossy().into_owned();
+    let record = match project {
+        Some(project) => ProjectRecord {
+            path: root,
+            ..project
+        },
+        None => unregistered(ctx, root)?,
     };
-    let run = Run::new(ctx, project, true)?;
+    let mut proposal = Proposal {
+        checkout_path: checkout.clone(),
+        project_id: (!record.id.is_empty()).then(|| record.id.clone()),
+        register: record.id.is_empty(),
+        deploy_mode: record.deploy_mode.clone(),
+        setup_version: saved.as_ref().map_or(0, |setup| setup.version),
+        decisions: Vec::new(),
+    };
+    let mut run = Run::new(ctx, record, true)?;
+    let mut scope = json!({
+        "host": host,
+        "checkout_path": checkout,
+        "project_id": proposal.project_id,
+        "setup_version": proposal.setup_version,
+    });
+    let plan = match (saved, args.items, &args.confirm) {
+        (None, Some(items), None) => {
+            proposal.decisions = items
+                .iter()
+                .map(|item| {
+                    decide(&run, item, "first_setup")?.ok_or_else(|| {
+                        AppError::invalid_input(format!("{} is not in the Library", item.id))
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            return Ok(propose(&scope, operation_id, proposal));
+        }
+        (_, Some(_), _) => return Err(AppError::invalid_input(
+            "items propose a first setup only; this request has a saved setup or a confirmation",
+        )),
+        (None, None, None) => {
+            return Err(AppError::invalid_input(
+                "This checkout has no saved Project setup; pass items to propose one",
+            ))
+        }
+        (saved, None, Some(confirm)) => confirmed(&run, &proposal, saved, confirm)?,
+        (Some(saved), None, None) => Plan {
+            items: saved.items.into_iter().map(|i| (i, None, false)).collect(),
+            save: false,
+        },
+    };
+    let mut intent = scope.clone();
+    if let Some(confirm) = &args.confirm {
+        intent["confirm"] = confirm.clone();
+    }
 
     let claim = json!({ "version": 1, "intent": intent });
     if !ctx
@@ -125,9 +237,40 @@ pub(super) fn apply(
         return answer_from_receipt(ctx, operation_id, &intent, evidence);
     }
 
-    let items = check_items(&run, &setup);
-    let mut result = summarize(&intent, operation_id, &items);
-    result["items"] = json!(items);
+    let items: Vec<SetupItem> = plan.items.iter().map(|(item, ..)| item.clone()).collect();
+    if plan.save {
+        match save_confirmed(&mut run, &proposal, items.clone()) {
+            Ok(version) => proposal.setup_version = version,
+            Err(error) => {
+                let receipt = json!({ "version": 2, "intent": intent, "error": error.message });
+                ctx.store
+                    .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
+                    .map_err(AppError::db)?;
+                return Err(error);
+            }
+        }
+        scope["project_id"] = json!(run.project.id);
+        scope["setup_version"] = json!(proposal.setup_version);
+    }
+
+    let results = check_items(&run, &plan.items);
+    let mut result = summarize(&scope, operation_id, &results);
+    proposal.project_id = Some(run.project.id.clone());
+    proposal.register = false;
+    proposal.decisions = items
+        .iter()
+        .zip(&results)
+        .filter_map(|(item, result)| {
+            let reason = result.reason.as_deref()?;
+            DECISION_REASONS.contains(&reason).then_some(())?;
+            decide(&run, item, reason).ok().flatten()
+        })
+        .collect();
+    if !proposal.decisions.is_empty() {
+        result["next_action"] = json!(CONFIRM);
+        result["proposal"] = json!(proposal);
+    }
+    result["items"] = json!(results);
     let receipt = json!({ "version": 2, "intent": intent, "result": result });
     ctx.store
         .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
@@ -144,19 +287,33 @@ pub(super) fn load_setup(ctx: &HostCtx, project_id: &str) -> Result<Option<Saved
         .map_err(|e| AppError::internal(format!("Saved Project setup is unreadable: {e}")))
 }
 
-/// Check each item against its destination and, when `run` writes, apply
-/// and verify it.
-pub(super) fn check_items(run: &Run, setup: &SavedSetup) -> Vec<ItemResult> {
+/// Check each saved item against its destination; see [`check_items`].
+pub(super) fn check_saved(run: &Run, setup: &SavedSetup) -> Vec<ItemResult> {
+    let plan: Vec<_> = setup
+        .items
+        .iter()
+        .map(|i| (i.clone(), None, false))
+        .collect();
+    check_items(run, &plan)
+}
+
+/// Check each planned item against its destination and, when `run` writes,
+/// apply and verify it.
+fn check_items(run: &Run, plan: &[(SetupItem, Option<Step>, bool)]) -> Vec<ItemResult> {
     // Each item's steps, one per agent where it varies by agent. MCP
     // connections are queued and applied in batches per agent config.
-    let mut steps: Vec<Vec<Step>> = Vec::with_capacity(setup.items.len());
+    let mut steps: Vec<Vec<Step>> = Vec::with_capacity(plan.len());
     let mut queued: Vec<(String, usize)> = Vec::new();
-    for (index, item) in setup.items.iter().enumerate() {
+    for (index, (item, held, allow_delete)) in plan.iter().enumerate() {
         steps.push(Vec::new());
+        if let Some(held) = held {
+            steps[index].push(held.clone());
+            continue;
+        }
         let step = match item.kind {
             _ if item.agents.is_empty() => Ok(Step::because(Status::Blocked, "no_agents")),
             ItemKind::Skill => apply_skill(run, item),
-            ItemKind::Instruction => apply_instruction(run, item),
+            ItemKind::Instruction => apply_instruction(run, item, *allow_delete),
             ItemKind::Mcp => match check_mcp(run, item) {
                 Ok(agents) => {
                     queued.extend(agents.into_iter().map(|agent| (agent, index)));
@@ -173,17 +330,15 @@ pub(super) fn check_items(run: &Run, setup: &SavedSetup) -> Vec<ItemResult> {
         let agent = &batch[0].0;
         let batch: Vec<(usize, &SetupItem)> = batch
             .iter()
-            .map(|(_, index)| (*index, &setup.items[*index]))
+            .map(|(_, index)| (*index, &plan[*index].0))
             .collect();
         for ((index, _), step) in batch.iter().zip(apply_mcps(run, agent, &batch)) {
             steps[*index].push(step);
         }
     }
-    setup
-        .items
-        .iter()
+    plan.iter()
         .zip(steps)
-        .map(|(item, steps)| {
+        .map(|((item, ..), steps)| {
             let Step(status, reason) = worst(steps);
             ItemResult {
                 kind: item.kind,
@@ -194,6 +349,275 @@ pub(super) fn check_items(run: &Run, setup: &SavedSetup) -> Vec<ItemResult> {
             }
         })
         .collect()
+}
+
+/// The project a first setup registers: in memory until it is confirmed.
+fn unregistered(ctx: &HostCtx, path: String) -> Result<ProjectRecord, AppError> {
+    Ok(ProjectRecord {
+        id: String::new(),
+        name: String::new(),
+        path,
+        workspace_type: "project".into(),
+        linked_agent_key: None,
+        linked_agent_name: None,
+        disabled_path: None,
+        sort_order: 0,
+        created_at: 0,
+        updated_at: 0,
+        agent_keys: None,
+        deploy_mode: new_project_deploy_mode(&ctx.store, None)?,
+    })
+}
+
+/// A first setup's proposal: nothing is written until it is confirmed.
+fn propose(scope: &Value, operation_id: &str, proposal: Proposal) -> Value {
+    let mut result = summarize(scope, operation_id, &[]);
+    let mut agents: Vec<&String> = proposal
+        .decisions
+        .iter()
+        .flat_map(|decision| &decision.agents)
+        .collect();
+    agents.sort_unstable();
+    agents.dedup();
+    result["agents"] = json!(agents);
+    result["outcome"] = json!("confirmation_needed");
+    result["next_action"] = json!(CONFIRM);
+    result["proposal"] = json!(proposal);
+    respond(result, false, false)
+}
+
+/// Register the checkout when the proposal says to, then save the confirmed
+/// selection over the version it was proposed against. Returns the new version.
+fn save_confirmed(
+    run: &mut Run,
+    proposal: &Proposal,
+    items: Vec<SetupItem>,
+) -> Result<u64, AppError> {
+    if proposal.register {
+        let added = add_project_core(
+            run.ctx,
+            run.project.path.clone(),
+            Some(proposal.deploy_mode.clone()),
+        )?;
+        run.project.id = added.id;
+    }
+    Ok(save_setup(
+        &run.ctx.store,
+        &run.project.id,
+        proposal.setup_version,
+        items,
+    )?
+    .version)
+}
+
+/// Check a confirmation against the current state and turn its choices into
+/// a plan. Reads only; any difference from a fresh proposal is stale.
+fn confirmed(
+    run: &Run,
+    now: &Proposal,
+    saved: Option<SavedSetup>,
+    confirm: &Value,
+) -> Result<Plan, AppError> {
+    let confirm: Proposal = serde_json::from_value(confirm.clone())
+        .map_err(|e| AppError::invalid_input(format!("Invalid confirm: {e}")))?;
+    let stale = || {
+        AppError::invalid_input(
+            "This proposal is stale: the checkout, its saved setup or a proposed item changed \
+             since it was proposed. Apply again without confirm for a fresh proposal.",
+        )
+    };
+    if (
+        &confirm.checkout_path,
+        &confirm.project_id,
+        confirm.register,
+        &confirm.deploy_mode,
+        confirm.setup_version,
+    ) != (
+        &now.checkout_path,
+        &now.project_id,
+        now.register,
+        &now.deploy_mode,
+        now.setup_version,
+    ) {
+        return Err(stale());
+    }
+    let first = saved.is_none();
+    let original: Vec<SetupItem> = saved.map(|setup| setup.items).unwrap_or_default();
+    let mut planned: Vec<(SetupItem, Option<Step>, bool)> = original
+        .iter()
+        .map(|item| (item.clone(), None, false))
+        .collect();
+    let mut keep = vec![true; planned.len()];
+    for decision in confirm.decisions {
+        let choice = decision.choice.clone().unwrap_or_default();
+        if !decision.choices.contains(&choice) {
+            return Err(AppError::invalid_input(format!(
+                "Choose one of {:?} for {}",
+                decision.choices, decision.id
+            )));
+        }
+        let asked = SetupItem {
+            kind: decision.kind,
+            id: decision.id.clone(),
+            agents: decision.agents.clone(),
+            approved: None,
+        };
+        let matching: Vec<usize> = (0..original.len())
+            .filter(|n| {
+                let item = &original[*n];
+                (item.kind, &item.id, &item.agents) == (asked.kind, &asked.id, &asked.agents)
+            })
+            .collect();
+        let current = match matching.first() {
+            _ if first => asked,
+            Some(n) => original[*n].clone(),
+            None => return Err(stale()),
+        };
+        let echoed = Decision {
+            choice: None,
+            replacement: None,
+            ..decision.clone()
+        };
+        if decide(run, &current, &decision.reason)? != Some(echoed) {
+            return Err(stale());
+        }
+        if first {
+            if choice == "approve" {
+                let item = serde_json::from_value(decision.proposed)
+                    .map_err(|e| AppError::invalid_input(format!("Invalid proposed item: {e}")))?;
+                planned.push((item, None, false));
+                keep.push(true);
+            }
+            continue;
+        }
+        for n in matching {
+            let (item, held, allow_delete) = &mut planned[n];
+            match (decision.reason.as_str(), choice.as_str()) {
+                (_, "skip") => *held = Some(Step::because(Status::Blocked, "skipped")),
+                (_, "restore") => *held = Some(Step::because(Status::Missing, "awaiting_restore")),
+                (_, "revise") => keep[n] = false,
+                (_, "replace") => {
+                    let replacement = SetupItem {
+                        id: decision.replacement.clone().ok_or_else(|| {
+                            AppError::invalid_input("replace needs a replacement Library ID")
+                        })?,
+                        approved: None,
+                        ..item.clone()
+                    };
+                    if library_item(run, &replacement)?.is_none() {
+                        return Err(AppError::invalid_input(format!(
+                            "{} is not in the Library",
+                            replacement.id
+                        )));
+                    }
+                    *item = replacement;
+                }
+                ("would_delete", _) => *allow_delete = true,
+                ("unapproved_agents", _) => {
+                    item.agents = serde_json::from_value(decision.proposed.clone())
+                        .map_err(|e| AppError::invalid_input(format!("Invalid agents: {e}")))?;
+                }
+                _ => item.approved = Some(decision.proposed.clone()),
+            }
+        }
+    }
+    let items: Vec<_> = planned
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(planned, keep)| keep.then_some(planned))
+        .collect();
+    let save = first
+        || items.len() != original.len()
+        || items
+            .iter()
+            .zip(&original)
+            .any(|((item, ..), was)| item != was);
+    Ok(Plan { items, save })
+}
+
+/// The decision `reason` asks of `item` now, or `None` when it no longer
+/// applies. Reads only, so a proposal and its confirmation can both use it.
+fn decide(run: &Run, item: &SetupItem, reason: &str) -> Result<Option<Decision>, AppError> {
+    let found = library_item(run, item)?;
+    let approve = || vec!["approve".to_owned(), "skip".to_owned()];
+    let (proposed, choices) = match (reason, item.kind, &found) {
+        ("confirmed_absent", _, None) => (
+            Value::Null,
+            vec!["restore".into(), "replace".into(), "revise".into()],
+        ),
+        (_, _, None) => return Ok(None),
+        ("first_setup", kind, Some(record)) => {
+            let item = SetupItem {
+                agents: with_readers(run, item),
+                approved: (kind == ItemKind::Mcp).then(|| mcp_value(record)),
+                ..item.clone()
+            };
+            (json!(item), approve())
+        }
+        ("approval_needed" | "value_changed", ItemKind::Mcp, Some(record)) => {
+            let value = mcp_value(record);
+            let current = match &item.approved {
+                None => "approval_needed",
+                Some(approved) if *approved != value => "value_changed",
+                Some(_) => return Ok(None),
+            };
+            if current != reason {
+                return Ok(None);
+            }
+            (value, approve())
+        }
+        ("unapproved_agents", ItemKind::Skill, Some(_)) => {
+            let agents = with_readers(run, item);
+            if agents == item.agents {
+                return Ok(None);
+            }
+            (json!(agents), approve())
+        }
+        ("would_delete", ItemKind::Instruction, Some(_)) => {
+            let files = instruction_deletes(run, item)?;
+            if files.is_empty() {
+                return Ok(None);
+            }
+            (json!(files), approve())
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(Decision {
+        kind: item.kind,
+        id: item.id.clone(),
+        agents: item.agents.clone(),
+        reason: reason.to_owned(),
+        name: found.and_then(|record| record["name"].as_str().map(str::to_owned)),
+        proposed,
+        choices,
+        choice: None,
+        replacement: None,
+    }))
+}
+
+/// The Library's record of `item`, or `None` when the Library confirms it
+/// is gone.
+fn library_item(run: &Run, item: &SetupItem) -> Result<Option<Value>, AppError> {
+    Ok(match item.kind {
+        ItemKind::Skill => run
+            .ctx
+            .store
+            .get_skill_by_id(&item.id)
+            .map_err(AppError::db)?
+            .map(|skill| json!({ "name": skill.name })),
+        ItemKind::Instruction => {
+            match instructions::dispatch(run.ctx, json!({ "action": "get", "id": item.id })) {
+                Ok(reply) => Some(reply["item"].clone()),
+                Err(error) if error.kind == ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            }
+        }
+        ItemKind::Mcp => run
+            .mcp_definitions
+            .iter()
+            .find(|d| d["id"] == item.id.as_str())
+            .cloned(),
+    })
 }
 
 fn answer_from_receipt(
@@ -211,6 +635,9 @@ fn answer_from_receipt(
         return Err(AppError::invalid_input(
             "This operation_id was used for a different request; use a new one",
         ));
+    }
+    if let Some(message) = receipt["error"].as_str() {
+        return Err(AppError::invalid_input(message));
     }
     if receipt["result"].is_object() {
         return Ok(respond(receipt["result"].clone(), true, evidence));
@@ -234,7 +661,7 @@ fn respond(mut result: Value, from_receipt: bool, evidence: bool) -> Value {
     result
 }
 
-fn summarize(intent: &Value, operation_id: &str, items: &[ItemResult]) -> Value {
+fn summarize(scope: &Value, operation_id: &str, items: &[ItemResult]) -> Value {
     let count = |status| items.iter().filter(|item| item.status == status).count();
     let mut agents: Vec<&str> = items
         .iter()
@@ -267,10 +694,10 @@ fn summarize(intent: &Value, operation_id: &str, items: &[ItemResult]) -> Value 
     }
     json!({
         "operation_id": operation_id,
-        "host": intent["host"],
-        "checkout_path": intent["checkout_path"],
-        "project_id": intent["project_id"],
-        "setup_version": intent["setup_version"],
+        "host": scope["host"],
+        "checkout_path": scope["checkout_path"],
+        "project_id": scope["project_id"],
+        "setup_version": scope["setup_version"],
         "outcome": outcome,
         "agents": agents,
         "counts": {
@@ -389,6 +816,49 @@ fn slot(path: &Path, expected: &Path) -> Slot {
     }
 }
 
+type SkillGroup = (AgentSkillConfig, Vec<String>);
+
+/// The agent folders a Skill deploys to, and every agent that reads one of
+/// them: each sees the skill, so each must be approved. A copy-mode project
+/// also writes `.agents/skills`.
+fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Vec<String>) {
+    let groups: Vec<&SkillGroup> = run
+        .skill_groups
+        .iter()
+        .filter(|(config, members)| {
+            run.available_skill_groups.contains(&config.key)
+                && members.iter().any(|m| item.agents.contains(m))
+        })
+        .collect();
+    if groups.is_empty() {
+        return (groups, Vec::new());
+    }
+    let copy_mode = is_copy_project(&run.project);
+    let readers = run
+        .skill_groups
+        .iter()
+        .filter(|(config, _)| {
+            groups.iter().any(|(group, _)| group.key == config.key)
+                || (copy_mode && project_deploy::is_vendored_dir(&config.relative_skills_dir))
+        })
+        .flat_map(|(_, members)| members.iter().cloned())
+        .collect();
+    (groups, readers)
+}
+
+/// An item's agents followed by any other agent that would read a Skill.
+fn with_readers(run: &Run, item: &SetupItem) -> Vec<String> {
+    let mut agents = item.agents.clone();
+    if item.kind == ItemKind::Skill {
+        for reader in skill_targets(run, item).1 {
+            if !agents.contains(&reader) {
+                agents.push(reader);
+            }
+        }
+    }
+    agents
+}
+
 fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
     let (ctx, project) = (run.ctx, &run.project);
     let skill: SkillRecord = match ctx.store.get_skill_by_id(&item.id).map_err(AppError::db)? {
@@ -404,24 +874,11 @@ fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
     let root = Path::new(&project.path);
     let copy_mode = is_copy_project(project);
 
-    let groups: Vec<&(AgentSkillConfig, Vec<String>)> = run
-        .skill_groups
-        .iter()
-        .filter(|(config, members)| {
-            run.available_skill_groups.contains(&config.key)
-                && members.iter().any(|m| item.agents.contains(m))
-        })
-        .collect();
+    let (groups, readers) = skill_targets(run, item);
     if groups.is_empty() {
         return Ok(Step::because(Status::Blocked, "no_supported_agent"));
     }
-    // Every agent that reads a folder this writes to sees the skill, so each
-    // must be approved. A copy-mode project also writes `.agents/skills`.
-    let mut readers = run.skill_groups.iter().filter(|(config, _)| {
-        groups.iter().any(|(group, _)| group.key == config.key)
-            || (copy_mode && project_deploy::is_vendored_dir(&config.relative_skills_dir))
-    });
-    if readers.any(|(_, members)| members.iter().any(|member| !item.agents.contains(member))) {
+    if readers.iter().any(|reader| !item.agents.contains(reader)) {
         return Ok(Step::because(Status::NeedsReview, "unapproved_agents"));
     }
 
@@ -502,16 +959,51 @@ fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
 
 // ── Instruction bundles ──
 
-fn apply_instruction(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
-    let (ctx, project) = (run.ctx, &run.project);
-    if let Err(error) = instructions::dispatch(ctx, json!({ "action": "get", "id": item.id })) {
-        return Ok(missing(error));
-    }
-    let agents: Vec<&String> = item
-        .agents
+fn instruction_agents(item: &SetupItem) -> impl Iterator<Item = &String> {
+    item.agents
         .iter()
         .filter(|agent| INSTRUCTION_AGENTS.contains(&agent.as_str()))
-        .collect();
+}
+
+fn instruction_preview(
+    run: &Run,
+    item: &SetupItem,
+    agent: &str,
+    dry_run: bool,
+) -> Result<Value, AppError> {
+    instructions::dispatch(
+        run.ctx,
+        json!({ "action": "preview", "instruction_id": item.id, "dry_run": dry_run,
+                "target": { "agent_key": agent, "project_id": run.project.id } }),
+    )
+}
+
+fn changes<'p>(preview: &'p Value, status: &'p str) -> impl Iterator<Item = &'p Value> {
+    preview["changes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(move |change| change["status"] == status)
+}
+
+/// The files applying an Instruction bundle would delete, as `agent:path`.
+fn instruction_deletes(run: &Run, item: &SetupItem) -> Result<Vec<String>, AppError> {
+    let mut files = Vec::new();
+    for agent in instruction_agents(item) {
+        let preview = instruction_preview(run, item, agent, true)?;
+        files.extend(
+            changes(&preview, "delete")
+                .map(|c| format!("{agent}:{}", c["path"].as_str().unwrap_or_default())),
+        );
+    }
+    Ok(files)
+}
+
+fn apply_instruction(run: &Run, item: &SetupItem, allow_delete: bool) -> Result<Step, AppError> {
+    if let Err(error) = instructions::dispatch(run.ctx, json!({ "action": "get", "id": item.id })) {
+        return Ok(missing(error));
+    }
+    let agents: Vec<&String> = instruction_agents(item).collect();
     if agents.is_empty() {
         return Ok(Step::because(Status::Blocked, "no_supported_agent"));
     }
@@ -521,20 +1013,8 @@ fn apply_instruction(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
     agents
         .into_iter()
         .map(|agent| {
-            let preview = |dry_run: bool| {
-                instructions::dispatch(
-                    ctx,
-                    json!({ "action": "preview", "instruction_id": item.id, "dry_run": dry_run,
-                            "target": { "agent_key": agent, "project_id": project.id } }),
-                )
-            };
-            let has = |preview: &Value, status: &str| {
-                preview["changes"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .any(|change| change["status"] == status)
-            };
+            let preview = |dry_run: bool| instruction_preview(run, item, agent, dry_run);
+            let has = |preview: &Value, status: &str| changes(preview, status).next().is_some();
             let unchanged = |preview: &Value| {
                 preview["changes"]
                     .as_array()
@@ -546,7 +1026,7 @@ fn apply_instruction(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
             if has(&planned, "conflict") {
                 return Ok(Step::because(Status::NeedsReview, "edited_here"));
             }
-            if has(&planned, "delete") {
+            if has(&planned, "delete") && !allow_delete {
                 return Ok(Step::because(Status::NeedsReview, "would_delete"));
             }
             if unchanged(&planned) {
@@ -557,7 +1037,7 @@ fn apply_instruction(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
             }
             let stored = preview(false)?;
             let applied = instructions::dispatch(
-                ctx,
+                run.ctx,
                 json!({ "action": "apply", "preview_id": stored["preview_id"] }),
             )?;
             if applied["status"] != "complete" {
@@ -1296,6 +1776,275 @@ pub(super) mod tests {
             .collect();
         assert_eq!(executed.len(), 1, "{calls:?}");
         assert_eq!(executed[0]["counts"]["changed"], 3);
+    }
+
+    fn decision<'a>(result: &'a Value, kind: &str) -> &'a Value {
+        result["proposal"]["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|decision| decision["kind"] == kind)
+            .unwrap_or_else(|| panic!("no {kind} decision in {result}"))
+    }
+
+    /// Answer every decision in `result`'s proposal with `choice`.
+    fn confirm(result: &Value, choice: &str) -> Value {
+        let mut proposal = result["proposal"].clone();
+        for decision in proposal["decisions"].as_array_mut().unwrap() {
+            decision["choice"] = json!(choice);
+        }
+        proposal
+    }
+
+    /// A Skill for agent_a and an MCP connection for Claude Code, proposed for
+    /// the unregistered checkout `work/fresh`.
+    fn propose_first_setup(fixture: &Fixture) -> (PathBuf, Value, Value) {
+        fixture.skill("s1", "review");
+        let mcp = fixture.mcp("docs");
+        let fresh = fixture.repo._tmp.path().join("work/fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+        let fresh = fresh.canonicalize().unwrap();
+        let proposed = fixture
+            .apply_with(
+                json!({ "checkout_path": fresh, "operation_id": "op-1", "items": [
+                { "kind": "skill", "id": "s1", "agents": ["agent_a"] },
+                { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"] },
+            ] }),
+            )
+            .unwrap();
+        (fresh, mcp, proposed)
+    }
+
+    #[test]
+    fn a_first_setup_is_proposed_without_writing_anything() {
+        let fixture = Fixture::new();
+        let (fresh, _, proposed) = propose_first_setup(&fixture);
+
+        assert_eq!(proposed["outcome"], "confirmation_needed");
+        assert_eq!(proposed["proposal"]["register"], true);
+        assert_eq!(proposed["proposal"]["checkout_path"], json!(fresh));
+        let skill = decision(&proposed, "skill");
+        assert_eq!(skill["name"], "review");
+        assert_eq!(skill["agents"], json!(["agent_a"]));
+        assert_eq!(skill["choices"], json!(["approve", "skip"]));
+        let server = &decision(&proposed, "mcp")["proposed"]["approved"]["server"];
+        assert_eq!(server["command"], "npx");
+        assert_eq!(server["args"], json!(["-y", "docs"]));
+        assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
+        assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
+    }
+
+    fn confirm_with(
+        fixture: &Fixture,
+        checkout: &Path,
+        operation_id: &str,
+        confirm: Value,
+    ) -> Result<Value, AppError> {
+        fixture.apply_with(
+            json!({ "checkout_path": checkout, "operation_id": operation_id,
+                                    "confirm": confirm, "evidence": true }),
+        )
+    }
+
+    fn change_args(fixture: &Fixture, mcp: &Value, args: Value) {
+        fixture.request(
+            "mcps_request",
+            json!({ "action": "save", "expectedRevision": mcp["revision"], "definition": {
+                "id": mcp["id"], "name": mcp["name"], "transport": "stdio",
+                "server": { "command": "npx", "args": args } } }),
+        );
+    }
+
+    #[test]
+    fn a_confirmed_first_setup_registers_saves_applies_and_verifies_in_one_call() {
+        let fixture = Fixture::new();
+        let (fresh, _, proposed) = propose_first_setup(&fixture);
+
+        let applied =
+            confirm_with(&fixture, &fresh, "op-2", confirm(&proposed, "approve")).unwrap();
+
+        assert_eq!(applied["outcome"], "verified_changed", "{applied}");
+        assert_eq!(applied["counts"]["changed"], 2);
+        let found = fixture.request(
+            "project_setup_request",
+            json!({ "action": "discover", "checkout_path": fresh }),
+        );
+        assert_eq!(found["project"]["id"], applied["project_id"]);
+        assert_eq!(found["saved_setup"]["version"], 1);
+        assert_eq!(applied["setup_version"], 1);
+        assert!(fresh.join(".a/skills/review").exists());
+        let mcp = std::fs::read_to_string(fresh.join(".mcp.json")).unwrap();
+        assert!(mcp.contains("\"docs\""), "{mcp}");
+
+        // The approved, unchanged connection applies later without a prompt.
+        let later = fixture
+            .apply_with(json!({ "checkout_path": fresh, "operation_id": "op-3" }))
+            .unwrap();
+        assert_eq!(later["outcome"], "verified_no_change", "{later}");
+        assert!(later.get("proposal").is_none());
+    }
+
+    #[test]
+    fn a_confirmation_is_stale_when_mcp_arguments_changed_since_the_proposal() {
+        let fixture = Fixture::new();
+        let (fresh, mcp, proposed) = propose_first_setup(&fixture);
+        change_args(&fixture, &mcp, json!(["-y", "docs@2"]));
+
+        let error =
+            confirm_with(&fixture, &fresh, "op-2", confirm(&proposed, "approve")).unwrap_err();
+
+        assert!(error.message.contains("stale"), "{}", error.message);
+        assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
+        assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_changed_mcp_value_is_proposed_and_skipping_it_keeps_the_saved_selection() {
+        let fixture = Fixture::new();
+        let (_, mcp) = one_of_each(&fixture);
+        fixture.apply("op-1").unwrap();
+        change_args(&fixture, &mcp, json!(["-y", "docs@2"]));
+
+        let proposed = fixture.apply("op-2").unwrap();
+        let change = decision(&proposed, "mcp");
+        assert_eq!(change["reason"], "value_changed");
+        assert_eq!(
+            change["proposed"]["server"]["args"],
+            json!(["-y", "docs@2"])
+        );
+        assert_eq!(change["choices"], json!(["approve", "skip"]));
+        let saved = || {
+            fixture
+                .ctx
+                .store
+                .resource_state_get("project_setup", "p1")
+                .unwrap()
+                .unwrap()
+        };
+        let before = saved();
+
+        let skipped = confirm_with(
+            &fixture,
+            &fixture.checkout,
+            "op-3",
+            confirm(&proposed, "skip"),
+        )
+        .unwrap();
+        assert_eq!(item(&skipped, "mcp")["reason"], "skipped");
+        assert_eq!(saved(), before);
+        assert_eq!(mcp_entry(&fixture, "docs")["args"], json!(["-y", "docs"]));
+
+        let approved = confirm_with(
+            &fixture,
+            &fixture.checkout,
+            "op-4",
+            confirm(&proposed, "approve"),
+        )
+        .unwrap();
+        assert_eq!(item(&approved, "mcp")["status"], "changed", "{approved}");
+        assert_eq!(mcp_entry(&fixture, "docs")["args"], json!(["-y", "docs@2"]));
+        assert_eq!(
+            fixture.apply("op-5").unwrap()["outcome"],
+            "verified_no_change"
+        );
+    }
+
+    #[test]
+    fn a_confirmed_missing_item_offers_restore_replace_or_revise_while_others_apply() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        fixture.ctx.store.delete_skill("s1").unwrap();
+
+        let proposed = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        let gone = decision(&proposed, "skill");
+        assert_eq!(gone["reason"], "confirmed_absent");
+        assert_eq!(gone["choices"], json!(["restore", "replace", "revise"]));
+        assert_eq!(item(&proposed, "instruction")["status"], "changed");
+        assert_eq!(item(&proposed, "mcp")["status"], "changed");
+
+        let other = fixture.skill("s2", "lint");
+        let mut replace = confirm(&proposed, "replace");
+        replace["decisions"][0]["replacement"] = json!("s2");
+        let replaced = confirm_with(&fixture, &fixture.checkout, "op-2", replace).unwrap();
+        assert_eq!(item(&replaced, "skill")["status"], "changed", "{replaced}");
+        assert!(resolves_to(&fixture.path(".a/skills/lint"), &other));
+
+        fixture.ctx.store.delete_skill("s2").unwrap();
+        let proposed = fixture.apply("op-3").unwrap();
+        let revised = confirm_with(
+            &fixture,
+            &fixture.checkout,
+            "op-4",
+            confirm(&proposed, "revise"),
+        )
+        .unwrap();
+        assert_eq!(revised["outcome"], "verified_no_change", "{revised}");
+        let saved = fixture
+            .ctx
+            .store
+            .resource_state_get("project_setup", "p1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved["items"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_approved_instruction_deletion_and_added_agents_apply() {
+        let fixture = Fixture::new();
+        let tmp = fixture.repo._tmp.path();
+        let tools = json!([
+            { "key": "agent_a", "display_name": "Agent A", "skills_dir": tmp.join("agents/a/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+            { "key": "agent_c", "display_name": "Agent C", "skills_dir": tmp.join("agents/c/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+        ]);
+        fixture
+            .ctx
+            .store
+            .set_setting("custom_tools", &tools.to_string())
+            .unwrap();
+        std::fs::create_dir_all(tmp.join("agents/c")).unwrap();
+        fixture.skill("s1", "review");
+        let saved = fixture.request(
+            "instructions_request",
+            json!({ "action": "save", "name": "Rules",
+                    "files": { "CLAUDE.md": "a\n", ".claude/rules/extra.md": "b\n" } }),
+        );
+        let id = saved["item"]["id"].as_str().unwrap();
+        fixture.save_setup(json!([
+            { "kind": "instruction", "id": id, "agents": ["claude_code"] },
+            { "kind": "skill", "id": "s1", "agents": ["agent_a"] },
+        ]));
+        fixture.apply("op-1").unwrap();
+        fixture.request(
+            "instructions_request",
+            json!({ "action": "save", "id": id, "name": "Rules", "files": { "CLAUDE.md": "a\n" },
+                    "expected_revision": saved["item"]["revision"] }),
+        );
+
+        let proposed = fixture.apply("op-2").unwrap();
+        assert_eq!(
+            decision(&proposed, "instruction")["proposed"],
+            json!(["claude_code:.claude/rules/extra.md"])
+        );
+        assert_eq!(
+            decision(&proposed, "skill")["proposed"],
+            json!(["agent_a", "agent_c"])
+        );
+        let applied = confirm_with(
+            &fixture,
+            &fixture.checkout,
+            "op-3",
+            confirm(&proposed, "approve"),
+        )
+        .unwrap();
+
+        assert_eq!(applied["outcome"], "verified_changed", "{applied}");
+        assert!(!fixture.path(".claude/rules/extra.md").exists());
+        assert!(fixture.path(".a/skills/review").exists());
     }
 
     /// Run with `--ignored --nocapture` to measure; the timing goes in the PR.
