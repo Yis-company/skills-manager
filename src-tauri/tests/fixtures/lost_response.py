@@ -17,7 +17,11 @@ server = subprocess.Popen(
     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
 )
 try:
-    sys.stdout.buffer.write(server.stdout.readline())
+    # The file watcher may report a change before hello; pass it all through.
+    for line in server.stdout:
+        sys.stdout.buffer.write(line)
+        if b'"hello"' in line:
+            break
     sys.stdout.buffer.flush()
     request = sys.stdin.buffer.readline()
     if mode != "before_admission":

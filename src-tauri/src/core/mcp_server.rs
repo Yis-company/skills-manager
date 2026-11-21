@@ -10,7 +10,8 @@
 //! fields or new tools, never change what callers rely on.
 //!
 //! The library opens read-only. The first apply that may write opens it for
-//! writing, once.
+//! writing, once. A request naming a `host` runs on that registered SSH host
+//! instead; see [`remote`].
 
 use std::cell::OnceCell;
 use std::io::{self, BufRead, Write};
@@ -21,6 +22,9 @@ use serde_json::{json, Value};
 use super::error::AppError;
 use super::host::HostCtx;
 use super::project_setup;
+use super::remote_session::CliCommand;
+
+mod remote;
 
 /// Newest first: a client asking for another version gets the newest.
 const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -33,22 +37,32 @@ const DISCOVER: &str = "discover_project_setup";
 const APPLY: &str = "apply_project_setup";
 const INSPECT: &str = "inspect_project_setup_result";
 
-/// How the server reaches the library: read-only, and writable on demand.
+const HOST_DESCRIPTION: &str = "The name of a registered SSH host to run on instead of this \
+    computer; checkout_path is then a path there. An unreachable host is a tool error, \
+    unlike a reachable host whose Sync is offline. A host on another version is refused, \
+    never installed or updated.";
+
+/// How the server reaches the library: read-only, and writable on demand;
+/// and SSH hosts, through `cli` ([`super::remote_host::cli_command`] outside
+/// tests).
 pub struct Library<'a> {
     read_only: &'a HostCtx,
     open_writable: &'a dyn Fn() -> Result<HostCtx, AppError>,
     writable: OnceCell<HostCtx>,
+    hosts: remote::Hosts<'a>,
 }
 
 impl<'a> Library<'a> {
     pub fn new(
         read_only: &'a HostCtx,
         open_writable: &'a dyn Fn() -> Result<HostCtx, AppError>,
+        cli: &'a CliCommand,
     ) -> Self {
         Self {
             read_only,
             open_writable,
             writable: OnceCell::new(),
+            hosts: remote::Hosts::new(cli),
         }
     }
 
@@ -128,7 +142,8 @@ fn initialize(params: &Value) -> Value {
         "instructions": "Pass the active checkout's absolute path to discover_project_setup \
             to read its Project setup, and to apply_project_setup to apply and verify it. \
             After a lost reply or an unclear result, inspect_project_setup_result reads it \
-            back without writing. A linked worktree is its own checkout.",
+            back without writing. A linked worktree is its own checkout. To work on a \
+            registered SSH host, pass its name as host to any tool.",
     })
 }
 
@@ -148,9 +163,17 @@ fn call_tool(ctx: &Library, params: &Value) -> Result<Value, (i64, String)> {
         _ => return Err((INVALID_PARAMS, "Tool arguments must be an object".into())),
     };
     request.insert("action".into(), json!(action));
+    let host = match request.remove("host") {
+        None => None,
+        Some(Value::String(host)) => Some(host),
+        Some(_) => return Err((INVALID_PARAMS, "host must be a string".into())),
+    };
     // Proposing a first setup reads only; confirming it writes.
     let proposes = request.contains_key("items") && !request.contains_key("confirm");
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        if let Some(host) = &host {
+            return ctx.hosts.call(ctx.read_only, host, request);
+        }
         let ctx = match action {
             "apply" if !proposes => ctx.writable()?,
             _ => ctx.read_only,
@@ -187,14 +210,18 @@ fn discover_tool() -> Value {
     json!({
         "name": DISCOVER,
         "title": "Discover Project setup",
-        "description": "Read the Project setup for one exact checkout on this computer: \
-            its registered project, saved setup, Library options (50 per page), \
-            read-only Sync status and conflicts. When the checkout is not registered, \
+        "description": "Read the Project setup for one exact checkout on this computer or \
+            the named host: its registered project, saved setup, Library options (50 per \
+            page), read-only Sync status and conflicts. When the checkout is not registered, \
             up to 10 registered projects that contain it or sit inside it are listed \
             as candidates. Writes nothing.",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "host": {
+                    "type": "string",
+                    "description": HOST_DESCRIPTION,
+                },
                 "checkout_path": {
                     "type": "string",
                     "description": "Absolute path of the active checkout.",
@@ -322,10 +349,10 @@ fn apply_tool() -> Value {
         "name": APPLY,
         "title": "Apply Project setup",
         "description": "Apply the saved Project setup to one exact registered checkout on this \
-            computer and verify the result, in one call. Absent items are deployed; items \
-            that already match are left alone; edited, unapproved or ambiguous items are \
-            reported and never overwritten, while independent items continue. Reusing an \
-            operation_id returns the recorded result instead of applying again. Per-item \
+            computer or the named host and verify the result, in one call. Absent items are \
+            deployed; items that already match are left alone; edited, unapproved or ambiguous \
+            items are reported and never overwritten, while independent items continue. Reusing \
+            an operation_id returns the recorded result instead of applying again. Per-item \
             results come only with evidence: true. A checkout with no saved setup gets a \
             proposal for the items passed; items that need approval get one too. Send a \
             proposal back as confirm, with a choice on each decision, to register the \
@@ -333,6 +360,10 @@ fn apply_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "host": {
+                    "type": "string",
+                    "description": HOST_DESCRIPTION,
+                },
                 "checkout_path": {
                     "type": "string",
                     "description": "Absolute path of the active checkout.",
@@ -441,14 +472,18 @@ fn inspect_tool() -> Value {
     json!({
         "name": INSPECT,
         "title": "Inspect Project setup result",
-        "description": "Read back an apply_project_setup operation on this computer without \
-            writing or resubmitting: its recorded result, and the checkout's current state \
-            against its saved setup. A missing receipt, or one with no recorded result, is \
-            outcome_unknown; a matching checkout is reported as verified state, not as this \
-            operation's change. Per-item results come only with evidence: true.",
+        "description": "Read back an apply_project_setup operation on this computer or the \
+            named host without writing or resubmitting: its recorded result, and the checkout's \
+            current state against its saved setup. A missing receipt, or one with no recorded \
+            result, is outcome_unknown; a matching checkout is reported as verified state, not \
+            as this operation's change. Per-item results come only with evidence: true.",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "host": {
+                    "type": "string",
+                    "description": HOST_DESCRIPTION,
+                },
                 "checkout_path": {
                     "type": "string",
                     "description": "Absolute path of the checkout the operation targeted.",

@@ -2,7 +2,7 @@ use std::io;
 use std::path::PathBuf;
 
 use app_lib::core::{
-    app_state, central_repo, error::AppError, host::HostCtx, mcp_server, mcps, serve,
+    app_state, central_repo, error::AppError, host::HostCtx, mcp_server, mcps, remote_host, serve,
 };
 use clap::{Args, Parser, Subcommand};
 
@@ -213,7 +213,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     .map(HostCtx::headless)
                     .map_err(|e| AppError::internal(format!("{e:#}")))
             };
-            let library = mcp_server::Library::new(&ctx, &open_writable);
+            let library = mcp_server::Library::new(&ctx, &open_writable, &remote_host::cli_command);
             Ok(mcp_server::run(
                 io::stdin().lock(),
                 io::stdout().lock(),
