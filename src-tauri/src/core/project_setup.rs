@@ -3,17 +3,21 @@
 //! commands.
 //!
 //! Discovery is read-only: it never registers projects, deploys, or writes
-//! the store, so it can run on a store opened read-only.
+//! the store, so it can run on a store opened read-only. Apply writes; see
+//! [`apply`].
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::core::error::AppError;
 use crate::core::host::HostCtx;
-use crate::core::skill_store::ProjectRecord;
+use crate::core::skill_store::{ProjectRecord, SkillStore};
 use crate::core::sync_service;
+
+mod apply;
+pub use apply::mcp_value;
 
 /// Library options per page.
 pub const PAGE_SIZE: usize = 50;
@@ -22,6 +26,59 @@ pub const MAX_CANDIDATES: usize = 10;
 /// The `resource_state` kind that holds each project's saved setup.
 const SETUP_KIND: &str = "project_setup";
 
+/// A project's saved setup: what to deploy, and to which agents. Written
+/// only through [`save_setup`], so each write bumps `version`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedSetup {
+    pub version: u64,
+    pub items: Vec<SetupItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetupItem {
+    pub kind: ItemKind,
+    /// The Library ID. Names are for people; a renamed item keeps its ID.
+    pub id: String,
+    /// Always explicit: an empty list never means every agent.
+    pub agents: Vec<String>,
+    /// For an MCP connection, the effective value the user approved, kept
+    /// verbatim. See [`apply::mcp_value`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemKind {
+    Skill,
+    Instruction,
+    Mcp,
+}
+
+/// Replace a project's saved setup when it is still at `expected_version`
+/// (0 for none), and return the stored record.
+pub fn save_setup(
+    store: &SkillStore,
+    project_id: &str,
+    expected_version: u64,
+    items: Vec<SetupItem>,
+) -> Result<SavedSetup, AppError> {
+    let setup = SavedSetup {
+        version: expected_version + 1,
+        items,
+    };
+    let value = serde_json::to_value(&setup).map_err(AppError::internal)?;
+    if !store
+        .resource_state_put_versioned(SETUP_KIND, project_id, expected_version, &value)
+        .map_err(AppError::db)?
+    {
+        return Err(AppError::invalid_input(
+            "The saved Project setup changed in another session; discover it again",
+        ));
+    }
+    Ok(setup)
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 enum Request {
@@ -29,6 +86,12 @@ enum Request {
         checkout_path: String,
         #[serde(default)]
         cursor: Option<String>,
+    },
+    Apply {
+        checkout_path: String,
+        operation_id: String,
+        #[serde(default)]
+        evidence: bool,
     },
 }
 
@@ -40,24 +103,17 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
             checkout_path,
             cursor,
         } => discover(ctx, &checkout_path, cursor.as_deref()),
+        Request::Apply {
+            checkout_path,
+            operation_id,
+            evidence,
+        } => apply::apply(ctx, &checkout_path, &operation_id, evidence),
     }
 }
 
 fn discover(ctx: &HostCtx, checkout_path: &str, cursor: Option<&str>) -> Result<Value, AppError> {
     let checkout = canonical_checkout(checkout_path)?;
-    // Both sides canonical and compared whole, so a linked worktree or a
-    // folder inside a project never resolves to the project around it.
-    let projects: Vec<(ProjectRecord, PathBuf)> = ctx
-        .store
-        .get_all_projects()
-        .map_err(AppError::db)?
-        .into_iter()
-        .filter(|project| project.workspace_type == "project")
-        .filter_map(|project| {
-            let path = Path::new(&project.path).canonicalize().ok()?;
-            Some((project, path))
-        })
-        .collect();
+    let projects = registered_projects(ctx)?;
     let exact = projects.iter().find(|(_, path)| *path == checkout);
     let candidates: Vec<Value> = match exact {
         Some(_) => Vec::new(),
@@ -99,6 +155,36 @@ fn discover(ctx: &HostCtx, checkout_path: &str, cursor: Option<&str>) -> Result<
             "edited_here": status.edited_here,
         },
     }))
+}
+
+/// Registered projects with their canonical paths. Both sides canonical and
+/// compared whole, so a linked worktree or a folder inside a project never
+/// resolves to the project around it.
+fn registered_projects(ctx: &HostCtx) -> Result<Vec<(ProjectRecord, PathBuf)>, AppError> {
+    Ok(ctx
+        .store
+        .get_all_projects()
+        .map_err(AppError::db)?
+        .into_iter()
+        .filter(|project| project.workspace_type == "project")
+        .filter_map(|project| {
+            let path = Path::new(&project.path).canonicalize().ok()?;
+            Some((project, path))
+        })
+        .collect())
+}
+
+/// The canonical checkout and the project registered at exactly that path.
+fn find_project(
+    ctx: &HostCtx,
+    checkout_path: &str,
+) -> Result<(PathBuf, Option<ProjectRecord>), AppError> {
+    let checkout = canonical_checkout(checkout_path)?;
+    let project = registered_projects(ctx)?
+        .into_iter()
+        .find(|(_, path)| *path == checkout)
+        .map(|(project, _)| project);
+    Ok((checkout, project))
 }
 
 fn canonical_checkout(checkout_path: &str) -> Result<PathBuf, AppError> {

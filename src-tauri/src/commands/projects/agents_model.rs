@@ -10,7 +10,7 @@ use crate::core::project_skill_match::{find_best_center_match, slugify_skill_dir
 use crate::core::skill_store::{ProjectRecord, SkillRecord, SkillStore};
 use crate::core::{error::AppError, project_scanner, tool_adapters};
 
-pub(super) fn agent_skill_configs(store: &SkillStore) -> Vec<project_scanner::AgentSkillConfig> {
+pub(crate) fn agent_skill_configs(store: &SkillStore) -> Vec<project_scanner::AgentSkillConfig> {
     agent_groups(store)
         .into_iter()
         .map(|group| group.config)
@@ -208,8 +208,19 @@ pub(super) fn project_agent_targets_for_record(
         .collect()
 }
 
+/// Every project skills folder with the adapters that read it, keyed like
+/// [`agent_skill_configs`].
+pub(crate) fn agent_skill_groups(
+    store: &SkillStore,
+) -> Vec<(project_scanner::AgentSkillConfig, Vec<String>)> {
+    agent_groups(store)
+        .into_iter()
+        .map(|group| (group.config, group.members))
+        .collect()
+}
+
 /// Agents that are installed and enabled, the only ones a deployment can reach.
-fn available_agent_keys(store: &SkillStore, rec: &ProjectRecord) -> HashSet<String> {
+pub(crate) fn available_agent_keys(store: &SkillStore, rec: &ProjectRecord) -> HashSet<String> {
     project_agent_targets_for_record(store, rec)
         .into_iter()
         .filter(|target| target.installed && target.enabled)
@@ -254,7 +265,7 @@ pub(super) fn export_agent_keys(
     Ok(filtered)
 }
 
-pub(super) fn is_copy_project(rec: &ProjectRecord) -> bool {
+pub(crate) fn is_copy_project(rec: &ProjectRecord) -> bool {
     rec.deploy_mode == "copy"
 }
 

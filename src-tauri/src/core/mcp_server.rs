@@ -8,7 +8,10 @@
 //!
 //! Tool names, inputs and output fields are frozen at version 1: add optional
 //! fields or new tools, never change what callers rely on.
+//!
+//! The library opens read-only. The first apply opens it for writing, once.
 
+use std::cell::OnceCell;
 use std::io::{self, BufRead, Write};
 use std::panic::{self, AssertUnwindSafe};
 
@@ -26,9 +29,38 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
 const DISCOVER: &str = "discover_project_setup";
+const APPLY: &str = "apply_project_setup";
+
+/// How the server reaches the library: read-only, and writable on demand.
+pub struct Library<'a> {
+    read_only: &'a HostCtx,
+    open_writable: &'a dyn Fn() -> Result<HostCtx, AppError>,
+    writable: OnceCell<HostCtx>,
+}
+
+impl<'a> Library<'a> {
+    pub fn new(
+        read_only: &'a HostCtx,
+        open_writable: &'a dyn Fn() -> Result<HostCtx, AppError>,
+    ) -> Self {
+        Self {
+            read_only,
+            open_writable,
+            writable: OnceCell::new(),
+        }
+    }
+
+    fn writable(&self) -> Result<&HostCtx, AppError> {
+        if let Some(ctx) = self.writable.get() {
+            return Ok(ctx);
+        }
+        let ctx = (self.open_writable)()?;
+        Ok(self.writable.get_or_init(|| ctx))
+    }
+}
 
 /// Answer JSON-RPC messages from `reader` on `writer` until `reader` ends.
-pub fn run(mut reader: impl BufRead, mut writer: impl Write, ctx: &HostCtx) -> io::Result<()> {
+pub fn run(mut reader: impl BufRead, mut writer: impl Write, ctx: &Library) -> io::Result<()> {
     let mut line = Vec::new();
     loop {
         line.clear();
@@ -56,14 +88,14 @@ pub fn run(mut reader: impl BufRead, mut writer: impl Write, ctx: &HostCtx) -> i
 }
 
 /// The reply to one message, or `None` for a notification or a response.
-fn answer(ctx: &HostCtx, message: &Value) -> Option<Value> {
+fn answer(ctx: &Library, message: &Value) -> Option<Value> {
     let id = message.get("id")?.clone();
     let method = message.get("method")?.as_str().unwrap_or_default();
     let params = &message["params"];
     let result = match method {
         "initialize" => Ok(initialize(params)),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": [discover_tool()] })),
+        "tools/list" => Ok(json!({ "tools": [discover_tool(), apply_tool()] })),
         "tools/call" => call_tool(ctx, params),
         _ => Err((METHOD_NOT_FOUND, format!("Method not found: {method}"))),
     };
@@ -92,24 +124,31 @@ fn initialize(params: &Value) -> Value {
             "version": env!("CARGO_PKG_VERSION"),
         },
         "instructions": "Pass the active checkout's absolute path to discover_project_setup \
-            to read its Project setup. A linked worktree is its own checkout.",
+            to read its Project setup, and to apply_project_setup to apply and verify it. \
+            A linked worktree is its own checkout.",
     })
 }
 
 /// A tool's own failure is a result the agent reads (`isError`), not a
 /// protocol error; only an unknown tool is one.
-fn call_tool(ctx: &HostCtx, params: &Value) -> Result<Value, (i64, String)> {
+fn call_tool(ctx: &Library, params: &Value) -> Result<Value, (i64, String)> {
     let name = params["name"].as_str().unwrap_or_default();
-    if name != DISCOVER {
-        return Err((INVALID_PARAMS, format!("Unknown tool: {name}")));
-    }
+    let action = match name {
+        DISCOVER => "discover",
+        APPLY => "apply",
+        _ => return Err((INVALID_PARAMS, format!("Unknown tool: {name}"))),
+    };
     let mut request = match &params["arguments"] {
         Value::Object(arguments) => arguments.clone(),
         Value::Null => Default::default(),
         _ => return Err((INVALID_PARAMS, "Tool arguments must be an object".into())),
     };
-    request.insert("action".into(), json!("discover"));
+    request.insert("action".into(), json!(action));
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        let ctx = match action {
+            "apply" => ctx.writable()?,
+            _ => ctx.read_only,
+        };
         project_setup::dispatch(ctx, Value::Object(request))
     }))
     .unwrap_or_else(|_| Err(AppError::internal(format!("{name} panicked"))));
@@ -225,6 +264,98 @@ fn discover_tool() -> Value {
         },
         "annotations": {
             "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+        },
+    })
+}
+
+fn apply_tool() -> Value {
+    let count = json!({ "type": "integer", "minimum": 0 });
+    json!({
+        "name": APPLY,
+        "title": "Apply Project setup",
+        "description": "Apply the saved Project setup to one exact registered checkout on this \
+            computer and verify the result, in one call. Absent items are deployed; items \
+            that already match are left alone; edited, unapproved or ambiguous items are \
+            reported and never overwritten, while independent items continue. Reusing an \
+            operation_id returns the recorded result instead of applying again. Per-item \
+            results come only with evidence: true.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "checkout_path": {
+                    "type": "string",
+                    "description": "Absolute path of the active checkout.",
+                },
+                "operation_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "description": "A new ID per intended change, reused only to retry it.",
+                },
+                "evidence": {
+                    "type": "boolean",
+                    "description": "Include the per-item results.",
+                },
+            },
+            "required": ["checkout_path", "operation_id"],
+            "additionalProperties": false,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "operation_id": { "type": "string" },
+                "host": { "type": "string" },
+                "checkout_path": { "type": "string" },
+                "project_id": { "type": "string" },
+                "setup_version": { "type": "integer" },
+                "outcome": {
+                    "type": "string",
+                    "enum": ["verified_changed", "verified_no_change", "attention_needed", "outcome_unknown"],
+                },
+                "agents": { "type": "array", "items": { "type": "string" } },
+                "counts": {
+                    "type": "object",
+                    "properties": {
+                        "changed": count, "unchanged": count, "needs_review": count,
+                        "blocked": count, "missing": count, "failed": count,
+                    },
+                    "required": ["changed", "unchanged", "needs_review", "blocked", "missing", "failed"],
+                },
+                "next_action": { "type": "string" },
+                "notes": { "type": "array", "items": { "type": "string" } },
+                "from_receipt": {
+                    "type": "boolean",
+                    "description": "Answered from this operation_id's receipt; nothing was applied.",
+                },
+                "items": {
+                    "type": "array",
+                    "description": "Only with evidence: true.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "type": "string", "enum": ["skill", "instruction", "mcp"] },
+                            "id": { "type": "string" },
+                            "agents": { "type": "array", "items": { "type": "string" } },
+                            "status": {
+                                "type": "string",
+                                "enum": ["changed", "unchanged", "needs_review", "blocked", "missing", "failed"],
+                            },
+                            "reason": { "type": "string" },
+                        },
+                        "required": ["kind", "id", "agents", "status"],
+                    },
+                },
+            },
+            "required": [
+                "operation_id", "host", "checkout_path", "project_id", "setup_version",
+                "outcome", "agents", "counts", "next_action", "notes", "from_receipt",
+            ],
+        },
+        "annotations": {
+            "readOnlyHint": false,
             "destructiveHint": false,
             "idempotentHint": true,
             "openWorldHint": false,

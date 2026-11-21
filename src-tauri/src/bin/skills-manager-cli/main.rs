@@ -1,7 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 
-use app_lib::core::{app_state, central_repo, host::HostCtx, mcp_server, serve};
+use app_lib::core::{app_state, central_repo, error::AppError, host::HostCtx, mcp_server, serve};
 use clap::{Args, Parser, Subcommand};
 
 use crate::args::{GitArgs, PresetArgs, RepoArgs, RepoCommand, SkillsArgs, SyncArgs, ToolsArgs};
@@ -172,10 +172,16 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             // refresh the library's index file.
             std::env::set_var("GIT_OPTIONAL_LOCKS", "0");
             let ctx = HostCtx::headless(store);
+            let open_writable = || {
+                app_state::initialize_cli_store()
+                    .map(HostCtx::headless)
+                    .map_err(|e| AppError::internal(format!("{e:#}")))
+            };
+            let library = mcp_server::Library::new(&ctx, &open_writable);
             Ok(mcp_server::run(
                 io::stdin().lock(),
                 io::stdout().lock(),
-                &ctx,
+                &library,
             )?)
         }
     }

@@ -7,6 +7,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use app_lib::core::project_setup;
+use app_lib::core::skill_store::{ProjectRecord, SkillStore};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
@@ -170,13 +172,20 @@ fn the_handshake_matches_what_codex_and_claude_code_send() {
         assert_eq!(init["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
 
         let tools = reply(&lines, 2)["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
         let tool = &tools[0];
         assert_eq!(tool["name"], "discover_project_setup");
         assert_eq!(tool["inputSchema"]["type"], "object");
         assert_eq!(tool["inputSchema"]["required"], json!(["checkout_path"]));
         assert_eq!(tool["outputSchema"]["type"], "object");
         assert_eq!(tool["annotations"]["readOnlyHint"], true);
+        let apply = &tools[1];
+        assert_eq!(apply["name"], "apply_project_setup");
+        assert_eq!(
+            apply["inputSchema"]["required"],
+            json!(["checkout_path", "operation_id"])
+        );
+        assert_eq!(apply["annotations"]["readOnlyHint"], false);
 
         assert_eq!(reply(&lines, 3)["result"], json!({}));
         assert_eq!(reply(&lines, 4)["error"]["code"], -32601);
@@ -288,7 +297,7 @@ fn a_failed_discovery_is_a_tool_error_the_agent_can_read() {
             "tools/call",
             json!({ "name": "discover_project_setup", "arguments": { "checkout_path": "relative/path" } }),
         ),
-        request(2, "tools/call", json!({ "name": "apply_project_setup", "arguments": {} })),
+        request(2, "tools/call", json!({ "name": "remove_project_setup", "arguments": {} })),
     ]);
 
     let failed = &reply(&lines, 1)["result"];
@@ -298,4 +307,70 @@ fn a_failed_discovery_is_a_tool_error_the_agent_can_read() {
         .unwrap()
         .contains("absolute"));
     assert_eq!(reply(&lines, 2)["error"]["code"], -32602);
+}
+
+#[test]
+fn apply_sets_up_a_saved_mcp_connection_and_a_retry_answers_from_its_receipt() {
+    let machine = Machine::new();
+    let saved = machine
+        .cli()
+        .args(["--json", "mcps", "save", "--input", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            let definition = json!({ "definition": { "name": "docs", "transport": "stdio",
+                "server": { "command": "npx", "args": ["-y", "docs"] } } });
+            writeln!(child.stdin.take().unwrap(), "{definition}")?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    assert!(saved.status.success());
+    let definition: Value = serde_json::from_slice(&saved.stdout).unwrap();
+    let definition = &definition["definition"];
+    let checkout = machine.tmp.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let store = SkillStore::new(&machine.base().join("skills-manager.db")).unwrap();
+    store
+        .insert_project(&ProjectRecord {
+            id: "p1".into(),
+            name: "checkout".into(),
+            path: checkout.to_string_lossy().into_owned(),
+            workspace_type: "project".into(),
+            linked_agent_key: None,
+            linked_agent_name: None,
+            disabled_path: None,
+            sort_order: 0,
+            created_at: 0,
+            updated_at: 0,
+            agent_keys: None,
+            deploy_mode: "link".into(),
+        })
+        .unwrap();
+    let item = json!({ "kind": "mcp", "id": definition["id"], "agents": ["claude_code"],
+        "approved": project_setup::mcp_value(definition) });
+    project_setup::save_setup(&store, "p1", 0, vec![serde_json::from_value(item).unwrap()])
+        .unwrap();
+    drop(store);
+    let apply = |id| {
+        request(
+            id,
+            "tools/call",
+            json!({ "name": "apply_project_setup",
+                    "arguments": { "checkout_path": checkout, "operation_id": "op-1" } }),
+        )
+    };
+
+    let lines = machine.mcp(&[apply(1), apply(2)]);
+
+    let first = &reply(&lines, 1)["result"];
+    assert_eq!(first["isError"], false, "{first}");
+    assert_eq!(first["structuredContent"]["outcome"], "verified_changed");
+    let config: Value =
+        serde_json::from_str(&std::fs::read_to_string(checkout.join(".mcp.json")).unwrap())
+            .unwrap();
+    assert_eq!(config["mcpServers"]["docs"]["command"], "npx");
+    let retry = &reply(&lines, 2)["result"]["structuredContent"];
+    assert_eq!(retry["from_receipt"], true);
+    assert_eq!(retry["outcome"], "verified_changed");
 }
