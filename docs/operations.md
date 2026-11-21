@@ -135,6 +135,11 @@ retain correlated intent and prior attempts outside portable Sync metadata. Inte
 persistence precedes writes. Result persistence failure becomes `outcome_unknown`;
 there is no exactly-once claim across a crash between mutation and receipt persistence.
 
+Project setup receipts (`project_setup_receipt`) record `settled_at` when their result
+or error is written. Each apply deletes at most 100 settled receipts older than 30 days;
+a receipt with intent and no result is never pruned. An `operation_id` retried after its
+receipt was pruned runs again, checking each destination before writing.
+
 Git URL user-info passwords, HTTP user-info, query and fragment data are excluded from
 captured source intent before preparation. Git uses the host's configured authentication;
 URL-embedded authentication/query tokens are not retained as operation credentials.

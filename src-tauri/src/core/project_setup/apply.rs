@@ -4,7 +4,8 @@
 //! The caller's `operation_id` names a receipt in `resource_state`. The
 //! request claims it (version 0 to 1) before its first write, so only one
 //! request executes per ID, and records the result (version 1 to 2). The
-//! same ID asked again answers from the receipt.
+//! same ID asked again answers from the receipt, for 30 days after it settles;
+//! see `docs/operations.md`.
 //!
 //! Each item is checked and applied by [`super::items`]; decisions and their
 //! confirmation are in [`super::confirm`].
@@ -23,6 +24,11 @@ use crate::core::skill_store::ProjectRecord;
 
 pub(super) const RECEIPT_KIND: &str = "project_setup_receipt";
 const MAX_OPERATION_ID: usize = 128;
+/// Settled receipts are kept this long, so a retry within it answers from
+/// its receipt.
+const RECEIPT_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+/// The most expired receipts one apply deletes.
+const RECEIPT_PRUNE_LIMIT: usize = 100;
 
 /// The apply action's arguments.
 #[derive(Deserialize)]
@@ -129,6 +135,14 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         intent["agents"] = json!(agents);
     }
 
+    let now = chrono::Utc::now().timestamp_millis();
+    ctx.store
+        .resource_state_delete_settled_before(
+            RECEIPT_KIND,
+            now - RECEIPT_RETENTION_MS,
+            RECEIPT_PRUNE_LIMIT,
+        )
+        .map_err(AppError::db)?;
     let claim = json!({ "version": 1, "intent": intent });
     if !ctx
         .store
@@ -143,7 +157,8 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         match save_confirmed(&mut run, &proposal, items.clone()) {
             Ok(version) => proposal.setup_version = version,
             Err(error) => {
-                let receipt = json!({ "version": 2, "intent": intent, "error": error.message });
+                let receipt = json!({ "version": 2, "intent": intent, "error": error.message,
+                                      "settled_at": chrono::Utc::now().timestamp_millis() });
                 ctx.store
                     .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
                     .map_err(AppError::db)?;
@@ -177,7 +192,8 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         result["proposal"] = json!(proposal);
     }
     result["items"] = json!(results);
-    let receipt = json!({ "version": 2, "intent": intent, "result": result });
+    let receipt = json!({ "version": 2, "intent": intent, "result": result,
+                          "settled_at": chrono::Utc::now().timestamp_millis() });
     ctx.store
         .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
         .map_err(AppError::db)?;
@@ -1055,6 +1071,45 @@ pub(super) mod tests {
         assert_eq!(first["outcome"], "verified_changed");
         assert_eq!(unknown["outcome"], "outcome_unknown");
         assert_eq!(unknown["from_receipt"], true);
+    }
+
+    #[test]
+    fn apply_prunes_settled_receipts_older_than_30_days_but_never_a_claim() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        let store = &fixture.ctx.store;
+        let day = 24 * 60 * 60 * 1000;
+        let now = chrono::Utc::now().timestamp_millis();
+        let intent = json!({ "host": "h", "checkout_path": fixture.checkout });
+        let planted = [
+            (
+                "op-old",
+                json!({ "version": 2, "intent": intent, "result": {},
+                               "settled_at": now - 31 * day }),
+            ),
+            (
+                "op-recent",
+                json!({ "version": 2, "intent": intent, "result": {},
+                                  "settled_at": now - 29 * day }),
+            ),
+            ("op-claimed", json!({ "version": 1, "intent": intent })),
+        ];
+        for (id, receipt) in &planted {
+            store
+                .resource_state_put("project_setup_receipt", id, receipt)
+                .unwrap();
+        }
+
+        fixture.apply("op-1").unwrap();
+
+        let kept = |id| {
+            store
+                .resource_state_get("project_setup_receipt", id)
+                .unwrap()
+                .is_some()
+        };
+        assert!(!kept("op-old"));
+        assert!(kept("op-recent") && kept("op-claimed") && kept("op-1"));
     }
 
     #[test]

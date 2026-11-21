@@ -241,6 +241,27 @@ impl SkillStore {
         Ok(true)
     }
 
+    /// Delete at most `limit` documents of `kind` whose `settled_at` (epoch
+    /// milliseconds) is before `before`. A document without one is kept.
+    pub fn resource_state_delete_settled_before(
+        &self,
+        kind: &str,
+        before: i64,
+        limit: usize,
+    ) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        if !resource_state_exists(&conn)? {
+            return Ok(0);
+        }
+        Ok(conn.execute(
+            "DELETE FROM resource_state WHERE rowid IN (
+                 SELECT rowid FROM resource_state
+                 WHERE kind = ?1 AND json_extract(value, '$.settled_at') < ?2 LIMIT ?3
+             )",
+            params![kind, before, limit as i64],
+        )?)
+    }
+
     pub fn resource_state_delete(&self, kind: &str, id: &str) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "DELETE FROM resource_state WHERE kind = ?1 AND id = ?2",
