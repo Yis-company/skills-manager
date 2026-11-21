@@ -56,8 +56,10 @@ pub(super) fn apply_instruction(
     item: &SetupItem,
     allow_delete: bool,
 ) -> Result<Step, AppError> {
-    if let Err(error) = instructions::dispatch(run.ctx, json!({ "action": "get", "id": item.id })) {
-        return Ok(missing(error));
+    match run.instruction(&item.id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Ok(Step::because(Status::Missing, "confirmed_absent")),
+        Err(error) => return Ok(missing(error)),
     }
     let agents: Vec<&String> = instruction_agents(run, item).collect();
     if agents.is_empty() {

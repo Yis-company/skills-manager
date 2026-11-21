@@ -86,7 +86,7 @@ pub(in crate::core::project_setup) fn with_readers(run: &Run, item: &SetupItem) 
 
 pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError> {
     let (ctx, project) = (run.ctx, &run.project);
-    let skill: SkillRecord = match ctx.store.get_skill_by_id(&item.id).map_err(AppError::db)? {
+    let skill: &SkillRecord = match run.skill(&item.id) {
         Some(skill) => skill,
         None => return Ok(Step::because(Status::Missing, "confirmed_absent")),
     };

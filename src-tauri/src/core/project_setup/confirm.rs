@@ -16,8 +16,7 @@ use super::items::skill::with_readers;
 use super::items::{sorted_agents, Planned, Run, Status, Step};
 use super::{save_setup, ItemKind, SavedSetup, SetupItem};
 use crate::commands::projects::add_project_core;
-use crate::core::error::{AppError, ErrorKind};
-use crate::core::instructions;
+use crate::core::error::AppError;
 
 /// The decisions a request needs, grouped for one confirmation, and the
 /// state they were made against. Confirming one that no longer matches the
@@ -328,18 +327,9 @@ pub(super) fn decide(
 fn library_item(run: &Run, item: &SetupItem) -> Result<Option<Value>, AppError> {
     Ok(match item.kind {
         ItemKind::Skill => run
-            .ctx
-            .store
-            .get_skill_by_id(&item.id)
-            .map_err(AppError::db)?
+            .skill(&item.id)
             .map(|skill| json!({ "name": skill.name })),
-        ItemKind::Instruction => {
-            match instructions::dispatch(run.ctx, json!({ "action": "get", "id": item.id })) {
-                Ok(reply) => Some(reply["item"].clone()),
-                Err(error) if error.kind == ErrorKind::NotFound => None,
-                Err(error) => return Err(error),
-            }
-        }
+        ItemKind::Instruction => run.instruction(&item.id)?.cloned(),
         ItemKind::Mcp => run.mcp_definition(&item.id).cloned(),
     })
 }

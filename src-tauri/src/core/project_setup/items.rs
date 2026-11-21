@@ -3,7 +3,7 @@
 //! edited, unapproved or ambiguous is reported and left untouched, while
 //! independent items carry on.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,7 +13,7 @@ use crate::commands::projects::{agent_skill_groups, available_agent_keys};
 use crate::core::error::{AppError, ErrorKind};
 use crate::core::host::HostCtx;
 use crate::core::project_scanner::AgentSkillConfig;
-use crate::core::skill_store::ProjectRecord;
+use crate::core::skill_store::{ProjectRecord, SkillRecord};
 use crate::core::{instructions, mcps};
 
 pub(super) mod instruction;
@@ -212,6 +212,10 @@ pub(super) struct Run<'a> {
     pub(super) skill_groups: Vec<(AgentSkillConfig, Vec<String>)>,
     pub(super) available_skill_groups: HashSet<String>,
     pub(super) instruction_recovery_pending: bool,
+    /// The Library's Skills, by ID.
+    skills: BTreeMap<String, SkillRecord>,
+    /// The Library's Instruction bundles, as listed.
+    instructions: Vec<Value>,
     pub(super) mcp_definitions: Vec<Value>,
     /// Agents with project-scoped MCP configuration.
     pub(super) mcp_agents: Vec<String>,
@@ -238,7 +242,19 @@ impl<'a> Run<'a> {
             .filter_map(|target| target["agentKey"].as_str().map(str::to_owned))
             .collect();
         let definitions = mcps::dispatch(ctx, json!({ "action": "list" }))?;
+        let instructions = instructions::dispatch(ctx, json!({ "action": "list" }))?;
         Ok(Self {
+            skills: ctx
+                .store
+                .get_all_skills()
+                .map_err(AppError::db)?
+                .into_iter()
+                .map(|skill| (skill.id.clone(), skill))
+                .collect(),
+            instructions: instructions["items"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
             skill_groups: agent_skill_groups(&ctx.store),
             available_skill_groups: available_agent_keys(&ctx.store, &project),
             instruction_recovery_pending: instructions::recovery_pending(ctx)?,
@@ -264,6 +280,28 @@ impl<'a> Run<'a> {
                 .iter()
                 .any(|(key, _)| *key == agent),
             ItemKind::Mcp => self.mcp_agents.iter().any(|key| key == agent),
+        }
+    }
+
+    /// The Library's Skill with this ID.
+    pub(super) fn skill(&self, id: &str) -> Option<&SkillRecord> {
+        self.skills.get(id)
+    }
+
+    /// The Library's Instruction bundle with this ID, or `None` when the
+    /// Library confirms it is gone.
+    pub(super) fn instruction(&self, id: &str) -> Result<Option<&Value>, AppError> {
+        if let Some(found) = self.instructions.iter().find(|item| item["id"] == id) {
+            return Ok(Some(found));
+        }
+        // Listing skips a bundle it cannot read; only a lookup tells that
+        // apart from one that is gone.
+        match instructions::dispatch(self.ctx, json!({ "action": "get", "id": id })) {
+            Err(error) if error.kind == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+            Ok(_) => Err(AppError::internal(format!(
+                "Instruction bundle {id} changed during this request"
+            ))),
         }
     }
 
