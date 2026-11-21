@@ -1800,4 +1800,24 @@ pub(super) mod tests {
         assert!(first.to_string().len() < 2048);
         eprintln!("300 items: apply {applied:?}, verified rerun {verified:?}");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_skill_folder_linked_outside_the_checkout_is_blocked_and_never_written() {
+        let fixture = Fixture::new();
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        let shared = fixture.repo._tmp.path().join("shared/skills");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(fixture.path(".a")).unwrap();
+        std::os::unix::fs::symlink(&shared, fixture.path(".a/skills")).unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(item(&result, "skill")["status"], "blocked", "{result}");
+        assert_eq!(item(&result, "skill")["reason"], "outside_checkout");
+        assert_eq!(std::fs::read_dir(&shared).unwrap().count(), 0);
+    }
 }

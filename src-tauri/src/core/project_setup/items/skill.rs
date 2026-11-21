@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::{Reason, Run, Status, Step};
 use crate::commands::projects::{
@@ -40,6 +40,24 @@ fn slot(path: &Path, expected: &Path) -> Slot {
     } else {
         Slot::Different
     }
+}
+
+/// Whether `path`'s folder resolves inside the checkout at `root`. A folder
+/// that is a link elsewhere, such as an agent folder shared between
+/// checkouts, would take the write outside it.
+fn inside(root: &Path, path: &Path) -> bool {
+    if path.components().any(|c| c == Component::ParentDir) {
+        return false;
+    }
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
+    // The nearest folder that exists: those below it are created as folders.
+    path.parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .find_map(|dir| dir.canonicalize().ok())
+        .is_some_and(|dir| dir.starts_with(&root))
 }
 
 type SkillGroup = (AgentSkillConfig, Vec<String>);
@@ -127,6 +145,9 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Step, AppError>
         if !slots.iter().any(|(existing, _)| *existing == path) {
             slots.push((path, expected.clone()));
         }
+    }
+    if !slots.iter().all(|(path, _)| inside(root, path)) {
+        return Ok(Step::because(Status::Blocked, "outside_checkout"));
     }
     let states: Vec<Slot> = slots
         .iter()
