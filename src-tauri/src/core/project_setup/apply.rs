@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use super::confirm::{
     confirmed, decide, propose, save_confirmed, Plan, Proposal, CONFIRM, DECISION_REASONS,
 };
-use super::items::{check_items, ItemResult, Run, Status};
+use super::items::{check_items, counts, sorted_agents, ItemResult, Planned, Run, Status};
 use super::{find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
 use crate::commands::projects::new_project_deploy_mode;
 use crate::core::error::AppError;
@@ -55,15 +55,10 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
     };
     let host = effective_device_name(&ctx.store);
 
-    // `checkout` is canonical and the project's exact path, so it is the root.
     // Read before the claim: a failure here must not leave a claimed receipt.
-    let root = checkout.to_string_lossy().into_owned();
     let record = match project {
-        Some(project) => ProjectRecord {
-            path: root,
-            ..project
-        },
-        None => unregistered(ctx, root)?,
+        Some(project) => project,
+        None => unregistered(ctx, checkout.to_string_lossy().into_owned())?,
     };
     let mut proposal = Proposal {
         checkout_path: checkout.clone(),
@@ -102,7 +97,7 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         }
         (saved, None, Some(confirm)) => confirmed(&run, &proposal, saved, confirm)?,
         (Some(saved), None, None) => Plan {
-            items: saved.items.into_iter().map(|i| (i, None, false)).collect(),
+            items: saved.items.into_iter().map(Planned::new).collect(),
             save: false,
         },
     };
@@ -120,7 +115,7 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         return answer_from_receipt(ctx, operation_id, &intent, evidence);
     }
 
-    let items: Vec<SetupItem> = plan.items.iter().map(|(item, ..)| item.clone()).collect();
+    let items: Vec<SetupItem> = plan.items.iter().map(|p| p.item.clone()).collect();
     if plan.save {
         match save_confirmed(&mut run, &proposal, items.clone()) {
             Ok(version) => proposal.setup_version = version,
@@ -221,22 +216,19 @@ fn answer_from_receipt(
 
 pub(super) fn respond(mut result: Value, from_receipt: bool, evidence: bool) -> Value {
     result["from_receipt"] = json!(from_receipt);
-    if !evidence {
-        if let Some(fields) = result.as_object_mut() {
-            fields.remove("items");
-        }
-    }
+    without_evidence(&mut result, evidence);
     result
 }
 
+/// Per-item results go out only when the caller asks for evidence.
+pub(super) fn without_evidence(result: &mut Value, evidence: bool) {
+    if let Some(fields) = result.as_object_mut().filter(|_| !evidence) {
+        fields.remove("items");
+    }
+}
+
 pub(super) fn summarize(scope: &Value, operation_id: &str, items: &[ItemResult]) -> Value {
-    let count = |status| items.iter().filter(|item| item.status == status).count();
-    let mut agents: Vec<&str> = items
-        .iter()
-        .flat_map(|item| item.agents.iter().map(String::as_str))
-        .collect();
-    agents.sort_unstable();
-    agents.dedup();
+    let agents = sorted_agents(items.iter().map(|item| &item.agents));
     let worst = items.iter().map(|item| item.status).max();
     let (outcome, next_action) = match worst {
         None | Some(Status::Unchanged) => (
@@ -268,14 +260,10 @@ pub(super) fn summarize(scope: &Value, operation_id: &str, items: &[ItemResult])
         "setup_version": scope["setup_version"],
         "outcome": outcome,
         "agents": agents,
-        "counts": {
-            "changed": count(Status::Changed),
-            "unchanged": count(Status::Unchanged),
-            "needs_review": count(Status::NeedsReview),
-            "blocked": count(Status::Blocked),
-            "missing": count(Status::Missing),
-            "failed": count(Status::Failed),
-        },
+        "counts": counts(items, &[
+            Status::Changed, Status::Unchanged, Status::NeedsReview,
+            Status::Blocked, Status::Missing, Status::Failed,
+        ]),
         "next_action": next_action,
         "notes": notes,
     })

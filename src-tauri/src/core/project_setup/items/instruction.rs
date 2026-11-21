@@ -5,13 +5,10 @@ use crate::core::error::AppError;
 use crate::core::instructions;
 use crate::core::project_setup::SetupItem;
 
-/// Agents with a project instruction root; see `instructions::resolve_target`.
-const INSTRUCTION_AGENTS: &[&str] = &["claude_code", "codex", "antigravity", "hermes", "cursor"];
-
 fn instruction_agents(item: &SetupItem) -> impl Iterator<Item = &String> {
     item.agents
         .iter()
-        .filter(|agent| INSTRUCTION_AGENTS.contains(&agent.as_str()))
+        .filter(|agent| instructions::AGENT_DIRS.iter().any(|(key, _)| key == agent))
 }
 
 fn instruction_preview(

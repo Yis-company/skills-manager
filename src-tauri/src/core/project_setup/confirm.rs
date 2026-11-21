@@ -13,7 +13,7 @@ use super::apply::{respond, summarize};
 use super::items::instruction::instruction_deletes;
 use super::items::mcp::mcp_value;
 use super::items::skill::with_readers;
-use super::items::{Run, Status, Step};
+use super::items::{sorted_agents, Planned, Run, Status, Step};
 use super::{save_setup, ItemKind, SavedSetup, SetupItem};
 use crate::commands::projects::add_project_core;
 use crate::core::error::{AppError, ErrorKind};
@@ -66,10 +66,9 @@ pub(super) const CONFIRM: &str =
     "Show the proposal's decisions to the user. To go ahead, call again with \
     a new operation_id and confirm: the proposal, with a choice on each decision.";
 
-/// The items one request runs: each with its one-run hold (a skip or a
-/// restore to wait for) and whether its Instruction deletions are approved.
+/// The items one request runs.
 pub(super) struct Plan {
-    pub(super) items: Vec<(SetupItem, Option<Step>, bool)>,
+    pub(super) items: Vec<Planned>,
     /// Whether the selection must be saved first.
     pub(super) save: bool,
 }
@@ -77,14 +76,9 @@ pub(super) struct Plan {
 /// A first setup's proposal: nothing is written until it is confirmed.
 pub(super) fn propose(scope: &Value, operation_id: &str, proposal: Proposal) -> Value {
     let mut result = summarize(scope, operation_id, &[]);
-    let mut agents: Vec<&String> = proposal
-        .decisions
-        .iter()
-        .flat_map(|decision| &decision.agents)
-        .collect();
-    agents.sort_unstable();
-    agents.dedup();
-    result["agents"] = json!(agents);
+    result["agents"] = json!(sorted_agents(
+        proposal.decisions.iter().map(|decision| &decision.agents)
+    ));
     result["outcome"] = json!("confirmation_needed");
     result["next_action"] = json!(CONFIRM);
     result["proposal"] = json!(proposal);
@@ -148,10 +142,7 @@ pub(super) fn confirmed(
     }
     let first = saved.is_none();
     let original: Vec<SetupItem> = saved.map(|setup| setup.items).unwrap_or_default();
-    let mut planned: Vec<(SetupItem, Option<Step>, bool)> = original
-        .iter()
-        .map(|item| (item.clone(), None, false))
-        .collect();
+    let mut planned: Vec<Planned> = original.iter().cloned().map(Planned::new).collect();
     let mut keep = vec![true; planned.len()];
     for decision in confirm.decisions {
         let choice = decision.choice.clone().unwrap_or_default();
@@ -190,13 +181,17 @@ pub(super) fn confirmed(
             if choice == "approve" {
                 let item = serde_json::from_value(decision.proposed)
                     .map_err(|e| AppError::invalid_input(format!("Invalid proposed item: {e}")))?;
-                planned.push((item, None, false));
+                planned.push(Planned::new(item));
                 keep.push(true);
             }
             continue;
         }
         for n in matching {
-            let (item, held, allow_delete) = &mut planned[n];
+            let Planned {
+                item,
+                held,
+                deletes_approved,
+            } = &mut planned[n];
             match (decision.reason.as_str(), choice.as_str()) {
                 (_, "skip") => *held = Some(Step::because(Status::Blocked, "skipped")),
                 (_, "restore") => *held = Some(Step::because(Status::Missing, "awaiting_restore")),
@@ -217,7 +212,7 @@ pub(super) fn confirmed(
                     }
                     *item = replacement;
                 }
-                ("would_delete", _) => *allow_delete = true,
+                ("would_delete", _) => *deletes_approved = true,
                 ("unapproved_agents", _) => {
                     item.agents = serde_json::from_value(decision.proposed.clone())
                         .map_err(|e| AppError::invalid_input(format!("Invalid agents: {e}")))?;
@@ -236,7 +231,7 @@ pub(super) fn confirmed(
         || items
             .iter()
             .zip(&original)
-            .any(|((item, ..), was)| item != was);
+            .any(|(planned, was)| planned.item != *was);
     Ok(Plan { items, save })
 }
 
@@ -321,10 +316,6 @@ fn library_item(run: &Run, item: &SetupItem) -> Result<Option<Value>, AppError> 
                 Err(error) => return Err(error),
             }
         }
-        ItemKind::Mcp => run
-            .mcp_definitions
-            .iter()
-            .find(|d| d["id"] == item.id.as_str())
-            .cloned(),
+        ItemKind::Mcp => run.mcp_definition(&item.id).cloned(),
     })
 }

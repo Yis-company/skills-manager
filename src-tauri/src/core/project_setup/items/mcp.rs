@@ -21,11 +21,7 @@ pub fn mcp_value(definition: &Value) -> Value {
 
 /// The agents to set an MCP connection up for, or why none can be.
 pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step> {
-    let Some(definition) = run
-        .mcp_definitions
-        .iter()
-        .find(|d| d["id"] == item.id.as_str())
-    else {
+    let Some(definition) = run.mcp_definition(&item.id) else {
         return Err(Step::because(Status::Missing, "confirmed_absent"));
     };
     let agents: Vec<String> = item

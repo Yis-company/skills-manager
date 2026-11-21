@@ -179,7 +179,8 @@ fn registered_projects(ctx: &HostCtx) -> Result<Vec<(ProjectRecord, PathBuf)>, A
         .collect())
 }
 
-/// The canonical checkout and the project registered at exactly that path.
+/// The canonical checkout and the project registered at exactly that path,
+/// with `path` set to the canonical checkout.
 fn find_project(
     ctx: &HostCtx,
     checkout_path: &str,
@@ -188,7 +189,10 @@ fn find_project(
     let project = registered_projects(ctx)?
         .into_iter()
         .find(|(_, path)| *path == checkout)
-        .map(|(project, _)| project);
+        .map(|(project, path)| ProjectRecord {
+            path: path.to_string_lossy().into_owned(),
+            ..project
+        });
     Ok((checkout, project))
 }
 

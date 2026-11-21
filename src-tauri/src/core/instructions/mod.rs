@@ -473,16 +473,23 @@ fn remove(ctx: &HostCtx, id: &str, detach: bool) -> Result<Vec<String>, AppError
     Ok(detached)
 }
 
+/// The agents with an instruction root, and its folder under the home
+/// directory or the project.
+pub const AGENT_DIRS: &[(&str, &str)] = &[
+    ("claude_code", ".claude"),
+    ("codex", ".codex"),
+    ("antigravity", ".gemini"),
+    ("hermes", ".hermes"),
+    ("cursor", ".cursor"),
+];
+
 fn resolve_target(ctx: &HostCtx, target: &Target) -> Result<PathBuf, AppError> {
     let home = dirs::home_dir().ok_or_else(|| err("home directory is unavailable"))?;
-    let agent_dir = match target.agent_key.as_str() {
-        "claude_code" => ".claude",
-        "codex" => ".codex",
-        "antigravity" => ".gemini",
-        "hermes" => ".hermes",
-        "cursor" => ".cursor",
-        _ => return Err(err("unsupported instruction agent")),
-    };
+    let agent_dir = AGENT_DIRS
+        .iter()
+        .find(|(key, _)| *key == target.agent_key)
+        .map(|(_, dir)| *dir)
+        .ok_or_else(|| err("unsupported instruction agent"))?;
     if target.project_id.is_none() && target.agent_key == "cursor" {
         return Err(err("global Cursor instructions are not supported"));
     }

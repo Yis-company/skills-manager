@@ -9,13 +9,12 @@
 
 use serde_json::{json, Value};
 
-use super::apply::{load_setup, RECEIPT_KIND};
+use super::apply::{load_setup, without_evidence, RECEIPT_KIND};
 use super::find_project;
-use super::items::{check_saved, Run, Status};
+use super::items::{check_saved, counts, Run, Status};
 use crate::core::error::AppError;
 use crate::core::git_backup_store::effective_device_name;
 use crate::core::host::HostCtx;
-use crate::core::skill_store::ProjectRecord;
 
 pub(super) fn inspect(
     ctx: &HostCtx,
@@ -46,35 +45,22 @@ pub(super) fn inspect(
         Some(_) => "intent_only",
     };
     let mut recorded = receipt.map_or(Value::Null, |receipt| receipt["result"].clone());
-    if !evidence {
-        if let Some(fields) = recorded.as_object_mut() {
-            fields.remove("items");
-        }
-    }
+    without_evidence(&mut recorded, evidence);
 
     let project_id = project.id.clone();
     let (destination, holds, recovery_possible) = match load_setup(ctx, &project.id)? {
         None => (Value::Null, false, false),
         Some(setup) => {
-            // `checkout` is canonical and the project's exact path, so it is the root.
-            let project = ProjectRecord {
-                path: checkout.to_string_lossy().into_owned(),
-                ..project
-            };
             let items = check_saved(&Run::new(ctx, project, false)?, &setup);
             let count = |status| items.iter().filter(|item| item.status == status).count();
             let holds = count(Status::Unchanged) == items.len();
             let mut destination = json!({
                 "setup_version": setup.version,
                 "state": if holds { "matches" } else { "differs" },
-                "counts": {
-                    "unchanged": count(Status::Unchanged),
-                    "not_applied": count(Status::NotApplied),
-                    "needs_review": count(Status::NeedsReview),
-                    "blocked": count(Status::Blocked),
-                    "missing": count(Status::Missing),
-                    "failed": count(Status::Failed),
-                },
+                "counts": counts(&items, &[
+                    Status::Unchanged, Status::NotApplied, Status::NeedsReview,
+                    Status::Blocked, Status::Missing, Status::Failed,
+                ]),
             });
             if evidence {
                 destination["items"] = json!(items);

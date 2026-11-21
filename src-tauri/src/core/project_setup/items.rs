@@ -61,33 +61,48 @@ impl Step {
     }
 }
 
+/// An item one request runs, with its one-run hold (a skip or a restore to
+/// wait for) and whether the files its Instruction bundle deletes are approved.
+pub(super) struct Planned {
+    pub(super) item: SetupItem,
+    pub(super) held: Option<Step>,
+    pub(super) deletes_approved: bool,
+}
+
+impl Planned {
+    pub(super) fn new(item: SetupItem) -> Self {
+        Self {
+            item,
+            held: None,
+            deletes_approved: false,
+        }
+    }
+}
+
 /// Check each saved item against its destination; see [`check_items`].
 pub(super) fn check_saved(run: &Run, setup: &SavedSetup) -> Vec<ItemResult> {
-    let plan: Vec<_> = setup
-        .items
-        .iter()
-        .map(|i| (i.clone(), None, false))
-        .collect();
+    let plan: Vec<_> = setup.items.iter().cloned().map(Planned::new).collect();
     check_items(run, &plan)
 }
 
 /// Check each planned item against its destination and, when `run` writes,
 /// apply and verify it.
-pub(super) fn check_items(run: &Run, plan: &[(SetupItem, Option<Step>, bool)]) -> Vec<ItemResult> {
+pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
     // Each item's steps, one per agent where it varies by agent. MCP
     // connections are queued and applied in batches per agent config.
     let mut steps: Vec<Vec<Step>> = Vec::with_capacity(plan.len());
     let mut queued: Vec<(String, usize)> = Vec::new();
-    for (index, (item, held, allow_delete)) in plan.iter().enumerate() {
+    for (index, planned) in plan.iter().enumerate() {
+        let item = &planned.item;
         steps.push(Vec::new());
-        if let Some(held) = held {
+        if let Some(held) = &planned.held {
             steps[index].push(held.clone());
             continue;
         }
         let step = match item.kind {
             _ if item.agents.is_empty() => Ok(Step::because(Status::Blocked, "no_agents")),
             ItemKind::Skill => apply_skill(run, item),
-            ItemKind::Instruction => apply_instruction(run, item, *allow_delete),
+            ItemKind::Instruction => apply_instruction(run, item, planned.deletes_approved),
             ItemKind::Mcp => match check_mcp(run, item) {
                 Ok(agents) => {
                     queued.extend(agents.into_iter().map(|agent| (agent, index)));
@@ -104,7 +119,7 @@ pub(super) fn check_items(run: &Run, plan: &[(SetupItem, Option<Step>, bool)]) -
         let agent = &batch[0].0;
         let batch: Vec<(usize, &SetupItem)> = batch
             .iter()
-            .map(|(_, index)| (*index, &plan[*index].0))
+            .map(|(_, index)| (*index, &plan[*index].item))
             .collect();
         for ((index, _), step) in batch.iter().zip(apply_mcps(run, agent, &batch)) {
             steps[*index].push(step);
@@ -112,7 +127,7 @@ pub(super) fn check_items(run: &Run, plan: &[(SetupItem, Option<Step>, bool)]) -
     }
     plan.iter()
         .zip(steps)
-        .map(|((item, ..), steps)| {
+        .map(|(Planned { item, .. }, steps)| {
             let Step(status, reason) = worst(steps);
             ItemResult {
                 kind: item.kind,
@@ -123,6 +138,29 @@ pub(super) fn check_items(run: &Run, plan: &[(SetupItem, Option<Step>, bool)]) -
             }
         })
         .collect()
+}
+
+/// How many `items` have each of `statuses`, by status name.
+pub(super) fn counts(items: &[ItemResult], statuses: &[Status]) -> Value {
+    statuses
+        .iter()
+        .map(|status| {
+            let count = items.iter().filter(|item| item.status == *status).count();
+            (
+                json!(status).as_str().unwrap_or_default().to_owned(),
+                json!(count),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
+/// Every agent in `lists`, sorted, each once.
+pub(super) fn sorted_agents<'a>(lists: impl Iterator<Item = &'a Vec<String>>) -> Vec<&'a str> {
+    let mut agents: Vec<&str> = lists.flatten().map(String::as_str).collect();
+    agents.sort_unstable();
+    agents.dedup();
+    agents
 }
 
 /// Lookups made once per request rather than once per item.
@@ -173,6 +211,11 @@ impl<'a> Run<'a> {
             project,
             write,
         })
+    }
+
+    /// The Library's MCP connection with this ID.
+    pub(super) fn mcp_definition(&self, id: &str) -> Option<&Value> {
+        self.mcp_definitions.iter().find(|d| d["id"] == id)
     }
 }
 
