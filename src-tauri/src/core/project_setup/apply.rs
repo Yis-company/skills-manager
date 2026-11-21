@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use super::confirm::{confirmed, decide, propose, save_confirmed, Plan, Proposal, Reason, CONFIRM};
 use super::items::{check_items, counts, sorted_agents, ItemResult, Planned, Run, Status};
-use super::{find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
+use super::{check_size, find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
 use crate::commands::projects::new_project_deploy_mode;
 use crate::core::error::AppError;
 use crate::core::git_backup_store::effective_device_name;
@@ -49,6 +49,10 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
         return Err(AppError::invalid_input(format!(
             "operation_id must be 1-{MAX_OPERATION_ID} characters"
         )));
+    }
+    check_size(args.items.as_ref().map_or(0, Vec::len))?;
+    if let Some(confirm) = &args.confirm {
+        check_size(confirm["decisions"].as_array().map_or(0, Vec::len))?;
     }
     let (checkout, project) = find_project(ctx, &args.checkout_path)?;
     let saved: Option<SavedSetup> = match &project {
@@ -755,6 +759,43 @@ pub(super) mod tests {
         }
 
         assert_eq!(destinations(&fixture), before);
+    }
+
+    #[test]
+    fn more_than_500_items_are_refused() {
+        let fixture = Fixture::new();
+        let items: Vec<Value> = (0..501)
+            .map(|n| json!({ "kind": "skill", "id": format!("s{n}"), "agents": ["agent_a"] }))
+            .collect();
+        let decisions: Vec<Value> = items
+            .iter()
+            .map(|item| {
+                json!({ "kind": "skill", "id": item["id"], "agents": ["agent_a"],
+                "reason": "first_setup", "name": null, "proposed": item,
+                "choices": ["approve", "skip"], "choice": "approve" })
+            })
+            .collect();
+        let confirm = json!({ "checkout_path": fixture.checkout, "project_id": "p1",
+            "register": false, "deploy_mode": "link", "setup_version": 0,
+            "decisions": decisions });
+
+        let errors = [
+            fixture.apply_with(json!({ "operation_id": "op-1", "items": items })),
+            fixture.apply_with(json!({ "operation_id": "op-2", "confirm": confirm })),
+            super::super::save_setup(
+                &fixture.ctx.store,
+                "p1",
+                0,
+                serde_json::from_value(json!(items)).unwrap(),
+            )
+            .map(|_| Value::Null),
+        ];
+
+        for error in errors {
+            let error = error.unwrap_err();
+            assert_eq!(error.kind, ErrorKind::InvalidInput);
+            assert!(error.message.contains("500"), "{}", error.message);
+        }
     }
 
     #[test]

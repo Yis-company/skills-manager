@@ -380,6 +380,7 @@ fn apply_tool() -> Value {
                 },
                 "items": {
                     "type": "array",
+                    "maxItems": 500,
                     "description": "First setup only: the Library items and agents to propose.",
                     "items": {
                         "type": "object",

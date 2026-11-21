@@ -27,6 +27,8 @@ pub use items::mcp::mcp_value;
 pub const PAGE_SIZE: usize = 50;
 /// Registered projects offered when the checkout is not one of them.
 pub const MAX_CANDIDATES: usize = 10;
+/// The most items a saved setup, a proposal or a confirmation may hold.
+pub const MAX_ITEMS: usize = 500;
 /// The `resource_state` kind that holds each project's saved setup.
 const SETUP_KIND: &str = "project_setup";
 
@@ -67,6 +69,7 @@ pub fn save_setup(
     expected_version: u64,
     items: Vec<SetupItem>,
 ) -> Result<SavedSetup, AppError> {
+    check_size(items.len())?;
     let setup = SavedSetup {
         version: expected_version + 1,
         items,
@@ -81,6 +84,16 @@ pub fn save_setup(
         ));
     }
     Ok(setup)
+}
+
+/// Refuse more than [`MAX_ITEMS`] items before any work is done for them.
+fn check_size(items: usize) -> Result<(), AppError> {
+    if items > MAX_ITEMS {
+        return Err(AppError::invalid_input(format!(
+            "A Project setup holds at most {MAX_ITEMS} items; this request has {items}"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
