@@ -1034,6 +1034,7 @@ pub fn run() {
             commands::resources::operation_results_request,
             commands::resources::instructions_request,
             commands::resources::mcps_request,
+            commands::resources::register_mcp_client,
             commands::resources::resource_sync_request,
             commands::projects::project_git_request,
             // Tools

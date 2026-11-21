@@ -9,6 +9,7 @@ mod catalog;
 mod model;
 mod store;
 
+pub use adapters::register_self;
 pub use model::{Definition, DefinitionInput, McpsRequest};
 
 use crate::core::{error::AppError, host::HostCtx};

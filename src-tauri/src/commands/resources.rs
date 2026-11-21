@@ -17,6 +17,20 @@ pub async fn mcps_request(ctx: State<'_, HostCtx>, request: Value) -> Result<Val
     tauri::async_runtime::spawn_blocking(move || mcps::dispatch(&ctx, request)).await?
 }
 
+/// Register this computer's CLI bridge as an MCP server for `agent_key`
+/// (`codex` or `claude_code`). Always local: it is not host-scoped.
+#[tauri::command]
+pub async fn register_mcp_client(
+    ctx: State<'_, HostCtx>,
+    agent_key: String,
+) -> Result<Value, AppError> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        mcps::register_self(&ctx, &agent_key, &crate::core::cli_bridge::bridge_path())
+    })
+    .await?
+}
+
 #[tauri::command]
 pub async fn resource_sync_request(
     ctx: State<'_, HostCtx>,

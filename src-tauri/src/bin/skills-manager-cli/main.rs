@@ -1,6 +1,9 @@
+use std::io;
 use std::path::PathBuf;
 
-use app_lib::core::{app_state, central_repo, serve};
+use app_lib::core::{
+    app_state, central_repo, error::AppError, host::HostCtx, mcp_server, mcps, remote_host, serve,
+};
 use clap::{Args, Parser, Subcommand};
 
 use crate::args::{GitArgs, PresetArgs, RepoArgs, RepoCommand, SkillsArgs, SyncArgs, ToolsArgs};
@@ -61,6 +64,30 @@ enum Commands {
     /// Answer the app's commands over stdin/stdout, for a Skills Manager app
     /// on another machine connected over ssh.
     Serve(ServeArgs),
+    /// Run a local MCP server on stdin/stdout for coding agents. It opens the
+    /// library read-only.
+    Mcp(McpArgs),
+}
+
+#[derive(Args, Debug)]
+struct McpArgs {
+    #[command(subcommand)]
+    command: Option<McpCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+enum McpCommand {
+    /// Register this CLI's MCP server in a coding agent's user configuration.
+    Register {
+        #[arg(long, value_enum)]
+        client: McpClient,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum McpClient {
+    Codex,
+    Claude,
 }
 
 #[derive(Args, Debug)]
@@ -137,9 +164,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         central_repo::set_runtime_base_dir_override(Some(base_dir.clone()));
     }
 
-    let resource_dry_run = matches!(&cli.command,
-        Commands::Instructions(args) | Commands::Mcps(args) if args.dry_run);
-    let store = if resource_dry_run {
+    let read_only = matches!(&cli.command,
+        Commands::Instructions(args) | Commands::Mcps(args) if args.dry_run)
+        || matches!(&cli.command, Commands::Mcp(_));
+    let store = if read_only {
         std::sync::Arc::new(
             app_lib::core::skill_store::SkillStore::open_resource_read_only(
                 &central_repo::db_path(),
@@ -162,6 +190,36 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Git(args) => run_git(args, &store, cli.json),
         // stdout carries the protocol; nothing else may print there.
         Commands::Serve(_) => Ok(serve::serve_stdio(store)?),
+        Commands::Mcp(McpArgs {
+            command: Some(McpCommand::Register { client }),
+        }) => {
+            let agent_key = match client {
+                McpClient::Codex => "codex",
+                McpClient::Claude => "claude_code",
+            };
+            let command = std::env::current_exe()?.canonicalize()?;
+            let ctx = HostCtx::headless(store);
+            let report = mcps::register_self(&ctx, agent_key, &command)?;
+            print_json(&report, cli.json);
+            Ok(())
+        }
+        Commands::Mcp(McpArgs { command: None }) => {
+            // Reading Sync status runs `git status`, which may otherwise
+            // refresh the library's index file.
+            std::env::set_var("GIT_OPTIONAL_LOCKS", "0");
+            let ctx = HostCtx::headless(store);
+            let open_writable = || {
+                app_state::initialize_cli_store()
+                    .map(HostCtx::headless)
+                    .map_err(|e| AppError::internal(format!("{e:#}")))
+            };
+            let library = mcp_server::Library::new(&ctx, &open_writable, &remote_host::cli_command);
+            Ok(mcp_server::run(
+                io::stdin().lock(),
+                io::stdout().lock(),
+                &library,
+            )?)
+        }
     }
 }
 

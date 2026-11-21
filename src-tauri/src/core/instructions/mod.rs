@@ -1782,14 +1782,30 @@ fn undeploy(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
         .resource_state_put("instructions_journal", &journal_id, &journal))?;
     Ok(json!({"detached":true,"removed":removed}))
 }
+/// Whether an interrupted transaction waits for `recover`. Read-only: it
+/// never recovers.
+pub fn recovery_pending(ctx: &HostCtx) -> Result<bool, AppError> {
+    Ok(db(ctx.store.resource_state_list("instructions_journal"))?
+        .iter()
+        .any(interrupted))
+}
+
+fn interrupted(journal: &Value) -> bool {
+    [
+        "applying",
+        "building",
+        "swapping",
+        "removing",
+        "recovery_incomplete",
+    ]
+    .iter()
+    .any(|status| journal["status"] == *status)
+}
+
 fn recover(ctx: &HostCtx) -> Result<Value, AppError> {
     let mut items = db(ctx.store.resource_state_list("instructions_journal"))?;
     for journal in &mut items {
-        if journal["status"] != "applying"
-            && journal["status"] != "building"
-            && journal["status"] != "swapping"
-            && journal["status"] != "removing"
-            && journal["status"] != "recovery_incomplete"
+        if !interrupted(journal)
             && !(journal["kind"] == "library_save" && journal["status"] == "complete")
             && !(journal["kind"] == "library_remove" && journal["status"] == "complete")
         {
