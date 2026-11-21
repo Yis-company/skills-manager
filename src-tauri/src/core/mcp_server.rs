@@ -9,7 +9,8 @@
 //! Tool names, inputs and output fields are frozen at version 1: add optional
 //! fields or new tools, never change what callers rely on.
 //!
-//! The library opens read-only. The first apply opens it for writing, once.
+//! The library opens read-only. The first apply that may write opens it for
+//! writing, once.
 
 use std::cell::OnceCell;
 use std::io::{self, BufRead, Write};
@@ -144,9 +145,11 @@ fn call_tool(ctx: &Library, params: &Value) -> Result<Value, (i64, String)> {
         _ => return Err((INVALID_PARAMS, "Tool arguments must be an object".into())),
     };
     request.insert("action".into(), json!(action));
+    // Proposing a first setup reads only; confirming it writes.
+    let proposes = request.contains_key("items") && !request.contains_key("confirm");
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         let ctx = match action {
-            "apply" => ctx.writable()?,
+            "apply" if !proposes => ctx.writable()?,
             _ => ctx.read_only,
         };
         project_setup::dispatch(ctx, Value::Object(request))
@@ -273,6 +276,45 @@ fn discover_tool() -> Value {
 
 fn apply_tool() -> Value {
     let count = json!({ "type": "integer", "minimum": 0 });
+    let kind = json!({ "type": "string", "enum": ["skill", "instruction", "mcp"] });
+    let proposal = json!({
+        "type": "object",
+        "description": "The decisions this request needs, grouped. Show them to \
+            the user; send the proposal back as confirm to go ahead.",
+        "properties": {
+            "checkout_path": { "type": "string" },
+            "project_id": { "type": ["string", "null"] },
+            "register": { "type": "boolean" },
+            "deploy_mode": { "type": "string", "enum": ["link", "copy"] },
+            "setup_version": { "type": "integer" },
+            "decisions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind": kind,
+                        "id": { "type": "string" },
+                        "name": { "type": ["string", "null"] },
+                        "agents": { "type": "array", "items": { "type": "string" } },
+                        "reason": { "type": "string" },
+                        "proposed": {},
+                        "choices": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": ["approve", "skip", "restore", "replace", "revise"],
+                            },
+                        },
+                    },
+                    "required": ["kind", "id", "name", "agents", "reason", "proposed", "choices"],
+                },
+            },
+        },
+        "required": [
+            "checkout_path", "project_id", "register", "deploy_mode",
+            "setup_version", "decisions",
+        ],
+    });
     json!({
         "name": APPLY,
         "title": "Apply Project setup",
@@ -281,7 +323,10 @@ fn apply_tool() -> Value {
             that already match are left alone; edited, unapproved or ambiguous items are \
             reported and never overwritten, while independent items continue. Reusing an \
             operation_id returns the recorded result instead of applying again. Per-item \
-            results come only with evidence: true.",
+            results come only with evidence: true. A checkout with no saved setup gets a \
+            proposal for the items passed; items that need approval get one too. Send a \
+            proposal back as confirm, with a choice on each decision, to register the \
+            checkout if needed, save the setup and apply it. A stale proposal is refused.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -299,6 +344,24 @@ fn apply_tool() -> Value {
                     "type": "boolean",
                     "description": "Include the per-item results.",
                 },
+                "items": {
+                    "type": "array",
+                    "description": "First setup only: the Library items and agents to propose.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": kind,
+                            "id": { "type": "string" },
+                            "agents": { "type": "array", "items": { "type": "string" } },
+                        },
+                        "required": ["kind", "id", "agents"],
+                    },
+                },
+                "confirm": {
+                    "type": "object",
+                    "description": "A proposal returned earlier, with choice set on each \
+                        decision (and replacement, a Library ID, for replace).",
+                },
             },
             "required": ["checkout_path", "operation_id"],
             "additionalProperties": false,
@@ -309,11 +372,17 @@ fn apply_tool() -> Value {
                 "operation_id": { "type": "string" },
                 "host": { "type": "string" },
                 "checkout_path": { "type": "string" },
-                "project_id": { "type": "string" },
+                "project_id": {
+                    "type": ["string", "null"],
+                    "description": "Null until a first setup is confirmed.",
+                },
                 "setup_version": { "type": "integer" },
                 "outcome": {
                     "type": "string",
-                    "enum": ["verified_changed", "verified_no_change", "attention_needed", "outcome_unknown"],
+                    "enum": [
+                        "verified_changed", "verified_no_change", "attention_needed",
+                        "outcome_unknown", "confirmation_needed",
+                    ],
                 },
                 "agents": { "type": "array", "items": { "type": "string" } },
                 "counts": {
@@ -330,13 +399,14 @@ fn apply_tool() -> Value {
                     "type": "boolean",
                     "description": "Answered from this operation_id's receipt; nothing was applied.",
                 },
+                "proposal": proposal,
                 "items": {
                     "type": "array",
                     "description": "Only with evidence: true.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "kind": { "type": "string", "enum": ["skill", "instruction", "mcp"] },
+                            "kind": kind,
                             "id": { "type": "string" },
                             "agents": { "type": "array", "items": { "type": "string" } },
                             "status": {

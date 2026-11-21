@@ -87,12 +87,7 @@ enum Request {
         #[serde(default)]
         cursor: Option<String>,
     },
-    Apply {
-        checkout_path: String,
-        operation_id: String,
-        #[serde(default)]
-        evidence: bool,
-    },
+    Apply(apply::Args),
 }
 
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
@@ -103,11 +98,7 @@ pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
             checkout_path,
             cursor,
         } => discover(ctx, &checkout_path, cursor.as_deref()),
-        Request::Apply {
-            checkout_path,
-            operation_id,
-            evidence,
-        } => apply::apply(ctx, &checkout_path, &operation_id, evidence),
+        Request::Apply(args) => apply::apply(ctx, args),
     }
 }
 
