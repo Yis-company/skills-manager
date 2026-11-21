@@ -639,6 +639,37 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn an_unsupported_agent_is_reported_per_item_and_not_listed_as_affected() {
+        let fixture = Fixture::new();
+        let bundle = fixture.instruction(json!({ "CLAUDE.md": "Be brief.\n" }));
+        let mcp = fixture.mcp("docs");
+        fixture.save_setup(json!([
+            { "kind": "instruction", "id": bundle, "agents": ["claude_code", "agent_a"] },
+            { "kind": "mcp", "id": mcp["id"], "agents": ["agent_a", "claude_code"],
+              "approved": approved(&mcp) },
+        ]));
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(result["outcome"], "verified_changed", "{result}");
+        assert_eq!(result["agents"], json!(["claude_code"]));
+        for kind in ["instruction", "mcp"] {
+            assert_eq!(
+                item(&result, kind)["agents"],
+                json!(["claude_code"]),
+                "{kind}"
+            );
+            assert_eq!(
+                item(&result, kind)["unsupported"],
+                json!(["agent_a"]),
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
     fn an_unmanaged_mcp_entry_is_kept_while_others_in_its_config_are_added() {
         let fixture = Fixture::new();
         let docs = fixture.mcp("docs");

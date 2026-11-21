@@ -3,12 +3,15 @@ use serde_json::{json, Value};
 use super::{missing, worst, Run, Status, Step};
 use crate::core::error::AppError;
 use crate::core::instructions;
-use crate::core::project_setup::SetupItem;
+use crate::core::project_setup::{ItemKind, SetupItem};
 
-fn instruction_agents(item: &SetupItem) -> impl Iterator<Item = &String> {
+fn instruction_agents<'i>(
+    run: &'i Run<'_>,
+    item: &'i SetupItem,
+) -> impl Iterator<Item = &'i String> + 'i {
     item.agents
         .iter()
-        .filter(|agent| instructions::AGENT_DIRS.iter().any(|(key, _)| key == agent))
+        .filter(|agent| run.supports(ItemKind::Instruction, agent))
 }
 
 fn instruction_preview(
@@ -38,7 +41,7 @@ pub(in crate::core::project_setup) fn instruction_deletes(
     item: &SetupItem,
 ) -> Result<Vec<String>, AppError> {
     let mut files = Vec::new();
-    for agent in instruction_agents(item) {
+    for agent in instruction_agents(run, item) {
         let preview = instruction_preview(run, item, agent, true)?;
         files.extend(
             changes(&preview, "delete")
@@ -56,7 +59,7 @@ pub(super) fn apply_instruction(
     if let Err(error) = instructions::dispatch(run.ctx, json!({ "action": "get", "id": item.id })) {
         return Ok(missing(error));
     }
-    let agents: Vec<&String> = instruction_agents(item).collect();
+    let agents: Vec<&String> = instruction_agents(run, item).collect();
     if agents.is_empty() {
         return Ok(Step::because(Status::Blocked, "no_supported_agent"));
     }

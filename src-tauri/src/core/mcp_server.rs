@@ -447,7 +447,16 @@ fn apply_tool() -> Value {
                         "properties": {
                             "kind": kind,
                             "id": { "type": "string" },
-                            "agents": { "type": "array", "items": { "type": "string" } },
+                            "agents": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "The agents this item was set up or checked for.",
+                            },
+                            "unsupported": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "The item's agents it cannot be set up for here.",
+                            },
                             "status": {
                                 "type": "string",
                                 "enum": ["changed", "unchanged", "needs_review", "blocked", "missing", "failed"],

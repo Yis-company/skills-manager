@@ -4,7 +4,7 @@ use super::{Run, Status, Step};
 use crate::core::error::ErrorKind;
 use crate::core::host::HostCtx;
 use crate::core::mcps;
-use crate::core::project_setup::SetupItem;
+use crate::core::project_setup::{ItemKind, SetupItem};
 
 /// The most MCP connections one preview may change; see `mcps::adapters::preview`.
 const MCP_BATCH: usize = 64;
@@ -27,7 +27,7 @@ pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step
     let agents: Vec<String> = item
         .agents
         .iter()
-        .filter(|agent| run.mcp_agents.contains(agent))
+        .filter(|agent| run.supports(ItemKind::Mcp, agent))
         .cloned()
         .collect();
     if agents.is_empty() {

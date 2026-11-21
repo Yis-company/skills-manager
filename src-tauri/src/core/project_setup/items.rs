@@ -51,6 +51,10 @@ pub(super) struct ItemResult {
     /// done first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) retryable: Option<bool>,
+    /// The item's agents this kind of item cannot be set up for; `agents`
+    /// holds the rest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) unsupported: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -158,10 +162,16 @@ pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
         .zip(steps)
         .map(|(Planned { item, .. }, steps)| {
             let step = worst(steps);
+            let (agents, unsupported) = item
+                .agents
+                .iter()
+                .cloned()
+                .partition(|agent| run.supports(item.kind, agent));
             ItemResult {
                 kind: item.kind,
                 id: item.id.clone(),
-                agents: item.agents.clone(),
+                agents,
+                unsupported,
                 status: step.status,
                 reason: step.reason,
                 retryable: (step.status == Status::Failed).then_some(step.retryable),
@@ -241,6 +251,20 @@ impl<'a> Run<'a> {
             project,
             write,
         })
+    }
+
+    /// Whether `agent` can have this kind of item set up in the project.
+    pub(super) fn supports(&self, kind: ItemKind, agent: &str) -> bool {
+        match kind {
+            ItemKind::Skill => self.skill_groups.iter().any(|(config, members)| {
+                self.available_skill_groups.contains(&config.key)
+                    && members.iter().any(|member| member == agent)
+            }),
+            ItemKind::Instruction => instructions::AGENT_DIRS
+                .iter()
+                .any(|(key, _)| *key == agent),
+            ItemKind::Mcp => self.mcp_agents.iter().any(|key| key == agent),
+        }
     }
 
     /// The Library's MCP connection with this ID.
