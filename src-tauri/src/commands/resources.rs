@@ -26,7 +26,14 @@ pub async fn register_mcp_client(
 ) -> Result<Value, AppError> {
     let ctx = ctx.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        mcps::register_self(&ctx, agent_key, &crate::core::cli_bridge::bridge_path())
+        let bridge = crate::core::cli_bridge::current_bridge(env!("CARGO_PKG_VERSION"))
+            .ok_or_else(|| {
+                AppError::invalid_input(
+                    "The command-line tool for this version is not installed yet, so it \
+                     was not registered. Restart the app, then register again.",
+                )
+            })?;
+        mcps::register_self(&ctx, agent_key, &bridge)
     })
     .await?
 }
