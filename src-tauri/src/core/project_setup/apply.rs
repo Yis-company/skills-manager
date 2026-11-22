@@ -18,7 +18,7 @@ use super::items::{check_items, counts, sorted_agents, ItemResult, Planned, Run,
 use super::{check_agents, check_size, find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
 use crate::commands::projects::new_project_deploy_mode;
 use crate::core::error::AppError;
-use crate::core::git_backup_store::effective_device_name;
+use crate::core::git_backup_store::device_name;
 use crate::core::host::HostCtx;
 use crate::core::skill_store::ProjectRecord;
 
@@ -115,7 +115,7 @@ pub(super) fn apply<'c>(
     let ctx = read_only;
     let (operation_id, evidence) = (args.operation_id.as_str(), args.evidence);
     let (checkout, project) = find_project(ctx, &args.checkout_path)?;
-    let host = effective_device_name(&ctx.store);
+    let host = device_name(&ctx.store);
     // What the caller asked, without what this operation itself changes
     // (the project ID and the setup version), so a retry matches it.
     let mut intent = json!({ "host": host, "checkout_path": checkout });
@@ -1450,6 +1450,8 @@ pub(crate) mod tests {
         assert_eq!(server["args"], json!(["-y", "docs"]));
         assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
         assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
+        let name = fixture.ctx.store.get_setting("backup_device_name").unwrap();
+        assert_eq!(name, None, "proposing saved a host name");
     }
 
     fn confirm_with(
