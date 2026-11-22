@@ -118,7 +118,14 @@ impl<'a> Hosts<'a> {
                 match serde_json::from_value(found["receipt"].clone()) {
                     // Settled, so asking again answers from the receipt, never
                     // applies, and refuses a receipt of a different request.
-                    Ok(ReceiptState::Result | ReceiptState::Error) => send(session, &request),
+                    Ok(ReceiptState::Result | ReceiptState::Error) => {
+                        match send(session, &request) {
+                            Err(e) if e.kind == ErrorKind::Network => {
+                                lost(format!("reading its result failed: {}", e.message))
+                            }
+                            answered => answered,
+                        }
+                    }
                     _ => Ok(unknown(
                         &found["host"],
                         &found["checkout_path"],
