@@ -117,14 +117,22 @@ pub(super) fn apply_instruction(
     {
         return whole(Step::asks(Status::NeedsReview, Reason::UnapprovedAgents));
     }
-    if run.instruction_recovery_pending {
+    if instructions::recovery_pending(run.ctx)? {
         return whole(Step::because(Status::Blocked, Reason::PendingRecovery));
     }
     // One agent's failure never hides what was written for the others.
     Ok(agents
         .into_iter()
         .map(|agent| {
-            let step = apply_for(run, item, agent, deletes_approved).unwrap_or_else(Step::error);
+            // Asked again before each write: an earlier one may have left
+            // a recovery in this run.
+            let step = match instructions::recovery_pending(run.ctx) {
+                Ok(true) => Step::because(Status::Blocked, Reason::PendingRecovery),
+                Ok(false) => {
+                    apply_for(run, item, agent, deletes_approved).unwrap_or_else(Step::error)
+                }
+                Err(error) => Step::error(error),
+            };
             (Some(agent.clone()), step)
         })
         .collect())

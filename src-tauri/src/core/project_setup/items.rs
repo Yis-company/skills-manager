@@ -319,7 +319,6 @@ pub(super) struct Run<'a> {
     pub(super) write: bool,
     pub(super) skill_groups: Vec<(AgentSkillConfig, Vec<String>)>,
     pub(super) available_skill_groups: HashSet<String>,
-    pub(super) instruction_recovery_pending: bool,
     /// The Library's Skills looked up so far, by ID; `None` for one it lacks.
     skills: RefCell<BTreeMap<String, Option<SkillRecord>>>,
     /// The Library's Instruction bundles and MCP connections looked up so
@@ -359,7 +358,6 @@ impl<'a> Run<'a> {
             mcp_deployments: RefCell::default(),
             skill_groups: agent_skill_groups(&ctx.store),
             available_skill_groups: available_agent_keys(&ctx.store, &project),
-            instruction_recovery_pending: instructions::recovery_pending(ctx)?,
             mcp_agents,
             ctx,
             project,
