@@ -14,11 +14,11 @@ use tempfile::TempDir;
 
 const CLI: &str = env!("CARGO_BIN_EXE_skills-manager-cli");
 
-struct Machine {
+struct TestHost {
     tmp: TempDir,
 }
 
-impl Machine {
+impl TestHost {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("home")).unwrap();
@@ -133,7 +133,7 @@ fn changed(
 
 #[test]
 fn the_handshake_matches_what_codex_and_claude_code_send() {
-    let machine = Machine::new();
+    let test_host = TestHost::new();
     // Codex asks for 2025-06-18 with elicitation; Claude Code asks for
     // 2025-11-25 with roots. Both then list tools and may ping.
     let clients = [
@@ -145,7 +145,7 @@ fn the_handshake_matches_what_codex_and_claude_code_send() {
         ("2025-11-25", json!({ "roots": {} }), "claude-code"),
     ];
     for (version, capabilities, client) in clients {
-        let lines = machine.mcp(&[
+        let lines = test_host.mcp(&[
             request(
                 1,
                 "initialize",
@@ -202,8 +202,8 @@ fn the_handshake_matches_what_codex_and_claude_code_send() {
 
 #[test]
 fn an_unknown_protocol_version_gets_the_latest_one() {
-    let machine = Machine::new();
-    let lines = machine.mcp(&[request(
+    let test_host = TestHost::new();
+    let lines = test_host.mcp(&[request(
         1,
         "initialize",
         json!({ "protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": { "name": "x" } }),
@@ -213,8 +213,8 @@ fn an_unknown_protocol_version_gets_the_latest_one() {
 
 #[test]
 fn a_malformed_line_is_answered_and_the_stream_goes_on() {
-    let machine = Machine::new();
-    let mut child = machine
+    let test_host = TestHost::new();
+    let mut child = test_host
         .cli()
         .arg("mcp")
         .stdin(Stdio::piped())
@@ -238,22 +238,22 @@ fn a_malformed_line_is_answered_and_the_stream_goes_on() {
 
 #[test]
 fn a_cold_start_discovery_writes_nothing() {
-    let machine = Machine::new();
-    let checkout = machine.tmp.path().join("checkout");
+    let test_host = TestHost::new();
+    let checkout = test_host.tmp.path().join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
-    let before = snapshot(machine.tmp.path());
+    let before = snapshot(test_host.tmp.path());
 
-    let lines = machine.mcp(&[
+    let lines = test_host.mcp(&[
         request(1, "initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "x" } })),
         initialized(),
         discover(2, &checkout),
     ]);
 
     assert_eq!(
-        changed(&before, &snapshot(machine.tmp.path())),
+        changed(&before, &snapshot(test_host.tmp.path())),
         Vec::<PathBuf>::new()
     );
-    assert!(!machine.base().exists());
+    assert!(!test_host.base().exists());
     let result = &reply(&lines, 2)["result"];
     assert_eq!(result["isError"], false);
     let found = &result["structuredContent"];
@@ -271,8 +271,8 @@ fn a_cold_start_discovery_writes_nothing() {
 
 #[test]
 fn discovery_on_an_existing_library_leaves_it_untouched() {
-    let machine = Machine::new();
-    let made = machine
+    let test_host = TestHost::new();
+    let made = test_host
         .cli()
         .args(["--json", "repo", "status"])
         .output()
@@ -282,15 +282,15 @@ fn discovery_on_an_existing_library_leaves_it_untouched() {
         "{}",
         String::from_utf8_lossy(&made.stderr)
     );
-    assert!(machine.base().exists());
-    let checkout = machine.tmp.path().join("checkout");
+    assert!(test_host.base().exists());
+    let checkout = test_host.tmp.path().join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
-    let before = snapshot(machine.tmp.path());
+    let before = snapshot(test_host.tmp.path());
 
-    let lines = machine.mcp(&[discover(1, &checkout)]);
+    let lines = test_host.mcp(&[discover(1, &checkout)]);
 
     assert_eq!(
-        changed(&before, &snapshot(machine.tmp.path())),
+        changed(&before, &snapshot(test_host.tmp.path())),
         Vec::<PathBuf>::new()
     );
     assert_eq!(reply(&lines, 1)["result"]["isError"], false);
@@ -298,8 +298,8 @@ fn discovery_on_an_existing_library_leaves_it_untouched() {
 
 #[test]
 fn a_failed_discovery_is_a_tool_error_the_agent_can_read() {
-    let machine = Machine::new();
-    let lines = machine.mcp(&[
+    let test_host = TestHost::new();
+    let lines = test_host.mcp(&[
         request(
             1,
             "tools/call",
@@ -319,8 +319,8 @@ fn a_failed_discovery_is_a_tool_error_the_agent_can_read() {
 
 #[test]
 fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_writing() {
-    let machine = Machine::new();
-    let saved = machine
+    let test_host = TestHost::new();
+    let saved = test_host
         .cli()
         .args(["--json", "mcps", "save", "--input", "-"])
         .stdin(Stdio::piped())
@@ -336,9 +336,9 @@ fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_wri
     assert!(saved.status.success());
     let definition: Value = serde_json::from_slice(&saved.stdout).unwrap();
     let definition = &definition["definition"];
-    let checkout = machine.tmp.path().join("checkout");
+    let checkout = test_host.tmp.path().join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
-    let store = SkillStore::new(&machine.base().join("skills-manager.db")).unwrap();
+    let store = SkillStore::new(&test_host.base().join("skills-manager.db")).unwrap();
     store
         .insert_project(&ProjectRecord {
             id: "p1".into(),
@@ -369,7 +369,7 @@ fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_wri
         )
     };
 
-    let lines = machine.mcp(&[apply(1), apply(2)]);
+    let lines = test_host.mcp(&[apply(1), apply(2)]);
 
     let first = &reply(&lines, 1)["result"];
     assert_eq!(first["isError"], false, "{first}");
@@ -390,8 +390,8 @@ fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_wri
                     "arguments": { "checkout_path": checkout, "operation_id": operation_id } }),
         )
     };
-    let before = (snapshot(&machine.base()), snapshot(&checkout));
-    let lines = machine.mcp(&[inspect(3, "op-1"), inspect(4, "op-unknown")]);
+    let before = (snapshot(&test_host.base()), snapshot(&checkout));
+    let lines = test_host.mcp(&[inspect(3, "op-1"), inspect(4, "op-unknown")]);
 
     let recorded = &reply(&lines, 3)["result"];
     assert_eq!(recorded["isError"], false, "{recorded}");
@@ -403,15 +403,15 @@ fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_wri
     let unknown = &reply(&lines, 4)["result"]["structuredContent"];
     assert_eq!(unknown["outcome"], "outcome_unknown");
     assert_eq!(unknown["receipt"], "missing");
-    let after = (snapshot(&machine.base()), snapshot(&checkout));
+    let after = (snapshot(&test_host.base()), snapshot(&checkout));
     assert_eq!(changed(&before.0, &after.0), Vec::<PathBuf>::new());
     assert_eq!(changed(&before.1, &after.1), Vec::<PathBuf>::new());
 }
 
 #[test]
 fn a_first_setup_is_proposed_then_confirmed_through_apply() {
-    let machine = Machine::new();
-    let saved = machine
+    let test_host = TestHost::new();
+    let saved = test_host
         .cli()
         .args(["--json", "mcps", "save", "--input", "-"])
         .stdin(Stdio::piped())
@@ -426,10 +426,10 @@ fn a_first_setup_is_proposed_then_confirmed_through_apply() {
         .unwrap();
     assert!(saved.status.success());
     let definition: Value = serde_json::from_slice(&saved.stdout).unwrap();
-    let checkout = machine.tmp.path().join("checkout");
+    let checkout = test_host.tmp.path().join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
     let apply = |arguments: Value| {
-        let lines = machine.mcp(&[request(
+        let lines = test_host.mcp(&[request(
             1,
             "tools/call",
             json!({ "name": "apply_project_setup", "arguments": arguments }),
@@ -453,8 +453,8 @@ fn a_first_setup_is_proposed_then_confirmed_through_apply() {
     assert_eq!(config["mcpServers"]["docs"]["command"], "npx");
 }
 
-fn save_docs_definition(machine: &Machine) -> Value {
-    let saved = machine
+fn save_docs_definition(test_host: &TestHost) -> Value {
+    let saved = test_host
         .cli()
         .args(["--json", "mcps", "save", "--input", "-"])
         .stdin(Stdio::piped())
@@ -474,15 +474,15 @@ fn save_docs_definition(machine: &Machine) -> Value {
 
 #[test]
 fn a_setup_confirmed_at_cold_start_is_discovered_in_the_same_session() {
-    let machine = Machine::new();
-    let definition = save_docs_definition(&machine);
-    for entry in std::fs::read_dir(machine.base()).unwrap() {
+    let test_host = TestHost::new();
+    let definition = save_docs_definition(&test_host);
+    for entry in std::fs::read_dir(test_host.base()).unwrap() {
         let path = entry.unwrap().path();
         if path.to_string_lossy().contains("skills-manager.db") {
             std::fs::remove_file(path).unwrap();
         }
     }
-    let checkout = machine.tmp.path().join("checkout");
+    let checkout = test_host.tmp.path().join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
     let apply = |id, arguments: Value| {
         request(
@@ -491,7 +491,7 @@ fn a_setup_confirmed_at_cold_start_is_discovered_in_the_same_session() {
             json!({ "name": "apply_project_setup", "arguments": arguments }),
         )
     };
-    let proposed = machine.mcp(&[apply(
+    let proposed = test_host.mcp(&[apply(
         1,
         json!({ "checkout_path": checkout,
         "operation_id": "op-1",
@@ -500,7 +500,7 @@ fn a_setup_confirmed_at_cold_start_is_discovered_in_the_same_session() {
     let mut confirm = reply(&proposed, 1)["result"]["structuredContent"]["proposal"].clone();
     confirm["decisions"][0]["choice"] = json!("approve");
 
-    let lines = machine.mcp(&[
+    let lines = test_host.mcp(&[
         apply(
             2,
             json!({ "checkout_path": checkout, "operation_id": "op-2", "confirm": confirm }),
@@ -517,11 +517,11 @@ fn a_setup_confirmed_at_cold_start_is_discovered_in_the_same_session() {
 
 #[test]
 fn an_apply_with_nothing_to_apply_is_refused_without_creating_the_library() {
-    let machine = Machine::new();
-    let checkout = machine.tmp.path().join("checkout");
+    let test_host = TestHost::new();
+    let checkout = test_host.tmp.path().join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
 
-    let lines = machine.mcp(&[request(
+    let lines = test_host.mcp(&[request(
         1,
         "tools/call",
         json!({ "name": "apply_project_setup",
@@ -530,15 +530,15 @@ fn an_apply_with_nothing_to_apply_is_refused_without_creating_the_library() {
 
     let result = &reply(&lines, 1)["result"];
     assert_eq!(result["isError"], true, "{result}");
-    assert!(!machine.base().exists(), "the library was created");
+    assert!(!test_host.base().exists(), "the library was created");
 }
 
 #[test]
 fn a_message_over_4_mib_is_refused_and_the_stream_goes_on() {
-    let machine = Machine::new();
+    let test_host = TestHost::new();
     let padding = "x".repeat(5 << 20);
 
-    let lines = machine.mcp(&[
+    let lines = test_host.mcp(&[
         request(1, "ping", json!({ "padding": padding })),
         request(2, "ping", json!({})),
     ]);

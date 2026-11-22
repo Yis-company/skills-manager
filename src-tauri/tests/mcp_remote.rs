@@ -1,7 +1,7 @@
 //! Project setup routed to a registered SSH host. The MCP server runs in
 //! process with a stand-in for `ssh`: each "host" is the real CLI's
 //! `serve --stdio` on its own temp base dir and HOME, so nothing here
-//! contacts a real host or this machine's library. Unix only, like the
+//! contacts a real host or this host's library. Unix only, like the
 //! remote hosts themselves.
 #![cfg(unix)]
 
@@ -40,12 +40,12 @@ fn project(id: &str, path: &Path) -> ProjectRecord {
     }
 }
 
-/// A machine with its own base dir, HOME and an `app` checkout.
-struct Machine {
+/// A host with its own base dir, HOME and an `app` checkout.
+struct TestHost {
     tmp: TempDir,
 }
 
-impl Machine {
+impl TestHost {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("home/.claude")).unwrap();
@@ -66,7 +66,7 @@ impl Machine {
         SkillStore::new(&self.base().join("skills-manager.db")).unwrap()
     }
 
-    /// The real CLI on this machine, whatever host it is asked for.
+    /// The real CLI on this test_host, whatever host it is asked for.
     fn cli(&self) -> impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static {
         let (base, home) = (self.base(), self.tmp.path().join("home"));
         move |_: &RemoteHostRecord, args: &[&str]| {
@@ -81,7 +81,7 @@ impl Machine {
         }
     }
 
-    /// One app command over this machine's own `serve --stdio`.
+    /// One app command over this host's own `serve --stdio`.
     fn call(&self, cmd: &str, request: Value) -> Value {
         let session =
             RemoteSession::spawn(&self.cli(), &host_record(), Arc::new(NoopEvents)).unwrap();
@@ -139,18 +139,18 @@ fn host_record() -> RemoteHostRecord {
 
 /// This computer: a library with `build box` registered as an SSH host.
 struct Local {
-    machine: Machine,
+    test_host: TestHost,
     ctx: HostCtx,
 }
 
 impl Local {
     fn new() -> Self {
-        let machine = Machine::new();
-        let store = machine.store();
+        let test_host = TestHost::new();
+        let store = test_host.store();
         store.insert_remote_host(&host_record()).unwrap();
         Self {
             ctx: HostCtx::headless(Arc::new(store)),
-            machine,
+            test_host,
         }
     }
 
@@ -201,13 +201,13 @@ fn run(server: &Server, messages: &[Value]) -> Vec<Value> {
 #[test]
 fn a_named_host_applies_and_verifies_there_and_leaves_a_same_name_project_here_alone() {
     let local = Local::new();
-    let here = local.machine.checkout();
+    let here = local.test_host.checkout();
     local
         .ctx
         .store
         .insert_project(&project("local-app", &here))
         .unwrap();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let checkout = remote.checkout();
 
@@ -371,7 +371,7 @@ fn a_host_name_must_pick_exactly_one_registered_host() {
 #[test]
 fn a_host_whose_connection_details_change_is_reached_at_its_new_address() {
     let local = Local::new();
-    let (old, new) = (Machine::new(), Machine::new());
+    let (old, new) = (TestHost::new(), TestHost::new());
     new.one_of_each();
     let (old_cli, new_cli) = (old.cli(), new.cli());
     let cli = move |host: &RemoteHostRecord, args: &[&str]| match host.ssh_target.as_str() {
@@ -407,7 +407,7 @@ fn a_host_whose_connection_details_change_is_reached_at_its_new_address() {
 /// which loses the first request (`before_admission`) or its reply
 /// (`after_admission`), and directly after that. Counts the starts.
 fn losing_once(
-    remote: &Machine,
+    remote: &TestHost,
     mode: &'static str,
     starts: Arc<AtomicUsize>,
 ) -> impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static {
@@ -450,7 +450,7 @@ fn apply_on_host(
 #[test]
 fn a_reply_lost_after_commit_reconciles_from_the_receipt_without_writing_again() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let starts = Arc::new(AtomicUsize::new(0));
 
@@ -470,7 +470,7 @@ fn a_reply_lost_after_commit_reconciles_from_the_receipt_without_writing_again()
 #[test]
 fn a_lost_reply_to_a_proposal_is_asked_for_again_once() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let saved = remote
         .store()
@@ -501,7 +501,7 @@ fn a_lost_reply_to_a_proposal_is_asked_for_again_once() {
 #[test]
 fn a_request_lost_with_no_receipt_is_outcome_unknown_and_never_replayed() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let starts = Arc::new(AtomicUsize::new(0));
 
@@ -524,7 +524,7 @@ fn a_request_lost_with_no_receipt_is_outcome_unknown_and_never_replayed() {
 #[test]
 fn a_lost_reply_whose_reconnect_fails_is_a_structured_outcome_unknown() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let starts = Arc::new(AtomicUsize::new(0));
     let losing = losing_once(&remote, "after_admission", starts.clone());
@@ -546,7 +546,7 @@ fn a_lost_reply_whose_reconnect_fails_is_a_structured_outcome_unknown() {
 #[test]
 fn a_lost_request_another_claimed_is_outcome_unknown_and_not_resumed() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let checkout = remote.checkout();
     let probe = local.tool(
@@ -582,7 +582,7 @@ fn a_lost_request_another_claimed_is_outcome_unknown_and_not_resumed() {
 #[test]
 fn two_simultaneous_calls_with_the_same_operation_id_apply_once() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let checkout = remote.checkout();
     let cli = remote.cli();
@@ -630,9 +630,9 @@ fn two_simultaneous_calls_with_the_same_operation_id_apply_once() {
 
 /// The rows that hold projects, agents, the Library and preset membership,
 /// and every path in the checkout.
-fn state(machine: &Machine) -> Vec<String> {
+fn state(test_host: &TestHost) -> Vec<String> {
     let db = rusqlite::Connection::open_with_flags(
-        machine.base().join("skills-manager.db"),
+        test_host.base().join("skills-manager.db"),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
     .unwrap();
@@ -662,7 +662,7 @@ fn state(machine: &Machine) -> Vec<String> {
         }
     }
     rows.sort();
-    let mut pending = vec![machine.checkout()];
+    let mut pending = vec![test_host.checkout()];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
@@ -678,7 +678,7 @@ fn state(machine: &Machine) -> Vec<String> {
 #[test]
 fn discovery_and_inspection_on_a_host_change_nothing_after_serve_starts() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let checkout = remote.checkout();
     apply_on_host(&local, remote.cli(), &checkout);
@@ -723,7 +723,7 @@ fn discovery_and_inspection_on_a_host_change_nothing_after_serve_starts() {
 #[test]
 fn a_lost_request_reusing_an_operation_id_never_returns_the_other_requests_result() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let checkout = remote.checkout();
     let first = apply_on_host(&local, remote.cli(), &checkout);
@@ -748,7 +748,7 @@ fn a_lost_request_reusing_an_operation_id_never_returns_the_other_requests_resul
 #[test]
 fn a_lost_apply_with_null_items_is_never_sent_again() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let checkout = remote.checkout();
     let starts = Arc::new(AtomicUsize::new(0));
@@ -771,7 +771,7 @@ fn a_lost_apply_with_null_items_is_never_sent_again() {
 #[test]
 fn a_lost_request_whose_receipt_recorded_an_error_returns_that_error() {
     let local = Local::new();
-    let remote = Machine::new();
+    let remote = TestHost::new();
     remote.one_of_each();
     let checkout = remote.checkout();
     let probe = local.tool(
