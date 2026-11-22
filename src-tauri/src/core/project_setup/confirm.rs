@@ -4,7 +4,7 @@
 //! from the current state and must match, or the confirmation is stale; only
 //! then is the checkout registered, the setup saved and applied.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -12,9 +12,10 @@ use serde_json::{json, Value};
 use super::apply::{respond, summarize, Outcome};
 use super::items::instruction::instruction_deletes;
 use super::items::mcp::{approval, effective_values};
+use super::items::skill::inside;
 use super::items::{shared_paths, sorted_agents, with_readers, Planned, Run, Status, Step};
 use super::{save_setup, ItemKind, SavedSetup, SetupItem};
-use crate::commands::projects::add_project_core;
+use crate::commands::projects::{add_project_core, registration_dirs};
 use crate::core::error::AppError;
 
 /// The decisions a request needs, grouped for one confirmation, and the
@@ -122,6 +123,17 @@ pub(super) fn save_confirmed(
     items: Vec<SetupItem>,
 ) -> Result<u64, AppError> {
     if proposal.register {
+        // Registering creates agent folders: none may lead out of the checkout.
+        let root = Path::new(&run.project.path);
+        for dir in registration_dirs(root, &proposal.deploy_mode)? {
+            if !inside(root, &dir) {
+                return Err(AppError::invalid_input(format!(
+                    "{} leads outside the checkout, so registering it would write there; \
+                     nothing was registered or saved",
+                    dir.display()
+                )));
+            }
+        }
         let added = add_project_core(
             run.ctx,
             run.project.path.clone(),

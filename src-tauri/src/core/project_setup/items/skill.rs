@@ -45,7 +45,7 @@ fn slot(path: &Path, expected: &Path) -> Slot {
 /// Whether `path`'s folder resolves inside the checkout at `root`. A folder
 /// that is a link elsewhere, such as an agent folder shared between
 /// checkouts, would take the write outside it.
-fn inside(root: &Path, path: &Path) -> bool {
+pub(in crate::core::project_setup) fn inside(root: &Path, path: &Path) -> bool {
     if path.components().any(|c| c == Component::ParentDir) {
         return false;
     }
