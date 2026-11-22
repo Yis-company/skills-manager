@@ -898,6 +898,26 @@ pub(crate) mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_link_to_another_agents_copy_is_never_counted_as_no_change() {
+        let fixture = Fixture::new();
+        with_agent_b(&fixture);
+        let library = fixture.skill("s1", "review");
+        fixture.save_setup(json!([
+            { "kind": "skill", "id": "s1", "agents": ["agent_a", "agent_b"] }
+        ]));
+        let copy = fixture.path(".a/skills/review");
+        std::fs::create_dir_all(&copy).unwrap();
+        std::fs::copy(library.join("SKILL.md"), copy.join("SKILL.md")).unwrap();
+        std::fs::create_dir_all(fixture.path(".b/skills")).unwrap();
+        std::os::unix::fs::symlink(&copy, fixture.path(".b/skills/review")).unwrap();
+
+        let result = fixture.apply("op-1").unwrap();
+
+        assert_ne!(result["outcome"], "verified_no_change", "{result}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn an_agent_folder_linked_to_another_agents_folder_needs_that_agent_approved() {
         let fixture = Fixture::new();
         with_agent_b(&fixture);

@@ -200,9 +200,11 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Vec<AgentStep>,
         }
         let expected = if copy_mode { &vendored.0 } else { &source };
         let path = folder.join(&dir_name);
+        // One slot per agent folder, also through a link to it; a link inside
+        // a folder is its own slot and is checked against its own target.
         match slots
             .iter_mut()
-            .find(|(existing, ..)| resolved(existing) == resolved(&path))
+            .find(|(existing, ..)| existing.parent().map(resolved) == Some(resolved(&folder)))
         {
             Some((.., agents)) => agents.extend(members.iter().cloned()),
             None => slots.push((path, expected.clone(), members.clone())),
