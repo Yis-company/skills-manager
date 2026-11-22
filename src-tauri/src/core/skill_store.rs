@@ -191,6 +191,23 @@ impl SkillStore {
         rows.map(|raw| Ok(serde_json::from_str(&raw?)?)).collect()
     }
 
+    /// Whether any document of `kind` exists.
+    pub fn resource_state_has_any(&self, kind: &str) -> Result<bool> {
+        use rusqlite::OptionalExtension;
+        let conn = self.conn.lock().unwrap();
+        if !resource_state_exists(&conn)? {
+            return Ok(false);
+        }
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM resource_state WHERE kind = ?1 LIMIT 1",
+                [kind],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     /// Whether any document of `kind` has a top-level `status` in `statuses`.
     pub fn resource_state_any_status(&self, kind: &str, statuses: &[&str]) -> Result<bool> {
         use rusqlite::OptionalExtension;

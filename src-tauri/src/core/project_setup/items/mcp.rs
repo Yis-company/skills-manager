@@ -133,17 +133,15 @@ pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step
 /// to apply and one to verify. Returns a step per connection, in order.
 pub(super) fn apply_mcps(run: &Run, agent: &str, batch: &[(usize, &SetupItem)]) -> Vec<Step> {
     let target = json!({ "agentKey": agent, "projectId": run.project.id });
-    match mcps::recovery_pending(run.ctx, agent, &run.project.id) {
-        Ok(false) => {}
-        Ok(true) => {
-            return vec![Step::because(Status::Blocked, Reason::PendingRecovery); batch.len()]
-        }
-        Err(error) => return vec![Step::error(error); batch.len()],
-    }
     let items: Vec<&SetupItem> = batch.iter().map(|(_, item)| *item).collect();
+    // Asked before each chunk: an earlier one may have left a recovery.
     items
         .chunks(MCP_BATCH)
-        .flat_map(|chunk| mcp_chunk(run, agent, &target, chunk))
+        .flat_map(|chunk| match mcps::recovery_pending(run.ctx) {
+            Ok(false) => mcp_chunk(run, agent, &target, chunk),
+            Ok(true) => vec![Step::because(Status::Blocked, Reason::PendingRecovery); chunk.len()],
+            Err(error) => vec![Step::error(error); chunk.len()],
+        })
         .collect()
 }
 

@@ -1234,6 +1234,27 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_mcp_recovery_for_another_project_blocks_instead_of_failing() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        let recovery = json!({ "id": "r1",
+            "target": { "agentKey": "claude_code", "projectId": "p2" } });
+        fixture
+            .ctx
+            .store
+            .resource_state_put("mcps_recovery", "r1", &recovery)
+            .unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        let mcp = item(&result, "mcp");
+        assert_eq!(mcp["status"], "blocked", "{result}");
+        assert_eq!(mcp["reason"], "pending_recovery");
+    }
+
+    #[test]
     fn pending_recovery_blocks_its_items_and_is_never_run() {
         let fixture = Fixture::new();
         one_of_each(&fixture);

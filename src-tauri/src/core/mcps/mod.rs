@@ -46,20 +46,13 @@ pub fn names_after(after: Option<&str>, limit: usize) -> Result<Vec<(String, Str
         .collect())
 }
 
-/// Whether an interrupted change to `agent_key`'s MCP configuration for the
-/// project `project_id` waits for `recover`. Read-only: it never recovers.
-pub fn recovery_pending(
-    ctx: &HostCtx,
-    agent_key: &str,
-    project_id: &str,
-) -> Result<bool, AppError> {
-    adapters::recovery_pending(
-        ctx,
-        &model::Target {
-            agent_key: agent_key.to_owned(),
-            project_id: Some(project_id.to_owned()),
-        },
-    )
+/// Whether an interrupted MCP change on this host waits for `recover`.
+/// Any one blocks every MCP apply, as [`adapters::apply`] refuses then.
+/// Read-only: it never recovers, and loads no journal.
+pub fn recovery_pending(ctx: &HostCtx) -> Result<bool, AppError> {
+    ctx.store
+        .resource_state_has_any("mcps_recovery")
+        .map_err(AppError::db)
 }
 
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {

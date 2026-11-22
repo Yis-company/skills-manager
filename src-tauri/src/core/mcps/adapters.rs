@@ -955,11 +955,6 @@ fn recoveries_for(ctx: &HostCtx, target: Option<&Target>) -> Result<Vec<Value>, 
         })
         .collect())
 }
-/// Whether an interrupted change to `target`'s MCP configuration waits for
-/// `recover`. Read-only: it never recovers.
-pub fn recovery_pending(ctx: &HostCtx, target: &Target) -> Result<bool, AppError> {
-    Ok(!recoveries_for(ctx, Some(target))?.is_empty())
-}
 pub fn deployments(ctx: &HostCtx, target: Option<&Target>) -> Result<Value, AppError> {
     let all = ctx
         .store
