@@ -204,7 +204,11 @@ pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
                     })
                 })
                 .collect();
-            if targets.iter().all(|target| target.status == step.status) {
+            // Listed per agent unless every agent has the item's own result.
+            if targets
+                .iter()
+                .all(|target| (target.status, &target.reason) == (step.status, &step.reason))
+            {
                 targets.clear();
             }
             let (agents, unsupported) = item
@@ -494,10 +498,34 @@ fn missing(error: AppError) -> Step {
     }
 }
 
-/// The worst of several agents' steps for one item.
+/// The worst of several agents' steps for one item. Of equal failures, one
+/// that a retry cannot fix wins.
 fn worst(steps: impl IntoIterator<Item = Step>) -> Step {
     steps
         .into_iter()
-        .max_by_key(|step| step.status)
+        .max_by_key(|step| (step.status, !step.retryable))
         .unwrap_or_else(|| Step::because(Status::Blocked, Reason::NoSupportedAgent))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_agent_failing_for_good_makes_the_item_not_retryable() {
+        for steps in [
+            [
+                Step::failed("apply_incomplete", false),
+                Step::failed("io", true),
+            ],
+            [
+                Step::failed("io", true),
+                Step::failed("apply_incomplete", false),
+            ],
+        ] {
+            let step = worst(steps);
+            assert_eq!(step.reason.as_deref(), Some("apply_incomplete"));
+            assert!(!step.retryable);
+        }
+    }
 }
