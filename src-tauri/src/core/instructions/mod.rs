@@ -118,6 +118,9 @@ struct Change {
     baseline: Option<String>,
     #[serde(default)]
     incoming: Option<String>,
+    /// What the last apply wrote to the file, a merge included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deployed: Option<String>,
 }
 
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
@@ -189,6 +192,10 @@ fn load_definition(id: &str) -> Result<(Definition, BTreeMap<String, String>), A
     validate_library_schema()?;
     crate::core::resource_store::reject_symlinks(&path).map_err(AppError::io)?;
     let dir = path.parent().unwrap();
+    // A bundle with no folder is gone; one with a folder it cannot read is not.
+    if matches!(fs::symlink_metadata(dir), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+        return Err(AppError::not_found("instruction bundle not found"));
+    }
     for checked in [dir, &path] {
         let metadata = fs::symlink_metadata(checked).map_err(AppError::io)?;
         if metadata.file_type().is_symlink() {
@@ -247,6 +254,40 @@ fn get(id: &str) -> Result<Value, AppError> {
     let mut v = serde_json::to_value(d).map_err(AppError::internal)?;
     v["files"] = json!(files);
     Ok(v)
+}
+
+/// Up to `limit` readable Library bundles with an ID after `after`, by ID,
+/// as ID and name. Only bundles up to the last one returned are read.
+pub fn names_after(after: Option<&str>, limit: usize) -> Result<Vec<(String, String)>, AppError> {
+    let root = lib_root();
+    crate::core::resource_store::reject_symlinks(&root).map_err(AppError::io)?;
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(root).map_err(AppError::io)? {
+        let entry = entry.map_err(AppError::io)?;
+        if entry
+            .file_type()
+            .map(|t| t.is_symlink() || !t.is_dir())
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if crate::core::resource_store::validate_id(&id).is_ok()
+            && after.is_none_or(|after| id.as_str() > after)
+        {
+            ids.push(id);
+        }
+    }
+    ids.sort();
+    // As in the listing, a bundle that cannot be read is left out.
+    Ok(ids
+        .into_iter()
+        .filter_map(|id| load_definition(&id).ok().map(|(def, _)| (id, def.name)))
+        .take(limit)
+        .collect())
 }
 
 fn list() -> Result<Vec<Value>, AppError> {
@@ -473,16 +514,23 @@ fn remove(ctx: &HostCtx, id: &str, detach: bool) -> Result<Vec<String>, AppError
     Ok(detached)
 }
 
+/// The agents with an instruction root, and its folder under the home
+/// directory or the project.
+pub const AGENT_DIRS: &[(&str, &str)] = &[
+    ("claude_code", ".claude"),
+    ("codex", ".codex"),
+    ("antigravity", ".gemini"),
+    ("hermes", ".hermes"),
+    ("cursor", ".cursor"),
+];
+
 fn resolve_target(ctx: &HostCtx, target: &Target) -> Result<PathBuf, AppError> {
     let home = dirs::home_dir().ok_or_else(|| err("home directory is unavailable"))?;
-    let agent_dir = match target.agent_key.as_str() {
-        "claude_code" => ".claude",
-        "codex" => ".codex",
-        "antigravity" => ".gemini",
-        "hermes" => ".hermes",
-        "cursor" => ".cursor",
-        _ => return Err(err("unsupported instruction agent")),
-    };
+    let agent_dir = AGENT_DIRS
+        .iter()
+        .find(|(key, _)| *key == target.agent_key)
+        .map(|(_, dir)| *dir)
+        .ok_or_else(|| err("unsupported instruction agent"))?;
     if target.project_id.is_none() && target.agent_key == "cursor" {
         return Err(err("global Cursor instructions are not supported"));
     }
@@ -637,6 +685,14 @@ fn safe_file_path(s: &str) -> Result<PathBuf, AppError> {
         return Err(err("instruction files must end in .md or .mdc"));
     }
     Ok(p)
+}
+
+/// The agents that read a bundle file at `path` in a project.
+pub fn project_file_readers(path: &str) -> impl Iterator<Item = &'static str> + '_ {
+    AGENT_DIRS
+        .iter()
+        .map(|(agent, _)| *agent)
+        .filter(move |agent| supported_instruction_file(agent, path, true))
 }
 
 fn supported_instruction_file(agent: &str, path: &str, project: bool) -> bool {
@@ -1317,11 +1373,11 @@ fn preview(ctx: &HostCtx, target: Target, id: &str, dry_run: bool) -> Result<Val
         } else {
             None
         };
-        let baseline = deployment
+        let record = deployment
             .as_ref()
             .and_then(|d| d["files"].as_array())
-            .and_then(|fs| fs.iter().find(|f| f["path"] == p.as_str()))
-            .and_then(|f| f["baseline"].as_str());
+            .and_then(|fs| fs.iter().find(|f| f["path"] == p.as_str()));
+        let baseline = record.and_then(|f| f["baseline"].as_str());
         let conflict = match (old.as_deref(), baseline) {
             (None, Some(base)) if content != base => {
                 Some("file was removed locally while the library changed".to_string())
@@ -1364,6 +1420,9 @@ fn preview(ctx: &HostCtx, target: Target, id: &str, dry_run: bool) -> Result<Val
             previous: old,
             baseline: baseline.map(str::to_owned),
             incoming: Some(content.clone()),
+            deployed: record
+                .and_then(|f| f["deployed"].as_str())
+                .map(str::to_owned),
         });
     }
     if let Some(files) = deployment.as_ref().and_then(|d| d["files"].as_array()) {
@@ -1408,6 +1467,7 @@ fn preview(ctx: &HostCtx, target: Target, id: &str, dry_run: bool) -> Result<Val
                 previous: local,
                 baseline: baseline.map(ToOwned::to_owned),
                 incoming: None,
+                deployed: previous["deployed"].as_str().map(ToOwned::to_owned),
             });
         }
     }
@@ -1782,14 +1842,34 @@ fn undeploy(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
         .resource_state_put("instructions_journal", &journal_id, &journal))?;
     Ok(json!({"detached":true,"removed":removed}))
 }
+/// Whether an interrupted transaction waits for `recover`. Read-only: it
+/// never recovers.
+/// Asked of the database, so no journal is loaded to answer it.
+pub fn recovery_pending(ctx: &HostCtx) -> Result<bool, AppError> {
+    db(ctx
+        .store
+        .resource_state_any_status("instructions_journal", &INTERRUPTED))
+}
+
+/// The statuses of a journal whose transaction was interrupted.
+const INTERRUPTED: [&str; 5] = [
+    "applying",
+    "building",
+    "swapping",
+    "removing",
+    "recovery_incomplete",
+];
+
+fn interrupted(journal: &Value) -> bool {
+    INTERRUPTED
+        .iter()
+        .any(|status| journal["status"] == *status)
+}
+
 fn recover(ctx: &HostCtx) -> Result<Value, AppError> {
     let mut items = db(ctx.store.resource_state_list("instructions_journal"))?;
     for journal in &mut items {
-        if journal["status"] != "applying"
-            && journal["status"] != "building"
-            && journal["status"] != "swapping"
-            && journal["status"] != "removing"
-            && journal["status"] != "recovery_incomplete"
+        if !interrupted(journal)
             && !(journal["kind"] == "library_save" && journal["status"] == "complete")
             && !(journal["kind"] == "library_remove" && journal["status"] == "complete")
         {

@@ -62,7 +62,7 @@ pub fn get_projects_core(ctx: &HostCtx) -> Result<Vec<ProjectDto>, AppError> {
 /// The mode a new project gets: the caller's choice, else the user's
 /// `default_project_deploy_mode` setting. An unset or unknown stored value
 /// means link, so the setting can never make adding a project fail.
-fn new_project_deploy_mode(
+pub(crate) fn new_project_deploy_mode(
     store: &SkillStore,
     requested: Option<String>,
 ) -> Result<String, AppError> {
@@ -89,6 +89,23 @@ pub async fn add_project(
     tauri::async_runtime::spawn_blocking(move || add_project_core(&ctx, path, deploy_mode)).await?
 }
 
+/// The folders registering a project at `project_path` creates: the skills
+/// folder for `deploy_mode` and its disabled folder.
+pub(crate) fn registration_dirs(
+    project_path: &Path,
+    deploy_mode: &str,
+) -> Result<[PathBuf; 2], AppError> {
+    let relative_skills_dir = match deploy_mode {
+        "link" => ".claude/skills",
+        "copy" => VENDORED_SKILLS_DIR,
+        _ => return Err(AppError::invalid_input("Deploy mode must be link or copy")),
+    };
+    Ok([
+        project_path.join(relative_skills_dir),
+        project_path.join(format!("{relative_skills_dir}-disabled")),
+    ])
+}
+
 pub fn add_project_core(
     ctx: &HostCtx,
     path: String,
@@ -100,17 +117,10 @@ pub fn add_project_core(
         return Err(AppError::invalid_input("Directory does not exist"));
     }
     let deploy_mode = new_project_deploy_mode(&store, deploy_mode)?;
-    let relative_skills_dir = match deploy_mode.as_str() {
-        "link" => ".claude/skills",
-        "copy" => VENDORED_SKILLS_DIR,
-        _ => return Err(AppError::invalid_input("Deploy mode must be link or copy")),
-    };
-    let skills_dir = project_path.join(relative_skills_dir);
-    let disabled_dir = project_path.join(format!("{relative_skills_dir}-disabled"));
-
     // Support initializing an empty project directory as a managed project.
-    std::fs::create_dir_all(&skills_dir)?;
-    std::fs::create_dir_all(&disabled_dir)?;
+    for dir in registration_dirs(project_path, &deploy_mode)? {
+        std::fs::create_dir_all(dir)?;
+    }
 
     let name = project_path
         .file_name()

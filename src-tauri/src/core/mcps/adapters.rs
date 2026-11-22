@@ -2,7 +2,12 @@ use super::{
     model::{AuthRefs, Definition, DefinitionInput, Operation, ServerConfig, Target, Transport},
     store,
 };
-use crate::core::{error::AppError, host::HostCtx, repo_lock::RepoLock, resource_store};
+use crate::core::{
+    error::{AppError, TargetConflictDetail},
+    host::HostCtx,
+    repo_lock::RepoLock,
+    resource_store,
+};
 use serde_json::{json, Map, Value};
 use std::{
     fs,
@@ -252,6 +257,16 @@ pub fn import(
     Ok(json!({"draft":input,"expectedRevision":expected_revision,"source":"native-config"}))
 }
 
+/// The Library definition with this ID, or `None` when there is none. Only
+/// that definition is read.
+fn find_definition(ctx: &HostCtx, id: &str) -> Result<Option<Definition>, AppError> {
+    match store::get(ctx, id) {
+        Ok(definition) => Ok(Some(definition)),
+        Err(error) if error.kind == crate::core::error::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn preview(
     ctx: &HostCtx,
     target: &Target,
@@ -260,7 +275,6 @@ pub fn preview(
 ) -> Result<Value, AppError> {
     let cfg = resolve(ctx, target)?;
     let entries = read_entries(&cfg)?;
-    let defs = store::list(ctx)?;
     let current = deployments_for(ctx, target)?;
     let mut prepared = Vec::new();
     let mut changes = Vec::new();
@@ -282,7 +296,8 @@ pub fn preview(
                 "An MCP preview can modify each definition only once",
             ));
         }
-        let def = defs.iter().find(|d| d.id == op.definition_id);
+        let found = find_definition(ctx, &op.definition_id)?;
+        let def = found.as_ref();
         let prior = current.iter().find(|d| {
             d.get("definitionId").and_then(Value::as_str) == Some(op.definition_id.as_str())
         });
@@ -383,6 +398,7 @@ pub fn preview(
                 changes.push(json!({"name":name,"kind":"remove","warnings":[]}));
             }
         } else {
+            let rendered = desired.clone();
             if let Some(base) = base {
                 normalize(&cfg.agent, &name, base)?;
                 if existing != Some(base) {
@@ -418,7 +434,9 @@ pub fn preview(
             } else {
                 None
             };
-            changes.push(json!({"name":final_name,"kind":if reviewed_existing.is_some(){"update"}else{"add"},"beforeSummary":reviewed_existing.map(summary),"afterSummary":summary(result),"warnings":[]}));
+            // keptEdits: the result keeps an edit made there, so it differs
+            // from what the definition renders.
+            changes.push(json!({"name":final_name,"kind":if reviewed_existing.is_some(){"update"}else{"add"},"beforeSummary":reviewed_existing.map(summary),"afterSummary":summary(result),"keptEdits":rendered.as_ref()!=Some(result),"warnings":[]}));
         }
         if !names.insert(precondition_name.clone()) {
             return Err(AppError::invalid_input(
@@ -498,7 +516,6 @@ pub fn apply(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
         .get("operations")
         .and_then(Value::as_array)
         .ok_or_else(|| AppError::invalid_input("MCP preview is invalid"))?;
-    let defs = store::list(ctx)?;
     let original = read_snapshot(&cfg)?;
     let mut entries = entries_from_snapshot(&cfg, original.as_deref())?;
     let mut raw = original.clone().unwrap_or_default();
@@ -526,7 +543,8 @@ pub fn apply(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
         }
         validate_server_name(name)?;
         validate_server_name(final_name)?;
-        let def = defs.iter().find(|d| d.id == def_id);
+        let found = find_definition(ctx, def_id)?;
+        let def = found.as_ref();
         if kind != "undeploy" && def.is_none() {
             return Err(AppError::not_found(
                 "MCP definition was removed after preview",
@@ -651,6 +669,132 @@ pub fn apply(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
         );
     }
     Ok(json!({"applied":true,"changes":changed}))
+}
+
+/// The name Agents Manager's own MCP server is registered under.
+pub const SELF_SERVER_NAME: &str = "skills-manager";
+
+/// A coding agent Agents Manager's own MCP server registers with, by agent key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Client {
+    Codex,
+    ClaudeCode,
+}
+
+/// Register `command mcp` as a user-scope stdio MCP server for Codex or Claude
+/// Code. An equivalent entry is left as it is; a different entry under the
+/// same name is a conflict and is never replaced.
+pub fn register_self(ctx: &HostCtx, client: Client, command: &Path) -> Result<Value, AppError> {
+    let (agent_key, next_step) = match client {
+        Client::Codex => (
+            "codex",
+            "Start a new Codex session, or a new thread in T3, to load it.",
+        ),
+        Client::ClaudeCode => ("claude_code", "Start a new Claude Code session to load it."),
+    };
+    if !command.is_file() {
+        return Err(AppError::not_found(format!(
+            "Agents Manager CLI not found at {}",
+            command.display()
+        )));
+    }
+    let def = Definition {
+        id: String::new(),
+        name: SELF_SERVER_NAME.into(),
+        transport: Transport::Stdio,
+        server: ServerConfig {
+            command: Some(command.to_string_lossy().into_owned()),
+            args: vec!["mcp".into()],
+            ..ServerConfig::default()
+        },
+        auth: None,
+        source: None,
+        revision: String::new(),
+        updated_at: String::new(),
+    };
+    let cfg = resolve(
+        ctx,
+        &Target {
+            agent_key: agent_key.into(),
+            project_id: None,
+        },
+    )?;
+    let entry = render_entry(agent_key, &def)?;
+    let _lock = RepoLock::acquire_foreground("register MCP server").map_err(AppError::db)?;
+    let original = read_snapshot(&cfg)?;
+    let existing = entries_from_snapshot(&cfg, original.as_deref())?
+        .into_iter()
+        .find(|(name, _)| name == SELF_SERVER_NAME);
+    let report = |status: &str| json!({"status":status,"serverName":SELF_SERVER_NAME,"configPath":cfg.path.to_string_lossy(),"nextStep":next_step});
+    if let Some((_, current)) = existing {
+        let wanted = normalize(agent_key, SELF_SERVER_NAME, &entry)?;
+        if normalize(agent_key, SELF_SERVER_NAME, &current).ok() == Some(wanted) {
+            return Ok(report("unchanged"));
+        }
+        return Err(AppError::target_conflict(
+            format!(
+                "A different MCP server named {SELF_SERVER_NAME} is already registered in {}; remove or rename it, then register again",
+                cfg.path.display()
+            ),
+            vec![TargetConflictDetail {
+                path: cfg.path.to_string_lossy().into_owned(),
+                reason: format!("{SELF_SERVER_NAME} is registered with a different command"),
+            }],
+        ));
+    }
+    let raw = original.as_deref().unwrap_or_default();
+    let patched = patch_text(
+        cfg.format,
+        raw,
+        cfg.entry_path[0],
+        SELF_SERVER_NAME,
+        Some(&entry),
+    )?;
+    verify_scoped_patch(
+        &cfg,
+        original.as_deref(),
+        &patched,
+        &[json!({"name":SELF_SERVER_NAME,"present":true,"entry":entry})],
+    )?;
+    replace_if_unchanged(&cfg, original.as_deref(), &patched)?;
+    Ok(report("added"))
+}
+
+/// Replace `cfg`'s file with `patched` only while it still holds `original`:
+/// its client may have saved a setting since it was read. The check runs
+/// just before the rename. A client save that lands in the instant between
+/// them cannot be seen without a lock the clients do not take; one that
+/// lands after the rename replaces ours, and the read back reports it.
+fn replace_if_unchanged(
+    cfg: &ConfigTarget,
+    original: Option<&str>,
+    patched: &str,
+) -> Result<(), AppError> {
+    let path = cfg.path.to_string_lossy().into_owned();
+    let conflict = |message: &str| {
+        AppError::target_conflict(
+            format!("{path} changed while registering; {message}, register again"),
+            vec![TargetConflictDetail {
+                path: path.clone(),
+                reason: "changed while registering".into(),
+            }],
+        )
+    };
+    let unchanged = || {
+        read_snapshot(cfg)
+            .map(|now| now.as_deref() == original)
+            .map_err(|e| anyhow::anyhow!(e.message))
+    };
+    if !resource_store::atomic_write_if(&cfg.path, patched.as_bytes(), unchanged)
+        .map_err(AppError::io)?
+    {
+        return Err(conflict("nothing was written"));
+    }
+    if read_snapshot(cfg)?.as_deref() != Some(patched) {
+        return Err(conflict("its save replaced the registration"));
+    }
+    Ok(())
 }
 
 fn verify_scoped_patch(
@@ -2415,6 +2559,31 @@ mod tests {
         remote.transport = Transport::Sse;
         assert!(render_entry("codex", &remote).is_err());
         assert!(render_entry("antigravity", &remote).is_err());
+    }
+
+    #[test]
+    fn a_config_saved_by_its_client_after_it_was_read_is_never_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = ConfigTarget {
+            path: dir.path().canonicalize().unwrap().join("config.json"),
+            format: Format::Json,
+            entry_path: vec!["mcpServers"],
+            agent: "claude_code".into(),
+        };
+        let read = "{\"mcpServers\": {}}\n";
+        let saved_since = "{\"mcpServers\": {}, \"theme\": \"dark\"}\n";
+        fs::write(&cfg.path, saved_since).unwrap();
+
+        let error =
+            replace_if_unchanged(&cfg, Some(read), "{\"mcpServers\": {\"x\": {}}}\n").unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            crate::core::error::ErrorKind::TargetConflict,
+            "{}",
+            error.message
+        );
+        assert_eq!(fs::read_to_string(&cfg.path).unwrap(), saved_since);
     }
 
     #[test]

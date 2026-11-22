@@ -92,6 +92,13 @@
     "errorNotFound": "The management skill installed but could not be found in the library.",
     "errorGeneric": "Could not set this up."
   },
+  "mcpRegister": {
+    "title": "Connect agents over MCP",
+    "body": "Register Agents Manager's MCP server with Codex or Claude Code on this computer, so they can set up projects for you.",
+    "added": "Registered with {{agent}}",
+    "unchanged": "Already registered with {{agent}}",
+    "errorGeneric": "Could not register the MCP server."
+  },
   "sync": {
     "overview": "Overview",
     "needsReview": "Needs review",

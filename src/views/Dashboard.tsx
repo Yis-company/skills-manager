@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { AgentControlSetupCard } from "../components/AgentControlSetupCard";
 import { CreatorBadge } from "../components/CreatorBadge";
+import { McpRegisterCard } from "../components/McpRegisterCard";
 import { useApp } from "../context/AppContext";
 import { skillCreator } from "../lib/skillCreator";
 
@@ -54,6 +55,7 @@ export function Dashboard() {
       </div>
 
       <AgentControlSetupCard />
+      <McpRegisterCard />
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3.5">

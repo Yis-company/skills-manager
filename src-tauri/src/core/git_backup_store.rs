@@ -22,17 +22,25 @@ pub(crate) fn sync_engine_pref(store: &SkillStore) {
     git2_engine::set_preference(git2_enabled, store.proxy_url());
 }
 
-/// Resolve the device name (§4.3 设备命名): the persisted setting, or a
-/// hostname-derived default that is persisted on first use so it stays stable
-/// across sessions.
-pub(crate) fn effective_device_name(store: &SkillStore) -> String {
-    let saved = store
+fn saved_device_name(store: &SkillStore) -> Option<String> {
+    store
         .get_setting("backup_device_name")
         .ok()
         .flatten()
         .map(|v| git_backup::sanitize_device_name(&v))
-        .filter(|v| !v.is_empty());
-    if let Some(name) = saved {
+        .filter(|v| !v.is_empty())
+}
+
+/// [`effective_device_name`] for a read: the default is not saved.
+pub(crate) fn device_name(store: &SkillStore) -> String {
+    saved_device_name(store).unwrap_or_else(git_backup::default_device_name)
+}
+
+/// Resolve the device name (§4.3 设备命名): the persisted setting, or a
+/// hostname-derived default that is persisted on first use so it stays stable
+/// across sessions.
+pub(crate) fn effective_device_name(store: &SkillStore) -> String {
+    if let Some(name) = saved_device_name(store) {
         return name;
     }
     let name = git_backup::default_device_name();

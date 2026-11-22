@@ -14,6 +14,9 @@ mod test_fixtures;
 mod types;
 
 pub use agents::*;
+pub(crate) use agents_model::{
+    agent_skill_configs, agent_skill_groups, available_agent_keys, is_copy_project,
+};
 pub use center_sync::*;
 pub use crud::*;
 pub use deploy_mode::*;

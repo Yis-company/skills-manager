@@ -9,6 +9,7 @@ mod catalog;
 mod model;
 mod store;
 
+pub use adapters::{register_self, Client, SELF_SERVER_NAME};
 pub use model::{Definition, DefinitionInput, McpsRequest};
 
 use crate::core::{error::AppError, host::HostCtx};
@@ -34,6 +35,24 @@ pub fn validate_portable(value: &Value) -> Result<(), AppError> {
         source: definition.source,
     };
     store::validate_portable_input(&input)
+}
+
+/// Up to `limit` readable Library definitions with an ID after `after`, by
+/// ID, as ID and name. Only definitions up to the last one returned are read.
+pub fn names_after(after: Option<&str>, limit: usize) -> Result<Vec<(String, String)>, AppError> {
+    Ok(store::page_after(after, limit)?
+        .into_iter()
+        .map(|definition| (definition.id, definition.name))
+        .collect())
+}
+
+/// Whether an interrupted MCP change on this host waits for `recover`.
+/// Any one blocks every MCP apply, as [`adapters::apply`] refuses then.
+/// Read-only: it never recovers, and loads no journal.
+pub fn recovery_pending(ctx: &HostCtx) -> Result<bool, AppError> {
+    ctx.store
+        .resource_state_has_any("mcps_recovery")
+        .map_err(AppError::db)
 }
 
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {

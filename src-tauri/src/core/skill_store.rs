@@ -191,6 +191,43 @@ impl SkillStore {
         rows.map(|raw| Ok(serde_json::from_str(&raw?)?)).collect()
     }
 
+    /// Whether any document of `kind` exists.
+    pub fn resource_state_has_any(&self, kind: &str) -> Result<bool> {
+        use rusqlite::OptionalExtension;
+        let conn = self.conn.lock().unwrap();
+        if !resource_state_exists(&conn)? {
+            return Ok(false);
+        }
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM resource_state WHERE kind = ?1 LIMIT 1",
+                [kind],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// Whether any document of `kind` has a top-level `status` in `statuses`.
+    pub fn resource_state_any_status(&self, kind: &str, statuses: &[&str]) -> Result<bool> {
+        use rusqlite::OptionalExtension;
+        let conn = self.conn.lock().unwrap();
+        if !resource_state_exists(&conn)? {
+            return Ok(false);
+        }
+        let statuses = serde_json::to_string(statuses)?;
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM resource_state WHERE kind = ?1
+                 AND json_extract(value, '$.status') IN (SELECT value FROM json_each(?2))
+                 LIMIT 1",
+                params![kind, statuses],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     pub fn resource_state_put(
         &self,
         kind: &str,
@@ -239,6 +276,27 @@ impl SkillStore {
         )?;
         tx.commit()?;
         Ok(true)
+    }
+
+    /// Delete at most `limit` documents of `kind` whose `settled_at` (epoch
+    /// milliseconds) is before `before`. A document without one is kept.
+    pub fn resource_state_delete_settled_before(
+        &self,
+        kind: &str,
+        before: i64,
+        limit: usize,
+    ) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        if !resource_state_exists(&conn)? {
+            return Ok(0);
+        }
+        Ok(conn.execute(
+            "DELETE FROM resource_state WHERE rowid IN (
+                 SELECT rowid FROM resource_state
+                 WHERE kind = ?1 AND json_extract(value, '$.settled_at') < ?2 LIMIT ?3
+             )",
+            params![kind, before, limit as i64],
+        )?)
     }
 
     pub fn resource_state_delete(&self, kind: &str, id: &str) -> Result<()> {
@@ -370,6 +428,36 @@ impl SkillStore {
         )?;
         let rows = stmt.query_map([], map_skill_row)?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Up to `limit` skills by ID, starting after `after`.
+    pub fn get_skills_after(&self, after: Option<&str>, limit: usize) -> Result<Vec<SkillRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, description, source_type, source_ref, source_ref_resolved, source_subpath,
+                    source_branch, source_revision, remote_revision, central_path, content_hash, enabled,
+                    created_at, updated_at, status, update_status, last_checked_at, last_check_error
+             FROM skills WHERE id > ?1 ORDER BY id LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(
+            params![after.unwrap_or_default(), limit as i64],
+            map_skill_row,
+        )?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// The Skills with these IDs, in one query; an ID with none is left out.
+    pub fn get_skills_by_ids(&self, ids: &[&str]) -> Result<Vec<SkillRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, description, source_type, source_ref, source_ref_resolved, source_subpath,
+                    source_branch, source_revision, remote_revision, central_path, content_hash, enabled,
+                    created_at, updated_at, status, update_status, last_checked_at, last_check_error
+             FROM skills WHERE id IN (SELECT value FROM json_each(?1))",
+        )?;
+        let ids = serde_json::to_string(ids)?;
+        let rows = stmt.query_map(params![ids], map_skill_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn get_skill_by_id(&self, id: &str) -> Result<Option<SkillRecord>> {
@@ -2154,5 +2242,83 @@ mod project_agent_tests {
         store.delete_project("p1").unwrap();
         assert!(overrides_of("p1").is_empty());
         assert_eq!(overrides_of("p2").len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod resource_state_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn pruning_deletes_only_old_settled_documents_and_at_most_the_limit() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        for n in 0..3 {
+            let old = serde_json::json!({ "version": 2, "settled_at": 10 + n });
+            store
+                .resource_state_put("receipt", &format!("old-{n}"), &old)
+                .unwrap();
+        }
+        let planted = [
+            (
+                "new",
+                serde_json::json!({ "version": 2, "settled_at": 500 }),
+            ),
+            ("unsettled", serde_json::json!({ "version": 1 })),
+        ];
+        for (id, value) in &planted {
+            store.resource_state_put("receipt", id, value).unwrap();
+        }
+        store
+            .resource_state_put("other", "old", &serde_json::json!({ "settled_at": 1 }))
+            .unwrap();
+        let kept = |kind: &str| -> Vec<String> {
+            store
+                .resource_state_list(kind)
+                .unwrap()
+                .iter()
+                .map(|value| value.to_string())
+                .collect()
+        };
+
+        assert_eq!(
+            store
+                .resource_state_delete_settled_before("receipt", 100, 2)
+                .unwrap(),
+            2
+        );
+        assert_eq!(kept("receipt").len(), 3);
+        assert_eq!(
+            store
+                .resource_state_delete_settled_before("receipt", 100, 2)
+                .unwrap(),
+            1
+        );
+
+        let left = kept("receipt");
+        assert_eq!(left.len(), 2, "{left:?}");
+        assert!(left.iter().any(|value| value.contains("500")), "{left:?}");
+        assert!(
+            left.iter().any(|value| !value.contains("settled_at")),
+            "{left:?}"
+        );
+        assert_eq!(kept("other").len(), 1);
+    }
+
+    #[test]
+    fn skills_are_looked_up_by_id_in_one_call() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        for id in ["a", "b", "c"] {
+            let skill = crate::core::test_support::sample_skill(id, id, &tmp.path().join(id));
+            store.insert_skill(&skill).unwrap();
+        }
+
+        let found = store.get_skills_by_ids(&["c", "a", "gone"]).unwrap();
+
+        let mut ids: Vec<&str> = found.iter().map(|skill| skill.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["a", "c"]);
     }
 }

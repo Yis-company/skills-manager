@@ -9,7 +9,7 @@ use serde::Serialize;
 use super::audit_log::AuditDraft;
 use super::error::{AppError, ErrorKind};
 use super::git_backup_store::{
-    apply_device_identity, effective_device_name, reconcile_skills_index_unlocked,
+    apply_device_identity, device_name, reconcile_skills_index_unlocked,
 };
 use super::host::HostCtx;
 use super::merge::{self, resolve::ResolveAction};
@@ -168,7 +168,7 @@ pub fn sync_status(store: &SkillStore) -> SyncStatus {
     SyncStatus {
         state,
         reason,
-        host: effective_device_name(store),
+        host: device_name(store),
         remote,
         last_sync: store
             .get_setting(SETTING_LAST_SYNC_AT)
@@ -224,7 +224,7 @@ pub fn conflicts(store: &SkillStore) -> Vec<SyncConflict> {
                 .or(row.theirs_path)
                 .unwrap_or_else(|| row.skill_id.clone()),
             other_host: author(&row.theirs_commit).unwrap_or_default(),
-            this_host: recorder(&row.skill_id).unwrap_or_else(|| effective_device_name(store)),
+            this_host: recorder(&row.skill_id).unwrap_or_else(|| device_name(store)),
             skill_id: row.skill_id,
         })
         .collect()

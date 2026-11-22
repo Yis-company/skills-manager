@@ -56,6 +56,13 @@ pub fn bridge_path() -> PathBuf {
     bridge_dir().join(BRIDGE_BIN_NAME)
 }
 
+/// The bridge, only when it is stamped as `app_version`: an unstamped,
+/// stale or absent binary is never handed out to run.
+pub fn current_bridge(app_version: &str) -> Option<PathBuf> {
+    let path = bridge_path();
+    (read_stamp().as_deref() == Some(app_version) && path.is_file()).then_some(path)
+}
+
 fn stamp_path() -> PathBuf {
     bridge_dir().join(".version")
 }
@@ -363,6 +370,7 @@ mod tests {
             Some("9.9.9"),
             "precondition: a good bridge exists"
         );
+        assert_eq!(current_bridge("9.9.9"), Some(bridge_path()));
 
         // The new app version ships a CLI that cannot run — a truncated copy,
         // a blocked binary, the wrong architecture.
@@ -379,6 +387,8 @@ mod tests {
             bridge_path().is_file(),
             "the old binary may well be unremovable; the stamp is what gates it"
         );
+        assert_eq!(current_bridge("9.9.9"), None);
+        assert_eq!(current_bridge("9.9.10"), None);
 
         central_repo::set_test_home_dir_override(None);
     }

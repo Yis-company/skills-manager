@@ -12,6 +12,7 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -418,6 +419,23 @@ fn installed_version(cli_path: &str) -> Option<&str> {
     let (root, version) = dir.rsplit_once('/')?;
     root.ends_with("/.skills-manager/remote-cli")
         .then_some(version)
+}
+
+/// The path that keeps launching this CLI across updates: for a CLI this
+/// installer put at `remote-cli/<version>` that `current` points at, the
+/// same file through `remote-cli/current`; otherwise `exe` itself.
+pub fn stable_cli_path(exe: &Path) -> PathBuf {
+    through_current(exe).unwrap_or_else(|| exe.to_path_buf())
+}
+
+fn through_current(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    let root = dir
+        .parent()
+        .filter(|root| root.ends_with(".skills-manager/remote-cli"))?;
+    let current = root.join("current");
+    let file = exe.file_name()?;
+    (current.canonicalize().ok()? == dir.canonicalize().ok()?).then(|| current.join(file))
 }
 
 /// Whether the CLI this app installed on `host` is another version, so the
@@ -1143,5 +1161,28 @@ mod tests {
         let output = run_installer(home.path(), "1.2.3", &fixture_cli("1.2.3"));
         assert_eq!(output.status.code(), Some(44));
         assert!(lock.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_installed_cli_is_registered_by_its_current_path_so_updates_keep_working() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join(".skills-manager/remote-cli");
+        std::fs::create_dir_all(root.join("1.44.0")).unwrap();
+        std::fs::write(root.join("1.44.0/skills-manager-cli"), "").unwrap();
+        std::os::unix::fs::symlink("1.44.0", root.join("current")).unwrap();
+        let resolved = root
+            .join("1.44.0/skills-manager-cli")
+            .canonicalize()
+            .unwrap();
+        let elsewhere = home.path().join("bin/skills-manager-cli");
+
+        assert_eq!(
+            super::stable_cli_path(&resolved),
+            root.canonicalize()
+                .unwrap()
+                .join("current/skills-manager-cli")
+        );
+        assert_eq!(super::stable_cli_path(&elsewhere), elsewhere);
     }
 }
