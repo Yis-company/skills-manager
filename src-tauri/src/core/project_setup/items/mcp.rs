@@ -190,9 +190,14 @@ fn mcp_chunk(run: &Run, agent: &str, target: &Value, items: &[&SetupItem]) -> Ve
     } else if !eligible.is_empty() {
         let eligible_ids: Vec<&str> = eligible.iter().map(|i| ids[*i]).collect();
         let eligible_items: Vec<&SetupItem> = eligible.iter().map(|i| items[*i]).collect();
-        // None when what the stored preview writes is no longer approved.
+        // None when the stored preview no longer only adds or updates, or
+        // what it writes is no longer approved: the destination changed
+        // since the dry run.
         let applied = preview(&eligible_ids, false).and_then(|stored| {
-            if !still_approved(ctx, target, agent, &eligible_items)? {
+            let clean = change_kinds(&stored)
+                .iter()
+                .all(|kind| matches!(*kind, "add" | "update"));
+            if !clean || !still_approved(ctx, target, agent, &eligible_items)? {
                 return Ok(None);
             }
             mcps::dispatch(
