@@ -257,7 +257,7 @@ mod tests {
             .store
             .resource_state_put("project_setup_receipt", "op-1", &claimed)
             .unwrap();
-        std::fs::remove_file(fixture.path(".a/skills/review")).unwrap();
+        crate::core::sync_engine::remove_target(&fixture.path(".a/skills/review")).unwrap();
         let before = (destinations(&fixture), receipt(&fixture, "op-1"));
 
         let inspected = inspect(
@@ -295,7 +295,7 @@ mod tests {
         let fixture = Fixture::new();
         one_of_each(&fixture);
         fixture.apply("op-1").unwrap();
-        std::fs::remove_file(fixture.path(".a/skills/review")).unwrap();
+        crate::core::sync_engine::remove_target(&fixture.path(".a/skills/review")).unwrap();
 
         let inspected = inspect(&fixture, json!({ "operation_id": "op-never" })).unwrap();
 
@@ -310,7 +310,7 @@ mod tests {
         let fixture = Fixture::new();
         one_of_each(&fixture);
         fixture.apply("op-1").unwrap();
-        std::fs::remove_file(fixture.path(".a/skills/review")).unwrap();
+        crate::core::sync_engine::remove_target(&fixture.path(".a/skills/review")).unwrap();
 
         let inspected = inspect(&fixture, json!({ "operation_id": "op-1" })).unwrap();
 

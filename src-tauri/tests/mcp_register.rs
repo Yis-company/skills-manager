@@ -12,32 +12,36 @@ use tempfile::TempDir;
 const CLI: &str = env!("CARGO_BIN_EXE_skills-manager-cli");
 
 struct TestHost {
-    tmp: TempDir,
+    _tmp: TempDir,
+    /// The temporary folder without links: writes refuse them, and macOS
+    /// reaches its temporary folder through the /var link.
+    root: PathBuf,
 }
 
 impl TestHost {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("home")).unwrap();
-        std::fs::create_dir_all(tmp.path().join("codex")).unwrap();
-        Self { tmp }
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        std::fs::create_dir_all(root.join("codex")).unwrap();
+        Self { _tmp: tmp, root }
     }
 
     fn claude_config(&self) -> PathBuf {
-        self.tmp.path().join("home/.claude.json")
+        self.root.join("home/.claude.json")
     }
 
     fn codex_config(&self) -> PathBuf {
-        self.tmp.path().join("codex/config.toml")
+        self.root.join("codex/config.toml")
     }
 
     fn register(&self, client: &str) -> Output {
         Command::new(CLI)
             .arg("--base-dir")
-            .arg(self.tmp.path().join("base"))
+            .arg(self.root.join("base"))
             .args(["--json", "mcp", "register", "--client", client])
-            .env("HOME", self.tmp.path().join("home"))
-            .env("CODEX_HOME", self.tmp.path().join("codex"))
+            .env("HOME", self.root.join("home"))
+            .env("CODEX_HOME", self.root.join("codex"))
             .env_remove("XDG_CONFIG_HOME")
             .env_remove("XDG_DATA_HOME")
             .output()

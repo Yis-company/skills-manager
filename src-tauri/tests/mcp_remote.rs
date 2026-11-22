@@ -42,23 +42,27 @@ fn project(id: &str, path: &Path) -> ProjectRecord {
 
 /// A host with its own base dir, HOME and an `app` checkout.
 struct TestHost {
-    tmp: TempDir,
+    _tmp: TempDir,
+    /// The temporary folder without links: writes refuse them, and macOS
+    /// reaches its temporary folder through the /var link.
+    root: PathBuf,
 }
 
 impl TestHost {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("home/.claude")).unwrap();
-        std::fs::create_dir_all(tmp.path().join("work/app")).unwrap();
-        Self { tmp }
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("home/.claude")).unwrap();
+        std::fs::create_dir_all(root.join("work/app")).unwrap();
+        Self { _tmp: tmp, root }
     }
 
     fn base(&self) -> PathBuf {
-        self.tmp.path().join("base")
+        self.root.join("base")
     }
 
     fn checkout(&self) -> PathBuf {
-        self.tmp.path().join("work/app").canonicalize().unwrap()
+        self.root.join("work/app").canonicalize().unwrap()
     }
 
     fn store(&self) -> SkillStore {
@@ -68,7 +72,7 @@ impl TestHost {
 
     /// The real CLI on this test_host, whatever host it is asked for.
     fn cli(&self) -> impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static {
-        let (base, home) = (self.base(), self.tmp.path().join("home"));
+        let (base, home) = (self.base(), self.root.join("home"));
         move |_: &RemoteHostRecord, args: &[&str]| {
             let mut cmd = Command::new(CLI);
             cmd.arg("--base-dir")
@@ -412,9 +416,9 @@ fn losing_once(
     starts: Arc<AtomicUsize>,
 ) -> impl Fn(&RemoteHostRecord, &[&str]) -> Command + Send + Sync + 'static {
     let direct = remote.cli();
-    let (base, home) = (remote.base(), remote.tmp.path().join("home"));
+    let (base, home) = (remote.base(), remote.root.join("home"));
     // Released up front: the fixture closes its server as soon as it is done.
-    let release = remote.tmp.path().join("release");
+    let release = remote.root.join("release");
     std::fs::write(&release, "").unwrap();
     move |host: &RemoteHostRecord, args: &[&str]| {
         if starts.fetch_add(1, Ordering::SeqCst) > 0 {
@@ -483,7 +487,7 @@ fn a_lost_reply_to_a_proposal_is_asked_for_again_once() {
         .iter()
         .map(|item| json!({ "kind": item["kind"], "id": item["id"], "agents": item["agents"] }))
         .collect();
-    let fresh = remote.tmp.path().join("work/fresh");
+    let fresh = remote.root.join("work/fresh");
     std::fs::create_dir_all(&fresh).unwrap();
     let starts = Arc::new(AtomicUsize::new(0));
 

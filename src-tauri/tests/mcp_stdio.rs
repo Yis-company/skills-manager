@@ -15,25 +15,29 @@ use tempfile::TempDir;
 const CLI: &str = env!("CARGO_BIN_EXE_skills-manager-cli");
 
 struct TestHost {
-    tmp: TempDir,
+    _tmp: TempDir,
+    /// The temporary folder without links: writes refuse them, and macOS
+    /// reaches its temporary folder through the /var link.
+    root: PathBuf,
 }
 
 impl TestHost {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("home")).unwrap();
-        Self { tmp }
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        Self { _tmp: tmp, root }
     }
 
     fn base(&self) -> PathBuf {
-        self.tmp.path().join("base")
+        self.root.join("base")
     }
 
     fn cli(&self) -> Command {
         let mut cmd = Command::new(CLI);
         cmd.arg("--base-dir")
             .arg(self.base())
-            .env("HOME", self.tmp.path().join("home"))
+            .env("HOME", self.root.join("home"))
             .env_remove("XDG_CONFIG_HOME")
             .env_remove("XDG_DATA_HOME");
         cmd
@@ -239,9 +243,9 @@ fn a_malformed_line_is_answered_and_the_stream_goes_on() {
 #[test]
 fn a_cold_start_discovery_writes_nothing() {
     let test_host = TestHost::new();
-    let checkout = test_host.tmp.path().join("checkout");
+    let checkout = test_host.root.join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
-    let before = snapshot(test_host.tmp.path());
+    let before = snapshot(&test_host.root);
 
     let lines = test_host.mcp(&[
         request(1, "initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "x" } })),
@@ -250,7 +254,7 @@ fn a_cold_start_discovery_writes_nothing() {
     ]);
 
     assert_eq!(
-        changed(&before, &snapshot(test_host.tmp.path())),
+        changed(&before, &snapshot(&test_host.root)),
         Vec::<PathBuf>::new()
     );
     assert!(!test_host.base().exists());
@@ -283,14 +287,14 @@ fn discovery_on_an_existing_library_leaves_it_untouched() {
         String::from_utf8_lossy(&made.stderr)
     );
     assert!(test_host.base().exists());
-    let checkout = test_host.tmp.path().join("checkout");
+    let checkout = test_host.root.join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
-    let before = snapshot(test_host.tmp.path());
+    let before = snapshot(&test_host.root);
 
     let lines = test_host.mcp(&[discover(1, &checkout)]);
 
     assert_eq!(
-        changed(&before, &snapshot(test_host.tmp.path())),
+        changed(&before, &snapshot(&test_host.root)),
         Vec::<PathBuf>::new()
     );
     assert_eq!(reply(&lines, 1)["result"]["isError"], false);
@@ -336,7 +340,7 @@ fn apply_sets_up_a_saved_mcp_connection_and_inspection_reads_it_back_without_wri
     assert!(saved.status.success());
     let definition: Value = serde_json::from_slice(&saved.stdout).unwrap();
     let definition = &definition["definition"];
-    let checkout = test_host.tmp.path().join("checkout");
+    let checkout = test_host.root.join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
     let store = SkillStore::new(&test_host.base().join("skills-manager.db")).unwrap();
     store
@@ -426,7 +430,7 @@ fn a_first_setup_is_proposed_then_confirmed_through_apply() {
         .unwrap();
     assert!(saved.status.success());
     let definition: Value = serde_json::from_slice(&saved.stdout).unwrap();
-    let checkout = test_host.tmp.path().join("checkout");
+    let checkout = test_host.root.join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
     let apply = |arguments: Value| {
         let lines = test_host.mcp(&[request(
@@ -482,7 +486,7 @@ fn a_setup_confirmed_at_cold_start_is_discovered_in_the_same_session() {
             std::fs::remove_file(path).unwrap();
         }
     }
-    let checkout = test_host.tmp.path().join("checkout");
+    let checkout = test_host.root.join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
     let apply = |id, arguments: Value| {
         request(
@@ -518,7 +522,7 @@ fn a_setup_confirmed_at_cold_start_is_discovered_in_the_same_session() {
 #[test]
 fn an_apply_with_nothing_to_apply_is_refused_without_creating_the_library() {
     let test_host = TestHost::new();
-    let checkout = test_host.tmp.path().join("checkout");
+    let checkout = test_host.root.join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
 
     let lines = test_host.mcp(&[request(

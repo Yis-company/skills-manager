@@ -2565,7 +2565,7 @@ mod tests {
     fn a_config_saved_by_its_client_after_it_was_read_is_never_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = ConfigTarget {
-            path: dir.path().join("config.json"),
+            path: dir.path().canonicalize().unwrap().join("config.json"),
             format: Format::Json,
             entry_path: vec!["mcpServers"],
             agent: "claude_code".into(),

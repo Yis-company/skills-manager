@@ -24,7 +24,9 @@ impl Drop for TestRepo {
 pub(crate) fn test_repo() -> TestRepo {
     let lock = central_repo::test_base_dir_lock();
     let tmp = tempdir().unwrap();
-    let base = tmp.path().join("repo");
+    // Library writes refuse links in any ancestor, and macOS reaches its
+    // temporary folder through the /var link.
+    let base = tmp.path().canonicalize().unwrap().join("repo");
     central_repo::set_test_base_dir_override(Some(base.clone()));
     fs::create_dir_all(central_repo::skills_dir()).unwrap();
     let store = SkillStore::new(&base.join("test.db")).unwrap();
