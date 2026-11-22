@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use super::{AgentStep, Reason, Run, Status, Step};
+use super::{resolved, AgentStep, Reason, Run, Status, Step};
 use crate::commands::projects::{
     agent_skill_configs, ensure_safe_skill_relative_path, is_copy_project,
 };
@@ -76,19 +76,6 @@ pub(in crate::core::project_setup) fn inside(root: &Path, path: &Path) -> bool {
         .flat_map(Path::ancestors)
         .find_map(|dir| dir.canonicalize().ok())
         .is_some_and(|dir| dir.starts_with(&root))
-}
-
-/// Where `path` leads: its nearest existing folder resolved through links,
-/// with the parts below it that do not exist yet.
-fn resolved(path: &Path) -> PathBuf {
-    for dir in path.ancestors() {
-        if let Ok(real) = dir.canonicalize() {
-            return path
-                .strip_prefix(dir)
-                .map_or_else(|_| path.to_path_buf(), |rest| real.join(rest));
-        }
-    }
-    path.to_path_buf()
 }
 
 type SkillGroup = (AgentSkillConfig, Vec<String>);

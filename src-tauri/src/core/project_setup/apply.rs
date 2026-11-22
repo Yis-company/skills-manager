@@ -898,6 +898,39 @@ pub(crate) mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn an_entry_file_linked_to_a_bundle_file_needs_its_readers_approved() {
+        let fixture = Fixture::new();
+        let saved = fixture.request(
+            "instructions_request",
+            json!({ "action": "save", "name": "Rules", "files": { "CLAUDE.md": "rules\n" } }),
+        );
+        let id = saved["item"]["id"].as_str().unwrap();
+        fixture.save_setup(json!([{ "kind": "instruction", "id": id, "agents": ["claude_code"] }]));
+        std::os::unix::fs::symlink("CLAUDE.md", fixture.path("AGENTS.md")).unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(
+            item(&result, "instruction")["reason"],
+            "unapproved_agents",
+            "{result}"
+        );
+        let decision = &result["proposal"]["decisions"][0];
+        assert!(
+            decision["proposed"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("codex")),
+            "{result}"
+        );
+        assert_eq!(decision["paths"], json!(["AGENTS.md"]));
+        assert!(!fixture.path("CLAUDE.md").exists(), "nothing was written");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_link_to_another_agents_copy_is_never_counted_as_no_change() {
         let fixture = Fixture::new();
         with_agent_b(&fixture);

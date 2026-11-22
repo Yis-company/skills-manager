@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-use super::{missing, AgentStep, Reason, Run, Status, Step};
+use std::path::{Path, PathBuf};
+
+use super::{missing, resolved, AgentStep, Reason, Run, Status, Step};
 use crate::core::error::AppError;
 use crate::core::instructions;
 use crate::core::project_setup::{ItemKind, SetupItem};
@@ -51,46 +53,67 @@ pub(in crate::core::project_setup) fn instruction_deletes(
     Ok(files)
 }
 
-/// Every agent that reads a file the bundle writes. A file such as root
-/// `AGENTS.md` is read by several agents, so writing it for one sets it up
-/// for all of them.
-pub(super) fn instruction_readers(run: &Run, item: &SetupItem) -> Result<Vec<String>, AppError> {
+/// Each native path that leads to a file the bundle writes, with the agents
+/// that read it: the bundle's own paths, and any link at the checkout root
+/// that resolves to one of them, such as `AGENTS.md` linked to `CLAUDE.md`.
+fn entry_paths(run: &Run, item: &SetupItem) -> Result<Vec<(String, Vec<String>)>, AppError> {
     let Some(bundle) = run.instruction(&item.id)? else {
         return Ok(Vec::new());
     };
-    let mut readers = Vec::new();
-    for path in bundle["files"]
+    let root = Path::new(&run.project.path);
+    let written: Vec<&String> = bundle["files"]
         .as_object()
         .into_iter()
         .flatten()
         .map(|(path, _)| path)
-    {
-        for reader in instructions::project_file_readers(path) {
-            if !readers.iter().any(|known| known == reader) {
-                readers.push(reader.to_owned());
+        .collect();
+    let targets: Vec<PathBuf> = written.iter().map(|p| resolved(&root.join(p))).collect();
+    let links = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_symlink()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| !written.contains(&name))
+        .filter(|name| targets.contains(&resolved(&root.join(name))));
+    Ok(written
+        .iter()
+        .map(|path| path.to_string())
+        .chain(links)
+        .map(|path| {
+            let readers = instructions::project_file_readers(&path)
+                .map(str::to_owned)
+                .collect();
+            (path, readers)
+        })
+        .collect())
+}
+
+/// Every agent that reads a file the bundle writes. A file such as root
+/// `AGENTS.md` is read by several agents, so writing it for one sets it up
+/// for all of them.
+pub(super) fn instruction_readers(run: &Run, item: &SetupItem) -> Result<Vec<String>, AppError> {
+    let mut readers: Vec<String> = Vec::new();
+    for (_, agents) in entry_paths(run, item)? {
+        for reader in agents {
+            if !readers.contains(&reader) {
+                readers.push(reader);
             }
         }
     }
     Ok(readers)
 }
 
-/// The bundle's files that an agent outside the item also reads.
+/// The native paths to the bundle's files that an agent outside the item
+/// also reads.
 pub(super) fn instruction_shared_paths(
     run: &Run,
     item: &SetupItem,
 ) -> Result<Vec<String>, AppError> {
-    let Some(bundle) = run.instruction(&item.id)? else {
-        return Ok(Vec::new());
-    };
-    Ok(bundle["files"]
-        .as_object()
+    Ok(entry_paths(run, item)?
         .into_iter()
-        .flatten()
-        .map(|(path, _)| path.as_str())
-        .filter(|path| {
-            instructions::project_file_readers(path).any(|r| !item.agents.iter().any(|a| a == r))
-        })
-        .map(str::to_owned)
+        .filter(|(_, readers)| readers.iter().any(|r| !item.agents.contains(r)))
+        .map(|(path, _)| path)
         .collect())
 }
 

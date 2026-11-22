@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -299,6 +300,33 @@ pub(super) fn counts(items: &[ItemResult], statuses: &[Status]) -> Value {
         })
         .collect::<serde_json::Map<_, _>>()
         .into()
+}
+
+/// Where `path` leads: its nearest existing ancestor resolved through links,
+/// with the parts below it that do not exist yet. A link to a file not
+/// created yet leads where it points.
+pub(super) fn resolved(path: &Path) -> PathBuf {
+    let mut path = path.to_path_buf();
+    for _ in 0..8 {
+        let dangling = path.canonicalize().is_err();
+        match std::fs::read_link(&path) {
+            Ok(target) if dangling => {
+                path = path
+                    .parent()
+                    .map_or(target.clone(), |dir| dir.join(&target));
+            }
+            _ => break,
+        }
+    }
+    let path = path.as_path();
+    for dir in path.ancestors() {
+        if let Ok(real) = dir.canonicalize() {
+            return path
+                .strip_prefix(dir)
+                .map_or_else(|_| path.to_path_buf(), |rest| real.join(rest));
+        }
+    }
+    path.to_path_buf()
 }
 
 /// Every agent in `lists`, sorted, each once.
