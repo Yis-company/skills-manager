@@ -2206,4 +2206,31 @@ pub(crate) mod tests {
         );
         assert!(resolves_to(&fixture.path(".a/skills/review"), &library));
     }
+
+    #[test]
+    fn discovery_skips_an_unreadable_mcp_definition() {
+        let fixture = Fixture::new();
+        fixture.mcp("docs");
+        let definitions = crate::core::resource_store::root().join("mcps");
+        std::fs::write(
+            definitions.join(format!("{}.json", uuid::Uuid::new_v4())),
+            "not json",
+        )
+        .unwrap();
+
+        let found = dispatch(
+            &fixture.ctx,
+            "project_setup_request",
+            &json!({ "request": { "action": "discover", "checkout_path": fixture.checkout } }),
+        )
+        .unwrap();
+
+        let names: Vec<&Value> = found["library"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| &item["name"])
+            .collect();
+        assert_eq!(names, [&json!("docs")], "{found}");
+    }
 }

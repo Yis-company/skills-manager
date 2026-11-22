@@ -20,8 +20,9 @@ pub fn list(_ctx: &HostCtx) -> Result<Vec<Definition>, AppError> {
     Ok(values)
 }
 
-/// Up to `limit` definitions with an ID after `after`, by ID. Only those
-/// are read.
+/// Up to `limit` readable definitions with an ID after `after`, by ID. A
+/// definition that cannot be read is left out; only definitions up to the
+/// last one returned are read.
 pub fn page_after(after: Option<&str>, limit: usize) -> Result<Vec<Definition>, AppError> {
     let mut files: Vec<(String, PathBuf)> = files()?
         .into_iter()
@@ -29,8 +30,11 @@ pub fn page_after(after: Option<&str>, limit: usize) -> Result<Vec<Definition>, 
         .filter(|(id, _)| after.is_none_or(|after| id.as_str() > after))
         .collect();
     files.sort();
-    files.truncate(limit);
-    files.iter().map(|(_, file)| read(file)).collect()
+    Ok(files
+        .iter()
+        .filter_map(|(_, file)| read(file).ok())
+        .take(limit)
+        .collect())
 }
 
 /// Every definition file in the library, unread.
