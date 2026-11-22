@@ -32,15 +32,53 @@ pub(in crate::core::project_setup) fn effective_values(
         .iter()
         .filter(|a| run.supports(ItemKind::Mcp, a))
     {
-        let mut value = mcp_value(definition);
-        if let Some(server) = run.mcp_override(agent, &item.id)?.map(|o| &o["server"]) {
-            for (key, field) in server.as_object().into_iter().flatten() {
-                value["server"][key] = field.clone();
-            }
-        }
+        let value = effective_value(definition, run.mcp_override(agent, &item.id)?);
         values.insert(agent.clone(), value);
     }
     Ok(values.into())
+}
+
+/// What a deployment of `definition` runs: the Library's value with the
+/// deployment's override, if any.
+fn effective_value(definition: &Value, override_config: Option<&Value>) -> Value {
+    let mut value = mcp_value(definition);
+    if let Some(server) = override_config.map(|o| &o["server"]) {
+        for (key, field) in server.as_object().into_iter().flatten() {
+            value["server"][key] = field.clone();
+        }
+    }
+    value
+}
+
+/// Whether `agent`'s approval of each item still covers what it runs now.
+/// Read after its preview is stored: that preview pins the definition
+/// revision and the deployment it was built from, and apply refuses it if
+/// either changes later.
+fn still_approved(
+    ctx: &HostCtx,
+    target: &Value,
+    agent: &str,
+    items: &[&SetupItem],
+) -> Result<bool, AppError> {
+    let definitions = mcps::dispatch(ctx, json!({ "action": "list" }))?;
+    let deployments = mcps::dispatch(ctx, json!({ "action": "deployments", "target": target }))?;
+    let listed = |reply: &Value, key: &str| reply[key].as_array().cloned().unwrap_or_default();
+    let (definitions, deployments) = (
+        listed(&definitions, "definitions"),
+        listed(&deployments, "deployments"),
+    );
+    Ok(items.iter().all(|item| {
+        let Some(definition) = definitions.iter().find(|d| d["id"] == item.id.as_str()) else {
+            return false;
+        };
+        let override_config = deployments
+            .iter()
+            .find(|d| d["definitionId"] == item.id.as_str())
+            .map(|d| &d["overrideConfig"])
+            .filter(|o| !o.is_null());
+        item.approved.as_ref().and_then(|a| a.get(agent))
+            == Some(&effective_value(definition, override_config))
+    }))
 }
 
 /// The decision the item's approval needs now, if any: every agent's
@@ -106,13 +144,16 @@ pub(super) fn apply_mcps(run: &Run, agent: &str, batch: &[(usize, &SetupItem)]) 
         Ok(true) => return vec![Step::because(Status::Blocked, "pending_recovery"); batch.len()],
         Err(error) => return vec![Step::error(error); batch.len()],
     }
-    let ids: Vec<&str> = batch.iter().map(|(_, item)| item.id.as_str()).collect();
-    ids.chunks(MCP_BATCH)
-        .flat_map(|chunk| mcp_chunk(run.ctx, &target, chunk, run.write))
+    let items: Vec<&SetupItem> = batch.iter().map(|(_, item)| *item).collect();
+    items
+        .chunks(MCP_BATCH)
+        .flat_map(|chunk| mcp_chunk(run, agent, &target, chunk))
         .collect()
 }
 
-fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<Step> {
+fn mcp_chunk(run: &Run, agent: &str, target: &Value, items: &[&SetupItem]) -> Vec<Step> {
+    let (ctx, write) = (run.ctx, run.write);
+    let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
     let preview = |ids: &[&str], dry_run: bool| {
         let operations: Vec<Value> = ids
             .iter()
@@ -124,13 +165,13 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<St
                     "operations": operations }),
         )
     };
-    let planned = match preview(ids, true) {
+    let planned = match preview(&ids, true) {
         Ok(planned) => planned,
         // One connection the preview refuses fails the whole batch; find it.
         Err(_) if ids.len() > 1 => {
-            return ids
+            return items
                 .iter()
-                .flat_map(|id| mcp_chunk(ctx, target, &[id], write))
+                .flat_map(|item| mcp_chunk(run, agent, target, &[item]))
                 .collect()
         }
         Err(error) if error.kind == ErrorKind::InvalidInput => {
@@ -154,14 +195,21 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<St
         }
     } else if !eligible.is_empty() {
         let eligible_ids: Vec<&str> = eligible.iter().map(|i| ids[*i]).collect();
+        let eligible_items: Vec<&SetupItem> = eligible.iter().map(|i| items[*i]).collect();
+        // None when what the stored preview writes is no longer approved.
         let applied = preview(&eligible_ids, false).and_then(|stored| {
+            if !still_approved(ctx, target, agent, &eligible_items)? {
+                return Ok(None);
+            }
             mcps::dispatch(
                 ctx,
                 json!({ "action": "apply", "previewId": stored["previewId"] }),
             )
+            .map(Some)
         });
         let verified = match applied {
-            Ok(reply) if reply["applied"] == true => preview(&eligible_ids, true)
+            Ok(None) => Err(Step::because(Status::NeedsReview, "changed_since_check")),
+            Ok(Some(reply)) if reply["applied"] == true => preview(&eligible_ids, true)
                 .map(|checked| {
                     change_kinds(&checked)
                         .iter()
@@ -170,7 +218,7 @@ fn mcp_chunk(ctx: &HostCtx, target: &Value, ids: &[&str], write: bool) -> Vec<St
                 })
                 .map_err(Step::error),
             // A partial write leaves a recovery that blocks a retry.
-            Ok(_) => Err(Step::failed("apply_incomplete", false)),
+            Ok(Some(_)) => Err(Step::failed("apply_incomplete", false)),
             Err(error) => Err(Step::error(error)),
         };
         for (n, index) in eligible.iter().enumerate() {
@@ -199,4 +247,38 @@ fn change_kinds(preview: &Value) -> Vec<&str> {
             None => "",
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::apply_mcps;
+    use crate::core::project_setup::apply::tests::{approved, Fixture};
+    use crate::core::project_setup::items::{Run, Status};
+    use crate::core::project_setup::SetupItem;
+
+    #[test]
+    fn a_value_changed_after_its_approval_was_checked_is_not_applied() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        let item: SetupItem = serde_json::from_value(json!({
+            "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"], "approved": approved(&mcp),
+        }))
+        .unwrap();
+        let project = fixture.ctx.store.get_project_by_id("p1").unwrap().unwrap();
+        let run = Run::new(&fixture.ctx, project, true).unwrap();
+        // The approval was checked; then the Library's arguments changed.
+        fixture.request(
+            "mcps_request",
+            json!({ "action": "save", "expectedRevision": mcp["revision"], "definition": {
+                "id": mcp["id"], "name": "docs", "transport": "stdio",
+                "server": { "command": "npx", "args": ["-y", "other"] } } }),
+        );
+
+        let steps = apply_mcps(&run, "claude_code", &[(0, &item)]);
+
+        assert_eq!(steps[0].status, Status::NeedsReview);
+        assert!(!fixture.path(".mcp.json").exists());
+    }
 }

@@ -113,31 +113,18 @@ fn apply_for(
     deletes_approved: &[String],
 ) -> Result<Step, AppError> {
     let preview = |dry_run: bool| instruction_preview(run, item, agent, dry_run);
-    let planned = preview(true)?;
-    if changes(&planned, "conflict").next().is_some() {
-        return Ok(Step::because(Status::NeedsReview, "edited_here"));
-    }
-    // The Library is unchanged, but the file there was edited or removed.
-    if changes(&planned, "unchanged").any(|change| !in_place(change)) {
-        return Ok(Step::because(Status::NeedsReview, "edited_here"));
-    }
-    let deletes: Vec<String> = changes(&planned, "delete")
-        .map(|c| format!("{agent}:{}", c["path"].as_str().unwrap_or_default()))
-        .collect();
-    let approved: Vec<&String> = deletes_approved
-        .iter()
-        .filter(|file| file.starts_with(&format!("{agent}:")))
-        .collect();
-    if !deletes.is_empty() && deletes.iter().collect::<Vec<_>>() != approved {
-        return Ok(Step::asks(Status::NeedsReview, Reason::WouldDelete));
-    }
-    if all_in_place(&planned) {
-        return Ok(Step::of(Status::Unchanged));
+    if let Some(step) = review(&preview(true)?, agent, deletes_approved) {
+        return Ok(step);
     }
     if !run.write {
         return Ok(Step::of(Status::NotApplied));
     }
+    // The preview submitted is checked again: the destination may have
+    // changed since the dry run.
     let stored = preview(false)?;
+    if let Some(step) = review(&stored, agent, deletes_approved) {
+        return Ok(step);
+    }
     let applied = instructions::dispatch(
         run.ctx,
         json!({ "action": "apply", "preview_id": stored["preview_id"] }),
@@ -150,6 +137,29 @@ fn apply_for(
     } else {
         Step::failed("verification_failed", false)
     })
+}
+
+/// Why `preview` must not be applied for `agent`, if it must not: an edit
+/// there, a deletion not exactly approved, or nothing to do.
+fn review(preview: &Value, agent: &str, deletes_approved: &[String]) -> Option<Step> {
+    if changes(preview, "conflict").next().is_some() {
+        return Some(Step::because(Status::NeedsReview, "edited_here"));
+    }
+    // The Library is unchanged, but the file there was edited or removed.
+    if changes(preview, "unchanged").any(|change| !in_place(change)) {
+        return Some(Step::because(Status::NeedsReview, "edited_here"));
+    }
+    let deletes: Vec<String> = changes(preview, "delete")
+        .map(|c| format!("{agent}:{}", c["path"].as_str().unwrap_or_default()))
+        .collect();
+    let approved: Vec<&String> = deletes_approved
+        .iter()
+        .filter(|file| file.starts_with(&format!("{agent}:")))
+        .collect();
+    if !deletes.is_empty() && deletes.iter().collect::<Vec<_>>() != approved {
+        return Some(Step::asks(Status::NeedsReview, Reason::WouldDelete));
+    }
+    all_in_place(preview).then(|| Step::of(Status::Unchanged))
 }
 
 /// Whether a change's file is on disk as the Library has it, or absent when
