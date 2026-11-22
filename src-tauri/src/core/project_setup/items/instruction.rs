@@ -109,7 +109,7 @@ pub(super) fn apply_instruction(
     }
     let agents: Vec<&String> = instruction_agents(run, item).collect();
     if agents.is_empty() {
-        return whole(Step::because(Status::Blocked, "no_supported_agent"));
+        return whole(Step::because(Status::Blocked, Reason::NoSupportedAgent));
     }
     if instruction_readers(run, item)?
         .iter()
@@ -118,7 +118,7 @@ pub(super) fn apply_instruction(
         return whole(Step::asks(Status::NeedsReview, Reason::UnapprovedAgents));
     }
     if run.instruction_recovery_pending {
-        return whole(Step::because(Status::Blocked, "pending_recovery"));
+        return whole(Step::because(Status::Blocked, Reason::PendingRecovery));
     }
     // One agent's failure never hides what was written for the others.
     Ok(agents
@@ -178,11 +178,11 @@ fn apply_for(
 /// there, a deletion not exactly approved, or nothing to do.
 fn review(preview: &Value, agent: &str, deletes_approved: &[String]) -> Option<Step> {
     if changes(preview, "conflict").next().is_some() {
-        return Some(Step::because(Status::NeedsReview, "edited_here"));
+        return Some(Step::because(Status::NeedsReview, Reason::EditedHere));
     }
     // The Library is unchanged, but the file there was edited or removed.
     if changes(preview, "unchanged").any(|change| !in_place(change)) {
-        return Some(Step::because(Status::NeedsReview, "edited_here"));
+        return Some(Step::because(Status::NeedsReview, Reason::EditedHere));
     }
     let deletes: Vec<String> = changes(preview, "delete")
         .map(|c| format!("{agent}:{}", c["path"].as_str().unwrap_or_default()))

@@ -120,7 +120,7 @@ pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step
         .cloned()
         .collect();
     if agents.is_empty() {
-        return Err(Step::because(Status::Blocked, "no_supported_agent"));
+        return Err(Step::because(Status::Blocked, Reason::NoSupportedAgent));
     }
     let effective = effective_values(run, item, &definition).map_err(Step::error)?;
     match approval(item, &effective) {
@@ -135,7 +135,9 @@ pub(super) fn apply_mcps(run: &Run, agent: &str, batch: &[(usize, &SetupItem)]) 
     let target = json!({ "agentKey": agent, "projectId": run.project.id });
     match mcps::recovery_pending(run.ctx, agent, &run.project.id) {
         Ok(false) => {}
-        Ok(true) => return vec![Step::because(Status::Blocked, "pending_recovery"); batch.len()],
+        Ok(true) => {
+            return vec![Step::because(Status::Blocked, Reason::PendingRecovery); batch.len()]
+        }
         Err(error) => return vec![Step::error(error); batch.len()],
     }
     let items: Vec<&SetupItem> = batch.iter().map(|(_, item)| *item).collect();
@@ -178,7 +180,7 @@ fn mcp_chunk(run: &Run, agent: &str, target: &Value, items: &[&SetupItem]) -> Ve
         .map(|kind| match kind {
             "unchanged" => Some(Step::of(Status::Unchanged)),
             "add" | "update" => None,
-            _ => Some(Step::because(Status::NeedsReview, "edited_here")),
+            _ => Some(Step::because(Status::NeedsReview, Reason::EditedHere)),
         })
         .collect();
     steps.resize(ids.len(), Some(Step::failed("no_preview", false)));

@@ -133,7 +133,7 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Vec<AgentStep>,
     let (groups, _) = skill_targets(run, item);
     let readers = skill_readers(run, item);
     if groups.is_empty() {
-        return whole(Step::because(Status::Blocked, "no_supported_agent"));
+        return whole(Step::because(Status::Blocked, Reason::NoSupportedAgent));
     }
     if readers.iter().any(|reader| !item.agents.contains(reader)) {
         return whole(Step::asks(Status::NeedsReview, Reason::UnapprovedAgents));
@@ -178,7 +178,7 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Vec<AgentStep>,
         .map(|(path, expected, _)| slot(path, expected))
         .collect();
     if states.contains(&Slot::Different) {
-        return whole(Step::because(Status::NeedsReview, "edited_here"));
+        return whole(Step::because(Status::NeedsReview, Reason::EditedHere));
     }
     if states.iter().all(|state| *state == Slot::Same) {
         return whole(Step::of(Status::Unchanged));

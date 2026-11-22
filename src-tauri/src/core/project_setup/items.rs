@@ -101,7 +101,7 @@ impl Step {
     pub(super) fn asks(status: Status, reason: Reason) -> Self {
         Self {
             asks: Some(reason),
-            ..Self::because(status, reason.name())
+            ..Self::because(status, reason)
         }
     }
     /// A failure; `retryable` when applying again may succeed as it is.
@@ -499,5 +499,5 @@ fn worst(steps: impl IntoIterator<Item = Step>) -> Step {
     steps
         .into_iter()
         .max_by_key(|step| step.status)
-        .unwrap_or_else(|| Step::because(Status::Blocked, "no_supported_agent"))
+        .unwrap_or_else(|| Step::because(Status::Blocked, Reason::NoSupportedAgent))
 }

@@ -56,7 +56,8 @@ pub(super) struct Decision {
     replacement: Option<String>,
 }
 
-/// Why a decision is asked: a first setup, or an item result's reason.
+/// Why a decision is asked, a first setup or an item result's reason, or
+/// why an item was held with no decision to ask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Reason {
@@ -66,19 +67,15 @@ pub(super) enum Reason {
     UnapprovedAgents,
     WouldDelete,
     ConfirmedAbsent,
+    EditedHere,
+    PendingRecovery,
+    NoSupportedAgent,
 }
 
-impl Reason {
-    /// The name an item result's `reason` carries.
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            Self::FirstSetup => "first_setup",
-            Self::ApprovalNeeded => "approval_needed",
-            Self::ValueChanged => "value_changed",
-            Self::UnapprovedAgents => "unapproved_agents",
-            Self::WouldDelete => "would_delete",
-            Self::ConfirmedAbsent => "confirmed_absent",
-        }
+/// The name an item result's `reason` carries.
+impl From<Reason> for String {
+    fn from(reason: Reason) -> Self {
+        json!(reason).as_str().unwrap_or_default().to_owned()
     }
 }
 
