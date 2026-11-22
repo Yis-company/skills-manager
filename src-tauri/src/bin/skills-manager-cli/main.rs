@@ -64,8 +64,9 @@ enum Commands {
     /// Answer the app's commands over stdin/stdout, for a Skills Manager app
     /// on another machine connected over ssh.
     Serve(ServeArgs),
-    /// Run a local MCP server on stdin/stdout for coding agents. It opens the
-    /// library read-only.
+    /// Run a local MCP server on stdin/stdout for coding agents. Discovering
+    /// and inspecting a Project setup only read the library; applying one
+    /// writes.
     Mcp(McpArgs),
 }
 

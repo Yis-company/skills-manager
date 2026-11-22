@@ -100,26 +100,28 @@ pub fn run(mut reader: impl BufRead, mut writer: impl Write, server: &Server) ->
         if !too_long && line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let reply = match serde_json::from_slice::<Value>(&line) {
-            _ if too_long => {
-                skip_line(&mut reader)?;
-                Some(failure(
-                    Value::Null,
-                    INVALID_REQUEST,
-                    format!("Message longer than {MAX_FRAME} bytes"),
-                ))
-            }
-            Ok(Value::Array(_)) => Some(failure(
+        // Checked before parsing: an oversized line is never parsed.
+        let reply = if too_long {
+            skip_line(&mut reader)?;
+            Some(failure(
                 Value::Null,
                 INVALID_REQUEST,
-                "Batches are not supported; send one message per line".into(),
-            )),
-            Ok(message) => answer(server, &message),
-            Err(err) => Some(failure(
-                Value::Null,
-                PARSE_ERROR,
-                format!("Parse error: {err}"),
-            )),
+                format!("Message longer than {MAX_FRAME} bytes"),
+            ))
+        } else {
+            match serde_json::from_slice::<Value>(&line) {
+                Ok(Value::Array(_)) => Some(failure(
+                    Value::Null,
+                    INVALID_REQUEST,
+                    "Batches are not supported; send one message per line".into(),
+                )),
+                Ok(message) => answer(server, &message),
+                Err(err) => Some(failure(
+                    Value::Null,
+                    PARSE_ERROR,
+                    format!("Parse error: {err}"),
+                )),
+            }
         };
         if let Some(reply) = reply {
             let mut bytes = serde_json::to_vec(&reply)?;
