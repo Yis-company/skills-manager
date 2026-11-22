@@ -206,6 +206,8 @@ pub(super) fn apply<'c>(
     {
         return answer_from_receipt(ctx, operation_id, &intent, evidence);
     }
+    // Whether the outcome is on record. Once anything may have been
+    // written, an outcome that is not is reported as unknown.
     let settle = |outcome: (&str, Value)| {
         let mut receipt = claim.clone();
         receipt["version"] = json!(2);
@@ -213,16 +215,27 @@ pub(super) fn apply<'c>(
         receipt["settled_at"] = json!(chrono::Utc::now().timestamp_millis());
         ctx.store
             .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
-            .map_err(AppError::db)
+            .unwrap_or(false)
+    };
+    let unrecorded = || {
+        let next_action = format!(
+            "Outcome unknown: changes may have been made, but their result could not be \
+             recorded. Leave the checkout as it is and call {INSPECT_TOOL} with the same \
+             operation_id; do not apply under a new operation_id until then."
+        );
+        outcome_unknown(
+            &intent["host"],
+            &intent["checkout_path"],
+            operation_id,
+            &next_action,
+        )
     };
 
     if plan.save {
         match save_confirmed(&mut run, &proposal, items.clone()) {
             Ok(version) => proposal.setup_version = version,
-            Err(error) => {
-                settle(("error", json!(error)))?;
-                return Err(error);
-            }
+            Err(error) if settle(("error", json!(error))) => return Err(error),
+            Err(_) => return Ok(unrecorded()),
         }
         scope["project_id"] = json!(run.project.id);
         scope["setup_version"] = json!(proposal.setup_version);
@@ -242,7 +255,9 @@ pub(super) fn apply<'c>(
         result["proposal"] = json!(proposal);
     }
     result["items"] = json!(results);
-    settle(("result", result.clone()))?;
+    if !settle(("result", result.clone())) {
+        return Ok(unrecorded());
+    }
     Ok(respond(result, false, evidence))
 }
 
@@ -327,13 +342,32 @@ fn answer_from_receipt(
     if receipt["result"].is_object() {
         return Ok(respond(receipt["result"].clone(), true, evidence));
     }
-    let mut unknown = summarize(intent, operation_id, &[]);
-    unknown["outcome"] = json!(Outcome::Unknown);
-    unknown["next_action"] = json!(
-        "Another request with this operation_id has not recorded a result. \
-         Ask again later with the same operation_id; do not retry under a new one."
+    let unknown = outcome_unknown(
+        &intent["host"],
+        &intent["checkout_path"],
+        operation_id,
+        "Another request with this operation_id has not recorded a result. Ask again later \
+         with the same operation_id; do not retry under a new one.",
     );
     Ok(respond(unknown, true, false))
+}
+
+/// The tool that reads an apply's outcome back.
+const INSPECT_TOOL: &str = "inspect_project_setup_result";
+
+/// An apply result whose outcome is not on record, with no project ID or
+/// setup version, and `next_action`.
+pub fn outcome_unknown(
+    host: &Value,
+    checkout_path: &Value,
+    operation_id: &str,
+    next_action: &str,
+) -> Value {
+    let scope = json!({ "host": host, "checkout_path": checkout_path });
+    let mut unknown = summarize(&scope, operation_id, &[]);
+    unknown["outcome"] = json!(Outcome::Unknown);
+    unknown["next_action"] = json!(next_action);
+    respond(unknown, false, false)
 }
 
 pub(super) fn respond(mut result: Value, from_receipt: bool, evidence: bool) -> Value {
@@ -2145,5 +2179,31 @@ pub(crate) mod tests {
             std::fs::read_to_string(fixture.path("CLAUDE.md")).unwrap(),
             "local alpha\nmiddle\nremote beta\n"
         );
+    }
+
+    #[test]
+    fn a_result_that_cannot_be_recorded_is_outcome_unknown_with_its_operation_id() {
+        let fixture = Fixture::new();
+        let (library, _) = one_of_each(&fixture);
+        let db = rusqlite::Connection::open(fixture.repo._tmp.path().join("repo/test.db")).unwrap();
+        db.execute_batch(
+            "CREATE TRIGGER no_result BEFORE UPDATE ON resource_state
+             WHEN NEW.kind = 'project_setup_receipt' AND json_extract(NEW.value, '$.version') = 2
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+        )
+        .unwrap();
+
+        let result = fixture.apply("op-1").unwrap();
+
+        assert_eq!(result["outcome"], "outcome_unknown", "{result}");
+        assert_eq!(result["operation_id"], "op-1");
+        assert!(
+            result["next_action"]
+                .as_str()
+                .unwrap()
+                .contains("inspect_project_setup_result"),
+            "{result}"
+        );
+        assert!(resolves_to(&fixture.path(".a/skills/review"), &library));
     }
 }

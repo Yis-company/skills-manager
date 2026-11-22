@@ -284,6 +284,14 @@ fn error_text(result: &Value) -> String {
     result["content"][0]["text"].as_str().unwrap().to_owned()
 }
 
+/// The next action of a structured outcome_unknown result.
+fn unknown_next_action(result: &Value) -> String {
+    assert_eq!(result["isError"], false, "{result}");
+    let unknown = &result["structuredContent"];
+    assert_eq!(unknown["outcome"], "outcome_unknown", "{result}");
+    unknown["next_action"].as_str().unwrap().to_owned()
+}
+
 #[test]
 fn a_host_on_another_version_is_a_blocker_and_nothing_is_installed() {
     let local = Local::new();
@@ -504,9 +512,11 @@ fn a_request_lost_with_no_receipt_is_outcome_unknown_and_never_replayed() {
     );
 
     // A missing receipt is not proof that nothing ran, so apply is not sent again.
-    let text = error_text(&result);
-    assert!(text.contains("Outcome unknown"), "{result}");
-    assert!(text.contains("Inspect again later"), "{result}");
+    let next_action = unknown_next_action(&result);
+    assert!(next_action.contains("Inspect again later"), "{result}");
+    let unknown = &result["structuredContent"];
+    assert_eq!(unknown["operation_id"], "op-1");
+    assert_eq!(unknown["checkout_path"], json!(remote.checkout()));
     assert!(!remote.checkout().join(".mcp.json").exists());
     assert_eq!(starts.load(Ordering::SeqCst), 2, "one reconnect, no more");
 }
@@ -539,7 +549,10 @@ fn a_lost_request_another_claimed_is_outcome_unknown_and_not_resumed() {
         &checkout,
     );
 
-    assert!(error_text(&result).contains("Outcome unknown"), "{result}");
+    assert!(
+        unknown_next_action(&result).contains("Outcome unknown"),
+        "{result}"
+    );
     assert!(!checkout.join(".mcp.json").exists());
     assert_eq!(starts.load(Ordering::SeqCst), 2);
 }
@@ -726,7 +739,10 @@ fn a_lost_apply_with_null_items_is_never_sent_again() {
                 "items": null }),
     );
 
-    assert!(error_text(&result).contains("Outcome unknown"), "{result}");
+    assert!(
+        unknown_next_action(&result).contains("Outcome unknown"),
+        "{result}"
+    );
     assert!(!checkout.join(".mcp.json").exists());
 }
 

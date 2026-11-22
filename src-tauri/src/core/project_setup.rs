@@ -20,6 +20,7 @@ mod apply;
 mod confirm;
 mod inspect;
 mod items;
+pub use apply::outcome_unknown;
 #[cfg(test)]
 pub(crate) use apply::tests as apply_tests;
 pub use inspect::ReceiptState;

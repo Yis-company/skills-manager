@@ -109,7 +109,12 @@ impl<'a> Hosts<'a> {
                     // Settled, so asking again answers from the receipt, never
                     // applies, and refuses a receipt of a different request.
                     Ok(ReceiptState::Result | ReceiptState::Error) => send(session, &request),
-                    _ => Err(unknown("it has not recorded a result".into())),
+                    _ => Ok(project_setup::outcome_unknown(
+                        &found["host"],
+                        &found["checkout_path"],
+                        request["operation_id"].as_str().unwrap_or_default(),
+                        &unknown("it has not recorded a result".into()).message,
+                    )),
                 }
             }
             answered => answered,
