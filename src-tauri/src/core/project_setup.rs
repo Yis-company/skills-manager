@@ -112,7 +112,7 @@ fn check_agents(agents: usize) -> Result<(), AppError> {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
     Discover {
         checkout_path: String,
@@ -133,16 +133,6 @@ fn parse(request: Value) -> Result<Request, AppError> {
         .map_err(|e| AppError::invalid_input(format!("Invalid Project setup request: {e}")))
 }
 
-/// Whether `request` may write, checked on `ctx` without writing: false for
-/// discovery, inspection and a first setup's proposal, and an error for an
-/// apply that cannot run.
-pub fn writes(ctx: &HostCtx, request: &Value) -> Result<bool, AppError> {
-    match parse(request.clone())? {
-        Request::Apply(args) => apply::writes(ctx, &args),
-        Request::Discover { .. } | Request::Inspect { .. } => Ok(false),
-    }
-}
-
 /// Whether `request` only reads, judged from the request alone: discovery,
 /// inspection, or an apply that only proposes a first setup.
 pub fn reads_only(request: &Value) -> Result<bool, AppError> {
@@ -153,12 +143,24 @@ pub fn reads_only(request: &Value) -> Result<bool, AppError> {
 }
 
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
+    serve(ctx, &|| Ok(ctx), request)
+}
+
+/// Answer `request` on `read_only`, which it parses once. Only an apply
+/// that has been checked and has something to apply opens the library for
+/// writing, through `writable`.
+pub fn serve<'c>(
+    read_only: &'c HostCtx,
+    writable: &dyn Fn() -> Result<&'c HostCtx, AppError>,
+    request: Value,
+) -> Result<Value, AppError> {
+    let ctx = read_only;
     match parse(request)? {
         Request::Discover {
             checkout_path,
             cursor,
         } => discover(ctx, &checkout_path, cursor.as_deref()),
-        Request::Apply(args) => apply::apply(ctx, args),
+        Request::Apply(args) => apply::apply(ctx, writable, args),
         Request::Inspect {
             checkout_path,
             operation_id,
@@ -553,5 +555,28 @@ mod tests {
             .discover(json!({ "checkout_path": "work/app" }))
             .unwrap_err();
         assert_eq!(error.kind, ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn an_unknown_argument_is_refused_by_every_action() {
+        let host = Host::new();
+        let checkout = host.dir("app");
+        let requests = [
+            json!({ "action": "discover", "checkout_path": checkout, "cursr": "x" }),
+            json!({ "action": "inspect", "checkout_path": checkout, "operation_id": "op-1",
+                    "evidense": true }),
+            json!({ "action": "apply", "checkout_path": checkout, "operation_id": "op-1",
+                    "agent": ["codex"] }),
+        ];
+        for request in requests {
+            let error = dispatch(
+                &host.ctx,
+                "project_setup_request",
+                &json!({ "request": request }),
+            )
+            .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::InvalidInput, "{request}");
+            assert!(error.message.contains("unknown field"), "{}", error.message);
+        }
     }
 }

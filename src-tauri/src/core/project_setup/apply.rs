@@ -32,6 +32,7 @@ const RECEIPT_PRUNE_LIMIT: usize = 100;
 
 /// The apply action's arguments.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Args {
     checkout_path: String,
     operation_id: String,
@@ -76,23 +77,6 @@ fn check_args(args: &Args) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Whether applying `args` may write; see [`super::writes`]. A proposal
-/// only reads, and a request with nothing to apply fails here.
-pub(super) fn writes(ctx: &HostCtx, args: &Args) -> Result<bool, AppError> {
-    check_args(args)?;
-    if args.confirm.is_some() {
-        return Ok(true);
-    }
-    if proposes_only(args) {
-        return Ok(false);
-    }
-    let (_, project) = find_project(ctx, &args.checkout_path)?;
-    match project {
-        Some(project) if load_setup(ctx, &project.id)?.is_some() => Ok(true),
-        _ => Err(no_saved_setup()),
-    }
-}
-
 /// Whether `args` only ask for a first setup's proposal.
 pub(super) fn proposes_only(args: &Args) -> bool {
     args.items.is_some() && args.confirm.is_none()
@@ -102,8 +86,15 @@ fn no_saved_setup() -> AppError {
     AppError::invalid_input("This checkout has no saved Project setup; pass items to propose one")
 }
 
-pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
+/// Check `args` on `read_only`, then open the library for writing through
+/// `writable` only when they hold something to apply.
+pub(super) fn apply<'c>(
+    read_only: &'c HostCtx,
+    writable: &dyn Fn() -> Result<&'c HostCtx, AppError>,
+    args: Args,
+) -> Result<Value, AppError> {
     check_args(&args)?;
+    let ctx = read_only;
     let (operation_id, evidence) = (args.operation_id.as_str(), args.evidence);
     let (checkout, project) = find_project(ctx, &args.checkout_path)?;
     let host = effective_device_name(&ctx.store);
@@ -183,6 +174,9 @@ pub(super) fn apply(ctx: &HostCtx, args: Args) -> Result<Value, AppError> {
     };
     let items: Vec<SetupItem> = plan.items.iter().map(|p| p.item.clone()).collect();
 
+    // Checked, and something to apply: only now open the library for writing.
+    run.ctx = writable()?;
+    let ctx = run.ctx;
     let now = chrono::Utc::now().timestamp_millis();
     ctx.store
         .resource_state_delete_settled_before(

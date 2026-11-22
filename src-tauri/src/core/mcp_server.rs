@@ -3,8 +3,9 @@
 //!
 //! Newline-delimited JSON-RPC 2.0 in both directions, answered in order. The
 //! server handles `initialize`, `ping`, `tools/list` and `tools/call`; other
-//! requests get "method not found" and notifications get no reply. Nothing
-//! else may reach stdout. The server exits when stdin closes.
+//! requests get "method not found", a batch gets one "invalid request" error,
+//! and notifications get no reply. Nothing else may reach stdout. The server
+//! exits when stdin closes.
 //!
 //! Tool names, inputs and output fields are frozen at version 1: add optional
 //! fields or new tools, never change what callers rely on.
@@ -108,6 +109,11 @@ pub fn run(mut reader: impl BufRead, mut writer: impl Write, server: &Server) ->
                     format!("Message longer than {MAX_FRAME} bytes"),
                 ))
             }
+            Ok(Value::Array(_)) => Some(failure(
+                Value::Null,
+                INVALID_REQUEST,
+                "Batches are not supported; send one message per line".into(),
+            )),
             Ok(message) => answer(server, &message),
             Err(err) => Some(failure(
                 Value::Null,
@@ -214,15 +220,9 @@ fn call_tool(server: &Server, params: &Value) -> Result<Value, (i64, String)> {
         if let Some(host) = &host {
             return server.hosts.call(&read_only, host, request);
         }
-        let request = Value::Object(request);
         // Checked read-only first: a request that cannot write never opens
         // the library for writing.
-        let ctx = if project_setup::writes(&read_only, &request)? {
-            server.writable()?
-        } else {
-            &read_only
-        };
-        project_setup::dispatch(ctx, request)
+        project_setup::serve(&read_only, &|| server.writable(), Value::Object(request))
     }))
     .unwrap_or_else(|_| Err(AppError::internal(format!("{name} panicked"))));
     Ok(match outcome {
@@ -840,5 +840,71 @@ mod tests {
                 panic!("call {n}: {mismatch}\n{found}");
             }
         }
+    }
+
+    /// Answer `input` the way `cli mcp` does; one reply per line.
+    fn replies(server: &Server, input: &str) -> Vec<Value> {
+        let mut output = Vec::new();
+        super::run(input.as_bytes(), &mut output, server).unwrap();
+        String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_batch_is_answered_with_one_invalid_request_error() {
+        let fixture = Fixture::new();
+        let open = || Ok::<HostCtx, _>(fixture.ctx.clone());
+        let cli: &CliCommand = &|_, _| unreachable!("no SSH host is named");
+        let server = Server::new(&open, &open, cli);
+        let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+
+        let found = replies(&server, &format!("{}\n{ping}\n", json!([ping, ping])));
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0]["error"]["code"], -32600, "{found:?}");
+        assert_eq!(found[0]["id"], Value::Null);
+        assert_eq!(found[1]["id"], 1);
+    }
+
+    #[test]
+    fn a_stale_confirmation_is_refused_without_opening_the_library_for_writing() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        let fresh = fixture.repo._tmp.path().join("work/fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+        let open = || Ok::<HostCtx, _>(fixture.ctx.clone());
+        let refuse = || -> Result<HostCtx, AppError> { panic!("opened for writing") };
+        let cli: &CliCommand = &|_, _| unreachable!("no SSH host is named");
+        let server = Server::new(&open, &refuse, cli);
+        let call = |id: u64, arguments: Value| {
+            answer(
+                &server,
+                &json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                         "params": { "name": "apply_project_setup", "arguments": arguments } }),
+            )
+            .unwrap()["result"]
+                .clone()
+        };
+        let proposed = call(
+            1,
+            json!({ "checkout_path": fresh, "operation_id": "op-1",
+            "items": [{ "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"] }] }),
+        );
+        let mut proposal = proposed["structuredContent"]["proposal"].clone();
+        proposal["decisions"][0]["choice"] = json!("approve");
+        proposal["setup_version"] = json!(7);
+
+        let refused = call(
+            2,
+            json!({ "checkout_path": fresh, "operation_id": "op-2",
+            "confirm": proposal }),
+        );
+
+        assert_eq!(refused["isError"], true, "{refused}");
+        let text = refused["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("stale"), "{text}");
     }
 }
