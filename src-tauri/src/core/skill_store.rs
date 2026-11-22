@@ -15,13 +15,6 @@ pub struct SkillStore {
     secret_key: [u8; 32],
 }
 
-/// Its settled-time condition matches `resource_state_settled_at`, so it
-/// reads only the documents it deletes.
-const DELETE_SETTLED_BEFORE: &str = "DELETE FROM resource_state WHERE rowid IN (
-    SELECT rowid FROM resource_state
-    WHERE kind = ?1 AND json_extract(value, '$.settled_at') < ?2 LIMIT ?3
-)";
-
 fn resource_state_exists(conn: &Connection) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resource_state')",
@@ -260,7 +253,13 @@ impl SkillStore {
         if !resource_state_exists(&conn)? {
             return Ok(0);
         }
-        Ok(conn.execute(DELETE_SETTLED_BEFORE, params![kind, before, limit as i64])?)
+        Ok(conn.execute(
+            "DELETE FROM resource_state WHERE rowid IN (
+                 SELECT rowid FROM resource_state
+                 WHERE kind = ?1 AND json_extract(value, '$.settled_at') < ?2 LIMIT ?3
+             )",
+            params![kind, before, limit as i64],
+        )?)
     }
 
     pub fn resource_state_delete(&self, kind: &str, id: &str) -> Result<()> {
@@ -2215,28 +2214,59 @@ mod resource_state_tests {
     use tempfile::tempdir;
 
     #[test]
-    fn pruning_settled_documents_reads_only_those_it_deletes() {
+    fn pruning_deletes_only_old_settled_documents_and_at_most_the_limit() {
         let tmp = tempdir().unwrap();
         let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
-        let conn = store.conn.lock().unwrap();
-        let plan: Vec<String> = conn
-            .prepare(&format!("EXPLAIN QUERY PLAN {DELETE_SETTLED_BEFORE}"))
-            .unwrap()
-            .query_map(params!["receipt", 0, 100], |row| row.get::<_, String>(3))
-            .unwrap()
-            .collect::<std::result::Result<_, _>>()
+        for n in 0..3 {
+            let old = serde_json::json!({ "version": 2, "settled_at": 10 + n });
+            store
+                .resource_state_put("receipt", &format!("old-{n}"), &old)
+                .unwrap();
+        }
+        let planted = [
+            (
+                "new",
+                serde_json::json!({ "version": 2, "settled_at": 500 }),
+            ),
+            ("unsettled", serde_json::json!({ "version": 1 })),
+        ];
+        for (id, value) in &planted {
+            store.resource_state_put("receipt", id, value).unwrap();
+        }
+        store
+            .resource_state_put("other", "old", &serde_json::json!({ "settled_at": 1 }))
             .unwrap();
+        let kept = |kind: &str| -> Vec<String> {
+            store
+                .resource_state_list(kind)
+                .unwrap()
+                .iter()
+                .map(|value| value.to_string())
+                .collect()
+        };
 
-        // A range search on the settled time, never a scan of every document.
-        assert!(
-            plan.iter()
-                .any(|step| step.contains("resource_state_settled_at")),
-            "{plan:?}"
+        assert_eq!(
+            store
+                .resource_state_delete_settled_before("receipt", 100, 2)
+                .unwrap(),
+            2
         );
-        assert!(
-            !plan.iter().any(|step| step.starts_with("SCAN")),
-            "{plan:?}"
+        assert_eq!(kept("receipt").len(), 3);
+        assert_eq!(
+            store
+                .resource_state_delete_settled_before("receipt", 100, 2)
+                .unwrap(),
+            1
         );
+
+        let left = kept("receipt");
+        assert_eq!(left.len(), 2, "{left:?}");
+        assert!(left.iter().any(|value| value.contains("500")), "{left:?}");
+        assert!(
+            left.iter().any(|value| !value.contains("settled_at")),
+            "{left:?}"
+        );
+        assert_eq!(kept("other").len(), 1);
     }
 
     #[test]
