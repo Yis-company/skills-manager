@@ -37,6 +37,22 @@ pub fn validate_portable(value: &Value) -> Result<(), AppError> {
     store::validate_portable_input(&input)
 }
 
+/// Whether an interrupted change to `agent_key`'s MCP configuration for the
+/// project `project_id` waits for `recover`. Read-only: it never recovers.
+pub fn recovery_pending(
+    ctx: &HostCtx,
+    agent_key: &str,
+    project_id: &str,
+) -> Result<bool, AppError> {
+    adapters::recovery_pending(
+        ctx,
+        &model::Target {
+            agent_key: agent_key.to_owned(),
+            project_id: Some(project_id.to_owned()),
+        },
+    )
+}
+
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
     let request: McpsRequest = serde_json::from_value(request)
         .map_err(|_| AppError::invalid_input("Invalid MCP request shape"))?;

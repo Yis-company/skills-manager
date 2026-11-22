@@ -131,16 +131,7 @@ pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step
 /// to apply and one to verify. Returns a step per connection, in order.
 pub(super) fn apply_mcps(run: &Run, agent: &str, batch: &[(usize, &SetupItem)]) -> Vec<Step> {
     let target = json!({ "agentKey": agent, "projectId": run.project.id });
-    let pending = mcps::dispatch(
-        run.ctx,
-        json!({ "action": "deployments", "target": target }),
-    )
-    .map(|reply| {
-        reply["recoveries"]
-            .as_array()
-            .is_some_and(|r| !r.is_empty())
-    });
-    match pending {
+    match mcps::recovery_pending(run.ctx, agent, &run.project.id) {
         Ok(false) => {}
         Ok(true) => return vec![Step::because(Status::Blocked, "pending_recovery"); batch.len()],
         Err(error) => return vec![Step::error(error); batch.len()],
@@ -235,15 +226,21 @@ fn mcp_chunk(run: &Run, agent: &str, target: &Value, items: &[&SetupItem]) -> Ve
 
 /// One kind per operation, in order. `update` with equal summaries is an
 /// entry that already matches, unless it matches only because an edit there
-/// was kept.
+/// was kept. Only a preview that says so outright reads as matching: a
+/// missing field never does.
 fn change_kinds(preview: &Value) -> Vec<&str> {
     preview["changes"]
         .as_array()
         .into_iter()
         .flatten()
         .map(|change| match change["kind"].as_str() {
-            Some("update") if change["keptEdits"] == true => "kept_edits",
-            Some("update") if change["beforeSummary"] == change["afterSummary"] => "unchanged",
+            Some("update") if change["keptEdits"] != false => "kept_edits",
+            Some("update")
+                if !change["afterSummary"].is_null()
+                    && change["beforeSummary"] == change["afterSummary"] =>
+            {
+                "unchanged"
+            }
             Some(kind) => kind,
             None => "",
         })
@@ -252,7 +249,7 @@ fn change_kinds(preview: &Value) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::apply_mcps;
     use crate::core::project_setup::apply::tests::{approved, Fixture};
@@ -281,5 +278,24 @@ mod tests {
 
         assert_eq!(steps[0].status, Status::NeedsReview);
         assert!(!fixture.path(".mcp.json").exists());
+    }
+
+    #[test]
+    fn an_update_reads_as_matching_only_when_the_preview_says_no_edit_was_kept() {
+        let entry = json!({ "command": "npx" });
+        let update = |change: Value| {
+            let mut change = change;
+            change["kind"] = json!("update");
+            super::change_kinds(&json!({ "changes": [change] }))[0].to_owned()
+        };
+
+        let said = update(json!({ "beforeSummary": entry, "afterSummary": entry,
+                                  "keptEdits": false }));
+        let unsaid = update(json!({ "beforeSummary": entry, "afterSummary": entry }));
+        let empty = update(json!({ "keptEdits": false }));
+
+        assert_eq!(said, "unchanged");
+        assert_ne!(unsaid, "unchanged");
+        assert_ne!(empty, "unchanged");
     }
 }
