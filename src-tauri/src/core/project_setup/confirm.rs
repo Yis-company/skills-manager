@@ -195,6 +195,19 @@ pub(super) fn confirmed(
     let mut planned: Vec<Planned> = original.iter().cloned().map(Planned::new).collect();
     let mut keep = vec![true; planned.len()];
     for decision in confirm.decisions {
+        // A first setup asks only first_setup; a saved setup never does.
+        if first != (decision.reason == Reason::FirstSetup) {
+            return Err(AppError::invalid_input(format!(
+                "{} asks {}, which this checkout's proposal cannot ask: {}",
+                decision.id,
+                String::from(decision.reason),
+                if first {
+                    "it has no saved setup, so only first_setup"
+                } else {
+                    "it has a saved setup, so never first_setup"
+                }
+            )));
+        }
         let Some(choice) = decision.choice.filter(|c| decision.choices.contains(c)) else {
             return Err(AppError::invalid_input(format!(
                 "Choose one of {} for {}",

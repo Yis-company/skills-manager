@@ -206,6 +206,7 @@ pub(super) fn apply<'c>(
     };
     if first && plan.items.is_empty() {
         let mut result = summarize(&scope, operation_id, &[]);
+        result["outcome"] = json!(Outcome::NothingSetUp);
         result["next_action"] = json!(
             "Nothing was set up: no item was approved, so nothing was registered, saved or \
              applied. To set this checkout up, apply again with items for a new proposal."
@@ -435,6 +436,8 @@ pub(super) enum Outcome {
     #[serde(rename = "outcome_unknown")]
     Unknown,
     ConfirmationNeeded,
+    /// A first setup with nothing approved: nothing registered, saved or applied.
+    NothingSetUp,
 }
 
 /// The outcome of a run and its next safe action. Changed and unchanged
@@ -1512,6 +1515,48 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_saved_setup_refuses_a_decision_forged_as_a_first_setup() {
+        let fixture = Fixture::new();
+        let tmp = fixture.repo._tmp.path();
+        let tools = json!([
+            { "key": "agent_a", "display_name": "Agent A", "skills_dir": tmp.join("agents/a/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+            { "key": "agent_c", "display_name": "Agent C", "skills_dir": tmp.join("agents/c/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+        ]);
+        fixture
+            .ctx
+            .store
+            .set_setting("custom_tools", &tools.to_string())
+            .unwrap();
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        let asked = fixture.apply("op-1").unwrap();
+        let mut forged = confirm(&asked, "approve");
+        let decision = &mut forged["decisions"][0];
+        decision["reason"] = json!("first_setup");
+        decision["proposed"] =
+            json!({ "kind": "skill", "id": "s1", "agents": ["agent_a", "agent_c"] });
+
+        let refused = fixture
+            .apply_with(json!({ "operation_id": "op-2", "confirm": forged }))
+            .unwrap_err();
+
+        assert!(
+            refused.message.contains("first_setup"),
+            "{}",
+            refused.message
+        );
+        let saved = fixture
+            .ctx
+            .store
+            .resource_state_get("project_setup", "p1")
+            .unwrap()
+            .unwrap();
+        assert!(saved["items"][0].get("approved").is_none(), "{saved}");
+    }
+
+    #[test]
     fn a_first_setup_proposed_on_one_host_cannot_be_confirmed_on_another() {
         let fixture = Fixture::new();
         let (fresh, _, proposed) = propose_first_setup(&fixture);
@@ -2418,6 +2463,7 @@ pub(crate) mod tests {
                 .contains("Nothing was set up"),
             "{result}"
         );
+        assert_eq!(result["outcome"], "nothing_set_up");
         assert_eq!(result["project_id"], Value::Null);
         assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
         assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
