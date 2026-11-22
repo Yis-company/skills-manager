@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::confirm::{confirmed, decide, propose, save_confirmed, Plan, Proposal, Reason, CONFIRM};
-use super::items::{check_items, counts, sorted_agents, ItemResult, Planned, Run, Status};
+use super::items::{check_items, counts, sorted_agents, ItemResult, Planned, Run, Status, Step};
 use super::{check_agents, check_size, find_project, ItemKind, SavedSetup, SetupItem, SETUP_KIND};
 use crate::commands::projects::new_project_deploy_mode;
 use crate::core::error::AppError;
@@ -250,15 +250,18 @@ pub(super) fn apply<'c>(
         scope["setup_version"] = json!(proposal.setup_version);
     }
 
-    let results = check_items(&run, &plan.items);
-    let mut result = summarize(&scope, operation_id, &results);
+    let mut results = check_items(&run, &plan.items);
     proposal.project_id = Some(run.project.id.clone());
     proposal.register = false;
-    proposal.decisions = items
-        .iter()
-        .zip(&results)
-        .filter_map(|(item, result)| decide(&run, item, result.asks?).ok().flatten())
-        .collect();
+    // A decision that cannot be read fails its item; it never just vanishes.
+    for (item, checked) in items.iter().zip(results.iter_mut()) {
+        let Some(reason) = checked.asks else { continue };
+        match decide(&run, item, reason) {
+            Ok(decision) => proposal.decisions.extend(decision),
+            Err(error) => checked.fail(Step::error(error)),
+        }
+    }
+    let mut result = summarize(&scope, operation_id, &results);
     if !proposal.decisions.is_empty() {
         result["next_action"] = json!(CONFIRM);
         result["proposal"] = json!(proposal);

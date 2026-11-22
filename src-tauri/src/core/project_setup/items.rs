@@ -228,6 +228,15 @@ pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
 }
 
 impl ItemResult {
+    /// Replace this item's result with `failure`.
+    pub(super) fn fail(&mut self, failure: Step) {
+        self.status = failure.status;
+        self.reason = failure.reason;
+        self.retryable = Some(failure.retryable);
+        self.targets.clear();
+        self.asks = None;
+    }
+
     /// Whether this item, or any of its agents, changed.
     pub(super) fn changed(&self) -> bool {
         self.status == Status::Changed
