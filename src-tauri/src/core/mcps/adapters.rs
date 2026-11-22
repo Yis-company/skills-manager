@@ -747,8 +747,28 @@ pub fn register_self(ctx: &HostCtx, client: Client, command: &Path) -> Result<Va
         &patched,
         &[json!({"name":SELF_SERVER_NAME,"present":true,"entry":entry})],
     )?;
-    resource_store::atomic_write(&cfg.path, patched.as_bytes()).map_err(AppError::io)?;
+    replace_if_unchanged(&cfg, original.as_deref(), &patched)?;
     Ok(report("added"))
+}
+
+/// Replace `cfg`'s file with `patched` only while it still holds `original`:
+/// its client may have saved a setting since it was read.
+fn replace_if_unchanged(
+    cfg: &ConfigTarget,
+    original: Option<&str>,
+    patched: &str,
+) -> Result<(), AppError> {
+    if read_snapshot(cfg)?.as_deref() != original {
+        let path = cfg.path.to_string_lossy().into_owned();
+        return Err(AppError::target_conflict(
+            format!("{path} changed while registering; nothing was written, register again"),
+            vec![TargetConflictDetail {
+                path,
+                reason: "changed while registering".into(),
+            }],
+        ));
+    }
+    resource_store::atomic_write(&cfg.path, patched.as_bytes()).map_err(AppError::io)
 }
 
 fn verify_scoped_patch(
@@ -2518,6 +2538,31 @@ mod tests {
         remote.transport = Transport::Sse;
         assert!(render_entry("codex", &remote).is_err());
         assert!(render_entry("antigravity", &remote).is_err());
+    }
+
+    #[test]
+    fn a_config_saved_by_its_client_after_it_was_read_is_never_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = ConfigTarget {
+            path: dir.path().join("config.json"),
+            format: Format::Json,
+            entry_path: vec!["mcpServers"],
+            agent: "claude_code".into(),
+        };
+        let read = "{\"mcpServers\": {}}\n";
+        let saved_since = "{\"mcpServers\": {}, \"theme\": \"dark\"}\n";
+        fs::write(&cfg.path, saved_since).unwrap();
+
+        let error =
+            replace_if_unchanged(&cfg, Some(read), "{\"mcpServers\": {\"x\": {}}}\n").unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            crate::core::error::ErrorKind::TargetConflict,
+            "{}",
+            error.message
+        );
+        assert_eq!(fs::read_to_string(&cfg.path).unwrap(), saved_since);
     }
 
     #[test]
