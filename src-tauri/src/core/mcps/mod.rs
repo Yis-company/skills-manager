@@ -37,6 +37,15 @@ pub fn validate_portable(value: &Value) -> Result<(), AppError> {
     store::validate_portable_input(&input)
 }
 
+/// Up to `limit` Library definitions with an ID after `after`, by ID, as ID
+/// and name. Only those are read.
+pub fn names_after(after: Option<&str>, limit: usize) -> Result<Vec<(String, String)>, AppError> {
+    Ok(store::page_after(after, limit)?
+        .into_iter()
+        .map(|definition| (definition.id, definition.name))
+        .collect())
+}
+
 /// Whether an interrupted change to `agent_key`'s MCP configuration for the
 /// project `project_id` waits for `recover`. Read-only: it never recovers.
 pub fn recovery_pending(

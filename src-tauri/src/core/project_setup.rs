@@ -274,7 +274,7 @@ fn project_json(project: &ProjectRecord, path: &Path) -> Value {
 /// One page of Skills, Instruction bundles and MCP connections, in that
 /// order and by ID within each kind. The cursor is the last item's kind and
 /// ID, `kind:id`, so items added or removed elsewhere never shift a page.
-/// Skills are paged in the store; a kind is read only when the page reaches it.
+/// A kind is read only when the page reaches it.
 fn library_page(ctx: &HostCtx, cursor: Option<&str>) -> Result<Value, AppError> {
     let after: Option<(ItemKind, &str)> = match cursor {
         None => None,
@@ -286,7 +286,7 @@ fn library_page(ctx: &HostCtx, cursor: Option<&str>) -> Result<Value, AppError> 
         }
     };
     // One more than a page, to tell whether another page follows.
-    let mut items: Vec<(ItemKind, String, Value)> = Vec::new();
+    let mut items: Vec<(ItemKind, String, String)> = Vec::new();
     for kind in [ItemKind::Skill, ItemKind::Instruction, ItemKind::Mcp] {
         let after_id = match after {
             Some((last, _)) if kind < last => continue,
@@ -297,22 +297,17 @@ fn library_page(ctx: &HostCtx, cursor: Option<&str>) -> Result<Value, AppError> 
         if wanted == 0 {
             break;
         }
-        let found: Vec<(String, Value)> = match kind {
+        // Each kind is paged where it is stored: only the page is read.
+        let found: Vec<(String, String)> = match kind {
             ItemKind::Skill => ctx
                 .store
                 .get_skills_after(after_id, wanted)
                 .map_err(AppError::db)?
                 .into_iter()
-                .map(|skill| (skill.id, json!(skill.name)))
+                .map(|skill| (skill.id, skill.name))
                 .collect(),
-            ItemKind::Instruction => {
-                let reply = crate::core::instructions::dispatch(ctx, json!({ "action": "list" }))?;
-                listed_after(&reply["items"], after_id, wanted)
-            }
-            ItemKind::Mcp => {
-                let reply = crate::core::mcps::dispatch(ctx, json!({ "action": "list" }))?;
-                listed_after(&reply["definitions"], after_id, wanted)
-            }
+            ItemKind::Instruction => crate::core::instructions::names_after(after_id, wanted)?,
+            ItemKind::Mcp => crate::core::mcps::names_after(after_id, wanted)?,
         };
         items.extend(found.into_iter().map(|(id, name)| (kind, id, name)));
     }
@@ -326,20 +321,6 @@ fn library_page(ctx: &HostCtx, cursor: Option<&str>) -> Result<Value, AppError> 
         .map(|(kind, id, name)| json!({ "kind": kind, "id": id, "name": name }))
         .collect();
     Ok(json!({ "items": items, "next_cursor": next_cursor }))
-}
-
-/// Up to `limit` of `listed`'s items after `after`, by ID, as ID and name.
-fn listed_after(listed: &Value, after: Option<&str>, limit: usize) -> Vec<(String, Value)> {
-    let mut items: Vec<(String, Value)> = listed
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| Some((item["id"].as_str()?.to_owned(), item["name"].clone())))
-        .filter(|(id, _)| after.is_none_or(|after| id.as_str() > after))
-        .collect();
-    items.sort_by(|a, b| a.0.cmp(&b.0));
-    items.truncate(limit);
-    items
 }
 
 #[cfg(test)]
@@ -579,5 +560,41 @@ mod tests {
             assert_eq!(error.kind, ErrorKind::InvalidInput, "{request}");
             assert!(error.message.contains("unknown field"), "{}", error.message);
         }
+    }
+
+    #[test]
+    fn a_library_page_reads_only_the_connections_on_it() {
+        let host = Host::new();
+        let checkout = host.dir("app");
+        let mut ids: Vec<String> = ["docs", "search"]
+            .iter()
+            .map(|name| {
+                let saved = dispatch(
+                    &host.ctx,
+                    "mcps_request",
+                    &json!({ "request": { "action": "save", "definition": {
+                        "name": name, "transport": "stdio",
+                        "server": { "command": "npx", "args": ["-y", name] } } } }),
+                )
+                .unwrap();
+                saved["definition"]["id"].as_str().unwrap().to_owned()
+            })
+            .collect();
+        ids.sort();
+        // A connection before the cursor, and so not on this page, is unreadable.
+        let file = crate::core::resource_store::root().join(format!("mcps/{}.json", ids[0]));
+        std::fs::write(file, "not json").unwrap();
+
+        let page = host
+            .discover(json!({ "checkout_path": checkout, "cursor": format!("mcp:{}", ids[0]) }))
+            .unwrap();
+
+        let found: Vec<&Value> = page["library"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| &item["id"])
+            .collect();
+        assert_eq!(found, [&json!(ids[1])]);
     }
 }

@@ -12,6 +12,29 @@ fn path(id: &str) -> Result<PathBuf, AppError> {
 }
 
 pub fn list(_ctx: &HostCtx) -> Result<Vec<Definition>, AppError> {
+    let mut values = files()?
+        .iter()
+        .map(|file| read(file))
+        .collect::<Result<Vec<_>, _>>()?;
+    values.sort_by_key(|a| a.name.to_lowercase());
+    Ok(values)
+}
+
+/// Up to `limit` definitions with an ID after `after`, by ID. Only those
+/// are read.
+pub fn page_after(after: Option<&str>, limit: usize) -> Result<Vec<Definition>, AppError> {
+    let mut files: Vec<(String, PathBuf)> = files()?
+        .into_iter()
+        .filter_map(|file| Some((file.file_stem()?.to_str()?.to_owned(), file)))
+        .filter(|(id, _)| after.is_none_or(|after| id.as_str() > after))
+        .collect();
+    files.sort();
+    files.truncate(limit);
+    files.iter().map(|(_, file)| read(file)).collect()
+}
+
+/// Every definition file in the library, unread.
+fn files() -> Result<Vec<PathBuf>, AppError> {
     resource_store::check_schema().map_err(AppError::io)?;
     let dir = directory();
     resource_store::reject_symlinks(&dir).map_err(AppError::io)?;
@@ -20,7 +43,7 @@ pub fn list(_ctx: &HostCtx) -> Result<Vec<Definition>, AppError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(e) => return Err(AppError::io(e)),
     };
-    let mut values = Vec::new();
+    let mut files = Vec::new();
     for entry in entries {
         let entry = entry.map_err(AppError::io)?;
         if entry.path().extension().and_then(|s| s.to_str()) != Some("json") {
@@ -30,14 +53,17 @@ pub fn list(_ctx: &HostCtx) -> Result<Vec<Definition>, AppError> {
         if meta.file_type().is_symlink() || !meta.is_file() {
             continue;
         }
-        let data = resource_store::read_limited(&entry.path()).map_err(AppError::io)?;
-        let item: Definition = serde_json::from_str(&data)
-            .map_err(|e| AppError::internal(format!("Invalid MCP library definition: {e}")))?;
-        validate_id_matches(&item, &entry.path())?;
-        values.push(item);
+        files.push(entry.path());
     }
-    values.sort_by_key(|a| a.name.to_lowercase());
-    Ok(values)
+    Ok(files)
+}
+
+fn read(file: &std::path::Path) -> Result<Definition, AppError> {
+    let data = resource_store::read_limited(file).map_err(AppError::io)?;
+    let item: Definition = serde_json::from_str(&data)
+        .map_err(|e| AppError::internal(format!("Invalid MCP library definition: {e}")))?;
+    validate_id_matches(&item, file)?;
+    Ok(item)
 }
 
 pub fn get(ctx: &HostCtx, id: &str) -> Result<Definition, AppError> {

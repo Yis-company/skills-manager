@@ -249,6 +249,40 @@ fn get(id: &str) -> Result<Value, AppError> {
     Ok(v)
 }
 
+/// Up to `limit` readable Library bundles with an ID after `after`, by ID,
+/// as ID and name. Only bundles up to the last one returned are read.
+pub fn names_after(after: Option<&str>, limit: usize) -> Result<Vec<(String, String)>, AppError> {
+    let root = lib_root();
+    crate::core::resource_store::reject_symlinks(&root).map_err(AppError::io)?;
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(root).map_err(AppError::io)? {
+        let entry = entry.map_err(AppError::io)?;
+        if entry
+            .file_type()
+            .map(|t| t.is_symlink() || !t.is_dir())
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if crate::core::resource_store::validate_id(&id).is_ok()
+            && after.is_none_or(|after| id.as_str() > after)
+        {
+            ids.push(id);
+        }
+    }
+    ids.sort();
+    // As in the listing, a bundle that cannot be read is left out.
+    Ok(ids
+        .into_iter()
+        .filter_map(|id| load_definition(&id).ok().map(|(def, _)| (id, def.name)))
+        .take(limit)
+        .collect())
+}
+
 fn list() -> Result<Vec<Value>, AppError> {
     let root = lib_root();
     crate::core::resource_store::reject_symlinks(&root).map_err(AppError::io)?;
