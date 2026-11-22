@@ -2277,4 +2277,24 @@ pub(crate) mod tests {
         assert_eq!(found["sync"]["checked_at"], Value::Null, "{found}");
         assert_eq!(found["sync"]["verified"], false);
     }
+
+    #[test]
+    fn an_unreadable_mcp_definition_does_not_block_another_mcp_connection() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        let other = fixture.mcp("other");
+        fixture.save_setup(json!([
+            { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"], "approved": approved(&mcp) },
+        ]));
+        let definitions = crate::core::resource_store::root().join("mcps");
+        let file = definitions.join(format!("{}.json", other["id"].as_str().unwrap()));
+        std::fs::write(&file, "not json").unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(item(&result, "mcp")["status"], "changed", "{result}");
+        assert_eq!(mcp_entry(&fixture, "docs")["command"], "npx");
+    }
 }

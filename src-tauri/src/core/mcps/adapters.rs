@@ -257,6 +257,16 @@ pub fn import(
     Ok(json!({"draft":input,"expectedRevision":expected_revision,"source":"native-config"}))
 }
 
+/// The Library definition with this ID, or `None` when there is none. Only
+/// that definition is read.
+fn find_definition(ctx: &HostCtx, id: &str) -> Result<Option<Definition>, AppError> {
+    match store::get(ctx, id) {
+        Ok(definition) => Ok(Some(definition)),
+        Err(error) if error.kind == crate::core::error::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn preview(
     ctx: &HostCtx,
     target: &Target,
@@ -265,7 +275,6 @@ pub fn preview(
 ) -> Result<Value, AppError> {
     let cfg = resolve(ctx, target)?;
     let entries = read_entries(&cfg)?;
-    let defs = store::list(ctx)?;
     let current = deployments_for(ctx, target)?;
     let mut prepared = Vec::new();
     let mut changes = Vec::new();
@@ -287,7 +296,8 @@ pub fn preview(
                 "An MCP preview can modify each definition only once",
             ));
         }
-        let def = defs.iter().find(|d| d.id == op.definition_id);
+        let found = find_definition(ctx, &op.definition_id)?;
+        let def = found.as_ref();
         let prior = current.iter().find(|d| {
             d.get("definitionId").and_then(Value::as_str) == Some(op.definition_id.as_str())
         });
@@ -506,7 +516,6 @@ pub fn apply(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
         .get("operations")
         .and_then(Value::as_array)
         .ok_or_else(|| AppError::invalid_input("MCP preview is invalid"))?;
-    let defs = store::list(ctx)?;
     let original = read_snapshot(&cfg)?;
     let mut entries = entries_from_snapshot(&cfg, original.as_deref())?;
     let mut raw = original.clone().unwrap_or_default();
@@ -534,7 +543,8 @@ pub fn apply(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
         }
         validate_server_name(name)?;
         validate_server_name(final_name)?;
-        let def = defs.iter().find(|d| d.id == def_id);
+        let found = find_definition(ctx, def_id)?;
+        let def = found.as_ref();
         if kind != "undeploy" && def.is_none() {
             return Err(AppError::not_found(
                 "MCP definition was removed after preview",

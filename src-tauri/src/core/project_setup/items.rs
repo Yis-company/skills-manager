@@ -3,7 +3,7 @@
 //! edited, unapproved or ambiguous is reported and left untouched, while
 //! independent items carry on.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -306,8 +306,8 @@ pub(super) fn sorted_agents<'a>(lists: impl Iterator<Item = &'a Vec<String>>) ->
 }
 
 /// Lookups made once per request rather than once per item. The Library is
-/// read only for the kinds and Skills a request names, so an unreadable item
-/// of another kind never blocks it.
+/// read only for the items a request names, so an unreadable item it does
+/// not name never blocks it.
 pub(super) struct Run<'a> {
     pub(super) ctx: &'a HostCtx,
     pub(super) project: ProjectRecord,
@@ -318,10 +318,12 @@ pub(super) struct Run<'a> {
     pub(super) instruction_recovery_pending: bool,
     /// The Library's Skills looked up so far, by ID; `None` for one it lacks.
     skills: RefCell<BTreeMap<String, Option<SkillRecord>>>,
-    /// The Library's Instruction bundles, as listed.
-    instructions: OnceCell<Vec<Value>>,
-    /// The Library's MCP connections, and this project's MCP deployments.
-    mcps: OnceCell<(Vec<Value>, Vec<Value>)>,
+    /// The Library's Instruction bundles and MCP connections looked up so
+    /// far, by ID; `None` for one the Library confirms is gone.
+    instructions: RefCell<BTreeMap<String, Option<Value>>>,
+    mcp_definitions: RefCell<BTreeMap<String, Option<Value>>>,
+    /// This project's MCP deployments looked up so far, by agent.
+    mcp_deployments: RefCell<BTreeMap<String, Vec<Value>>>,
     /// Agents with project-scoped MCP configuration.
     pub(super) mcp_agents: Vec<String>,
 }
@@ -348,8 +350,9 @@ impl<'a> Run<'a> {
             .collect();
         Ok(Self {
             skills: RefCell::default(),
-            instructions: OnceCell::new(),
-            mcps: OnceCell::new(),
+            instructions: RefCell::default(),
+            mcp_definitions: RefCell::default(),
+            mcp_deployments: RefCell::default(),
             skill_groups: agent_skill_groups(&ctx.store),
             available_skill_groups: available_agent_keys(&ctx.store, &project),
             instruction_recovery_pending: instructions::recovery_pending(ctx)?,
@@ -419,64 +422,66 @@ impl<'a> Run<'a> {
 
     /// The Library's Instruction bundle with this ID, or `None` when the
     /// Library confirms it is gone.
-    pub(super) fn instruction(&self, id: &str) -> Result<Option<&Value>, AppError> {
-        let listed = match self.instructions.get() {
-            Some(listed) => listed,
-            None => {
-                let reply = instructions::dispatch(self.ctx, json!({ "action": "list" }))?;
-                let listed = reply["items"].as_array().cloned().unwrap_or_default();
-                self.instructions.get_or_init(|| listed)
-            }
-        };
-        if let Some(found) = listed.iter().find(|item| item["id"] == id) {
-            return Ok(Some(found));
-        }
-        // Listing skips a bundle it cannot read; only a lookup tells that
-        // apart from one that is gone.
-        match instructions::dispatch(self.ctx, json!({ "action": "get", "id": id })) {
-            Err(error) if error.kind == ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
-            Ok(_) => Err(AppError::internal(format!(
-                "Instruction bundle {id} changed during this request"
-            ))),
-        }
+    pub(super) fn instruction(&self, id: &str) -> Result<Option<Value>, AppError> {
+        looked_up(&self.instructions, id, || {
+            let mut reply = instructions::dispatch(self.ctx, json!({ "action": "get", "id": id }))?;
+            Ok(reply["item"].take())
+        })
     }
 
-    fn mcps(&self) -> Result<&(Vec<Value>, Vec<Value>), AppError> {
-        if let Some(found) = self.mcps.get() {
-            return Ok(found);
-        }
-        let listed = |reply: Value, key: &str| reply[key].as_array().cloned().unwrap_or_default();
-        let definitions = listed(
-            mcps::dispatch(self.ctx, json!({ "action": "list" }))?,
-            "definitions",
-        );
-        let deployments: Vec<Value> = listed(
-            mcps::dispatch(self.ctx, json!({ "action": "deployments" }))?,
-            "deployments",
-        )
-        .into_iter()
-        .filter(|d| !self.project.id.is_empty() && d["target"]["projectId"] == self.project.id)
-        .collect();
-        Ok(self.mcps.get_or_init(|| (definitions, deployments)))
-    }
-
-    /// The Library's MCP connection with this ID.
-    pub(super) fn mcp_definition(&self, id: &str) -> Result<Option<&Value>, AppError> {
-        Ok(self.mcps()?.0.iter().find(|d| d["id"] == id))
+    /// The Library's MCP connection with this ID, or `None` when the
+    /// Library confirms it is gone.
+    pub(super) fn mcp_definition(&self, id: &str) -> Result<Option<Value>, AppError> {
+        looked_up(&self.mcp_definitions, id, || {
+            let mut reply = mcps::dispatch(self.ctx, json!({ "action": "get", "id": id }))?;
+            Ok(reply["definition"].take())
+        })
     }
 
     /// The override an agent's existing deployment of this MCP connection
     /// applies in this project, if any.
-    pub(super) fn mcp_override(&self, agent: &str, id: &str) -> Result<Option<&Value>, AppError> {
-        Ok(self
-            .mcps()?
-            .1
+    pub(super) fn mcp_override(&self, agent: &str, id: &str) -> Result<Option<Value>, AppError> {
+        if self.project.id.is_empty() {
+            return Ok(None);
+        }
+        let mut known = self.mcp_deployments.borrow_mut();
+        if !known.contains_key(agent) {
+            let target = json!({ "agentKey": agent, "projectId": self.project.id });
+            let mut reply = mcps::dispatch(
+                self.ctx,
+                json!({ "action": "deployments", "target": target }),
+            )?;
+            let deployments = match reply["deployments"].take() {
+                Value::Array(deployments) => deployments,
+                _ => Vec::new(),
+            };
+            known.insert(agent.to_owned(), deployments);
+        }
+        Ok(known[agent]
             .iter()
-            .find(|d| d["target"]["agentKey"] == agent && d["definitionId"] == id)
-            .map(|d| &d["overrideConfig"])
+            .find(|d| d["definitionId"] == id)
+            .map(|d| d["overrideConfig"].clone())
             .filter(|o| !o.is_null()))
     }
+}
+
+/// `id`'s entry in `known`, read with `read` the first time. Not found is
+/// `None`; any other failure is not kept, so a later lookup reads again.
+fn looked_up(
+    known: &RefCell<BTreeMap<String, Option<Value>>>,
+    id: &str,
+    read: impl FnOnce() -> Result<Value, AppError>,
+) -> Result<Option<Value>, AppError> {
+    if let Some(found) = known.borrow().get(id) {
+        return Ok(found.clone());
+    }
+    let found = match read() {
+        Ok(found) => Some(found),
+        Err(error) if error.kind == ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    known.borrow_mut().insert(id.to_owned(), found.clone());
+    Ok(found)
 }
 
 /// Not found means the Library confirms the item is gone; any other failure

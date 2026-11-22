@@ -70,11 +70,21 @@ fn read(file: &std::path::Path) -> Result<Definition, AppError> {
     Ok(item)
 }
 
-pub fn get(ctx: &HostCtx, id: &str) -> Result<Definition, AppError> {
-    list(ctx)?
-        .into_iter()
-        .find(|d| d.id == id)
-        .ok_or_else(|| AppError::not_found("MCP definition not found"))
+/// The definition with this ID. Only its file is read.
+pub fn get(_ctx: &HostCtx, id: &str) -> Result<Definition, AppError> {
+    let file = path(id)?;
+    resource_store::check_schema().map_err(AppError::io)?;
+    resource_store::reject_symlinks(&file).map_err(AppError::io)?;
+    match fs::symlink_metadata(&file) {
+        Ok(meta) if meta.is_file() => read(&file),
+        Ok(_) => Err(AppError::invalid_input(
+            "MCP definition must be a regular file",
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(AppError::not_found("MCP definition not found"))
+        }
+        Err(e) => Err(AppError::io(e)),
+    }
 }
 
 pub fn save(

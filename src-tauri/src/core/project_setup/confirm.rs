@@ -363,7 +363,7 @@ fn library_item(run: &Run, item: &SetupItem) -> Result<Option<Value>, AppError> 
         ItemKind::Skill => run
             .skill(&item.id)?
             .map(|skill| json!({ "name": skill.name })),
-        ItemKind::Instruction => run.instruction(&item.id)?.cloned(),
-        ItemKind::Mcp => run.mcp_definition(&item.id)?.cloned(),
+        ItemKind::Instruction => run.instruction(&item.id)?,
+        ItemKind::Mcp => run.mcp_definition(&item.id)?,
     })
 }

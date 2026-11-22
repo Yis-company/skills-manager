@@ -32,7 +32,7 @@ pub(in crate::core::project_setup) fn effective_values(
         .iter()
         .filter(|a| run.supports(ItemKind::Mcp, a))
     {
-        let value = effective_value(definition, run.mcp_override(agent, &item.id)?);
+        let value = effective_value(definition, run.mcp_override(agent, &item.id)?.as_ref());
         values.insert(agent.clone(), value);
     }
     Ok(values.into())
@@ -53,32 +53,34 @@ fn effective_value(definition: &Value, override_config: Option<&Value>) -> Value
 /// Whether `agent`'s approval of each item still covers what it runs now.
 /// Read after its preview is stored: that preview pins the definition
 /// revision and the deployment it was built from, and apply refuses it if
-/// either changes later.
+/// either changes later. Reads only these items' definitions.
 fn still_approved(
     ctx: &HostCtx,
     target: &Value,
     agent: &str,
     items: &[&SetupItem],
 ) -> Result<bool, AppError> {
-    let definitions = mcps::dispatch(ctx, json!({ "action": "list" }))?;
     let deployments = mcps::dispatch(ctx, json!({ "action": "deployments", "target": target }))?;
-    let listed = |reply: &Value, key: &str| reply[key].as_array().cloned().unwrap_or_default();
-    let (definitions, deployments) = (
-        listed(&definitions, "definitions"),
-        listed(&deployments, "deployments"),
-    );
-    Ok(items.iter().all(|item| {
-        let Some(definition) = definitions.iter().find(|d| d["id"] == item.id.as_str()) else {
-            return false;
+    for item in items {
+        let definition = match mcps::dispatch(ctx, json!({ "action": "get", "id": item.id })) {
+            Ok(reply) => reply["definition"].clone(),
+            Err(error) if error.kind == ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
         };
-        let override_config = deployments
-            .iter()
+        let override_config = deployments["deployments"]
+            .as_array()
+            .into_iter()
+            .flatten()
             .find(|d| d["definitionId"] == item.id.as_str())
             .map(|d| &d["overrideConfig"])
             .filter(|o| !o.is_null());
-        item.approved.as_ref().and_then(|a| a.get(agent))
-            == Some(&effective_value(definition, override_config))
-    }))
+        if item.approved.as_ref().and_then(|a| a.get(agent))
+            != Some(&effective_value(&definition, override_config))
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// The decision the item's approval needs now, if any: every agent's
@@ -120,7 +122,7 @@ pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step
     if agents.is_empty() {
         return Err(Step::because(Status::Blocked, "no_supported_agent"));
     }
-    let effective = effective_values(run, item, definition).map_err(Step::error)?;
+    let effective = effective_values(run, item, &definition).map_err(Step::error)?;
     match approval(item, &effective) {
         Some(reason) => Err(Step::asks(Status::NeedsReview, reason)),
         None => Ok(agents),

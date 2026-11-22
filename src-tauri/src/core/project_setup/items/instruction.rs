@@ -59,8 +59,12 @@ pub(super) fn instruction_readers(run: &Run, item: &SetupItem) -> Result<Vec<Str
         return Ok(Vec::new());
     };
     let mut readers = Vec::new();
-    for file in bundle["files"].as_array().into_iter().flatten() {
-        let path = file["path"].as_str().unwrap_or_default();
+    for path in bundle["files"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(path, _)| path)
+    {
         for reader in instructions::project_file_readers(path) {
             if !readers.iter().any(|known| known == reader) {
                 readers.push(reader.to_owned());
@@ -79,10 +83,10 @@ pub(super) fn instruction_shared_paths(
         return Ok(Vec::new());
     };
     Ok(bundle["files"]
-        .as_array()
+        .as_object()
         .into_iter()
         .flatten()
-        .filter_map(|file| file["path"].as_str())
+        .map(|(path, _)| path.as_str())
         .filter(|path| {
             instructions::project_file_readers(path).any(|r| !item.agents.iter().any(|a| a == r))
         })
