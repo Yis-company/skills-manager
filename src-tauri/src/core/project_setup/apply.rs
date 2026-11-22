@@ -2086,4 +2086,30 @@ pub(crate) mod tests {
         assert_eq!(refused.unwrap_err().kind, ErrorKind::InvalidInput);
         assert!(!fixture.path(".mcp.json").exists());
     }
+
+    #[test]
+    fn a_deleted_instruction_bundle_offers_restore_replace_or_revise() {
+        let fixture = Fixture::new();
+        let bundle = fixture.instruction(json!({ "CLAUDE.md": "Be brief.\n" }));
+        fixture.request(
+            "instructions_request",
+            json!({ "action": "remove", "id": bundle }),
+        );
+        fixture.save_setup(
+            json!([{ "kind": "instruction", "id": bundle, "agents": ["claude_code"] }]),
+        );
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(
+            item(&result, "instruction")["status"],
+            "missing",
+            "{result}"
+        );
+        let gone = decision(&result, "instruction");
+        assert_eq!(gone["reason"], "confirmed_absent");
+        assert_eq!(gone["choices"], json!(["restore", "replace", "revise"]));
+    }
 }

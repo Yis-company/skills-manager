@@ -189,6 +189,10 @@ fn load_definition(id: &str) -> Result<(Definition, BTreeMap<String, String>), A
     validate_library_schema()?;
     crate::core::resource_store::reject_symlinks(&path).map_err(AppError::io)?;
     let dir = path.parent().unwrap();
+    // A bundle with no folder is gone; one with a folder it cannot read is not.
+    if matches!(fs::symlink_metadata(dir), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+        return Err(AppError::not_found("instruction bundle not found"));
+    }
     for checked in [dir, &path] {
         let metadata = fs::symlink_metadata(checked).map_err(AppError::io)?;
         if metadata.file_type().is_symlink() {
