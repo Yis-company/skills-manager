@@ -1572,6 +1572,42 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_first_setup_reports_agents_that_cannot_take_an_item_here() {
+        let fixture = Fixture::new();
+        let tmp = fixture.repo._tmp.path();
+        // agent_d's own folder does not exist: it is not installed here.
+        let tools = json!([
+            { "key": "agent_a", "display_name": "Agent A", "skills_dir": tmp.join("agents/a/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+            { "key": "agent_d", "display_name": "Agent D", "skills_dir": tmp.join("agents/d/skills"),
+              "project_relative_skills_dir": ".d/skills" },
+        ]);
+        fixture
+            .ctx
+            .store
+            .set_setting("custom_tools", &tools.to_string())
+            .unwrap();
+        fixture.skill("s1", "review");
+        let fresh = tmp.join("work/fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+        let propose = |agents: Value| {
+            fixture.apply_with(json!({ "checkout_path": fresh, "operation_id": "op-1",
+                "items": [{ "kind": "skill", "id": "s1", "agents": agents }] }))
+        };
+
+        let proposed = propose(json!(["agent_a", "agent_d"])).unwrap();
+        assert_eq!(
+            decision(&proposed, "skill")["unsupported"],
+            json!(["agent_d"]),
+            "{proposed}"
+        );
+
+        let refused = propose(json!(["agent_d"])).unwrap_err();
+        assert!(refused.message.contains("agent_d"), "{}", refused.message);
+        assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
+    }
+
+    #[test]
     fn a_first_setup_names_the_shared_folder_that_adds_its_readers() {
         let fixture = Fixture::new();
         let tmp = fixture.repo._tmp.path();

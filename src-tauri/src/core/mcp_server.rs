@@ -443,6 +443,12 @@ fn apply_tool() -> Value {
                             "description": "With first_setup or unapproved_agents: the native paths, \
                                 relative to the checkout, that the other agents also read.",
                         },
+                        "unsupported": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "With first_setup: the asked agents this host \
+                                cannot set the item up for, such as one not installed here.",
+                        },
                         "choices": {
                             "type": "array",
                             "items": {

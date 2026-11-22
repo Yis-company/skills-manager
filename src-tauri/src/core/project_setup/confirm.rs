@@ -50,6 +50,10 @@ pub(super) struct Decision {
     /// With agents beyond those asked: the native paths shared with them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     paths: Vec<String>,
+    /// For a first setup: the asked agents this host cannot set the item up
+    /// for, such as one that is not installed here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    unsupported: Vec<String>,
     choices: Vec<Choice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     choice: Option<Choice>,
@@ -314,6 +318,7 @@ pub(super) fn decide(
     let found = library_item(run, item)?;
     let approve = || vec![Choice::Approve, Choice::Skip];
     let mut paths = Vec::new();
+    let mut unsupported = Vec::new();
     let (proposed, choices) = match (reason, item.kind, &found) {
         (Reason::ConfirmedAbsent, _, None) => (
             Value::Null,
@@ -321,6 +326,20 @@ pub(super) fn decide(
         ),
         (_, _, None) => return Ok(None),
         (Reason::FirstSetup, kind, Some(record)) => {
+            unsupported = item
+                .agents
+                .iter()
+                .filter(|agent| !run.supports(kind, agent))
+                .cloned()
+                .collect();
+            if !item.agents.is_empty() && unsupported.len() == item.agents.len() {
+                return Err(AppError::invalid_input(format!(
+                    "{} cannot be set up for {} on this host: each is not installed, not \
+                     enabled, or does not support this kind of item",
+                    record["name"].as_str().unwrap_or(&item.id),
+                    unsupported.join(", ")
+                )));
+            }
             let agents = with_readers(run, item)?;
             paths = shared_paths(run, item)?;
             let approved = match kind {
@@ -372,6 +391,7 @@ pub(super) fn decide(
         name: found.and_then(|record| record["name"].as_str().map(str::to_owned)),
         proposed,
         paths,
+        unsupported,
         choices,
         choice: None,
         replacement: None,
