@@ -141,6 +141,15 @@ pub fn writes(ctx: &HostCtx, request: &Value) -> Result<bool, AppError> {
     }
 }
 
+/// Whether `request` only reads, judged from the request alone: discovery,
+/// inspection, or an apply that only proposes a first setup.
+pub fn reads_only(request: &Value) -> Result<bool, AppError> {
+    Ok(match parse(request.clone())? {
+        Request::Apply(args) => apply::proposes_only(&args),
+        Request::Discover { .. } | Request::Inspect { .. } => true,
+    })
+}
+
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
     match parse(request)? {
         Request::Discover {

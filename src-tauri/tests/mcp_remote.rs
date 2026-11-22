@@ -684,3 +684,79 @@ fn discovery_and_inspection_on_a_host_change_nothing_after_serve_starts() {
     );
     assert_eq!(state(&remote), before);
 }
+
+#[test]
+fn a_lost_request_reusing_an_operation_id_never_returns_the_other_requests_result() {
+    let local = Local::new();
+    let remote = Machine::new();
+    remote.one_of_each();
+    let checkout = remote.checkout();
+    let first = apply_on_host(&local, remote.cli(), &checkout);
+    assert_eq!(first["structuredContent"]["outcome"], "verified_changed", "{first}");
+    let starts = Arc::new(AtomicUsize::new(0));
+
+    // The same operation_id, for this run's agents only: a different intent.
+    let result = local.tool(
+        losing_once(&remote, "before_admission", starts.clone()),
+        "apply_project_setup",
+        json!({ "host": HOST, "checkout_path": checkout, "operation_id": "op-1",
+                "agents": ["claude_code"] }),
+    );
+
+    let text = error_text(&result);
+    assert!(text.contains("different request"), "{result}");
+}
+
+#[test]
+fn a_lost_apply_with_null_items_is_never_sent_again() {
+    let local = Local::new();
+    let remote = Machine::new();
+    remote.one_of_each();
+    let checkout = remote.checkout();
+    let starts = Arc::new(AtomicUsize::new(0));
+
+    // Core reads null items as no items: an apply of the saved setup.
+    let result = local.tool(
+        losing_once(&remote, "before_admission", starts.clone()),
+        "apply_project_setup",
+        json!({ "host": HOST, "checkout_path": checkout, "operation_id": "op-1",
+                "items": null }),
+    );
+
+    assert!(error_text(&result).contains("Outcome unknown"), "{result}");
+    assert!(!checkout.join(".mcp.json").exists());
+}
+
+#[test]
+fn a_lost_request_whose_receipt_recorded_an_error_returns_that_error() {
+    let local = Local::new();
+    let remote = Machine::new();
+    remote.one_of_each();
+    let checkout = remote.checkout();
+    let probe = local.tool(
+        remote.cli(),
+        "inspect_project_setup_result",
+        json!({ "host": HOST, "checkout_path": checkout, "operation_id": "op-1" }),
+    );
+    let intent = json!({ "host": probe["structuredContent"]["host"], "checkout_path": checkout });
+    let error = AppError::target_conflict("taken", Vec::new());
+    remote
+        .store()
+        .resource_state_put(
+            "project_setup_receipt",
+            "op-1",
+            &json!({ "version": 2, "intent": intent, "error": error, "settled_at": 1 }),
+        )
+        .unwrap();
+    let starts = Arc::new(AtomicUsize::new(0));
+
+    let result = apply_on_host(
+        &local,
+        losing_once(&remote, "before_admission", starts.clone()),
+        &checkout,
+    );
+
+    let text = error_text(&result);
+    assert!(text.contains("taken"), "{result}");
+    assert!(!text.contains("Outcome unknown"), "{result}");
+}

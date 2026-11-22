@@ -7,9 +7,10 @@
 //! while the server runs, so `serve` starts once, and is started again when
 //! the host's connection details change. When the link drops, the server
 //! reconnects once. A request that only reads is sent again. An apply that may
-//! write is not: the server inspects the same `operation_id` and returns a
-//! recorded result, and otherwise reports Outcome unknown, since a missing
-//! receipt is not proof that nothing ran.
+//! write is sent again only once the server has inspected the same
+//! `operation_id` and found it settled, so the host answers from its receipt
+//! and refuses one recorded for a different request. Otherwise it reports
+//! Outcome unknown, since a missing receipt is not proof that nothing ran.
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
@@ -19,7 +20,7 @@ use serde_json::{json, Map, Value};
 
 use crate::core::error::{AppError, ErrorKind};
 use crate::core::host::{HostCtx, NoopEvents};
-use crate::core::project_setup::ReceiptState;
+use crate::core::project_setup::{self, ReceiptState};
 use crate::core::remote_session::{CliCommand, RemoteSession};
 use crate::core::skill_store::RemoteHostRecord;
 
@@ -105,11 +106,9 @@ impl<'a> Hosts<'a> {
                 let found = send(session, &inspect)
                     .map_err(|e| unknown(format!("inspecting it failed: {}", e.message)))?;
                 match serde_json::from_value(found["receipt"].clone()) {
-                    Ok(ReceiptState::Result) => {
-                        let mut recorded = found["recorded"].clone();
-                        recorded["from_receipt"] = json!(true);
-                        Ok(recorded)
-                    }
+                    // Settled, so asking again answers from the receipt, never
+                    // applies, and refuses a receipt of a different request.
+                    Ok(ReceiptState::Result | ReceiptState::Error) => send(session, &request),
                     _ => Err(unknown("it has not recorded a result".into())),
                 }
             }
@@ -122,11 +121,10 @@ impl<'a> Hosts<'a> {
 /// builds a first setup's proposal. Only these are sent again after the link
 /// drops.
 fn writes_nothing(request: &Map<String, Value>) -> bool {
-    request["action"] != "apply"
-        || (request.contains_key("items") && !request.contains_key("confirm"))
+    project_setup::reads_only(&Value::Object(request.clone())).unwrap_or(false)
 }
 
-/// Whether a session started for `started` reaches the machine `host` names.
+/// Whether a session started for `started` reaches the host `host` names.
 fn same_address(started: &RemoteHostRecord, host: &RemoteHostRecord) -> bool {
     (&started.ssh_target, &started.cli_path) == (&host.ssh_target, &host.cli_path)
 }

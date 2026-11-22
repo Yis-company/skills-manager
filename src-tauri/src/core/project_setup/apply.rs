@@ -83,7 +83,7 @@ pub(super) fn writes(ctx: &HostCtx, args: &Args) -> Result<bool, AppError> {
     if args.confirm.is_some() {
         return Ok(true);
     }
-    if args.items.is_some() {
+    if proposes_only(args) {
         return Ok(false);
     }
     let (_, project) = find_project(ctx, &args.checkout_path)?;
@@ -91,6 +91,11 @@ pub(super) fn writes(ctx: &HostCtx, args: &Args) -> Result<bool, AppError> {
         Some(project) if load_setup(ctx, &project.id)?.is_some() => Ok(true),
         _ => Err(no_saved_setup()),
     }
+}
+
+/// Whether `args` only ask for a first setup's proposal.
+pub(super) fn proposes_only(args: &Args) -> bool {
+    args.items.is_some() && args.confirm.is_none()
 }
 
 fn no_saved_setup() -> AppError {
