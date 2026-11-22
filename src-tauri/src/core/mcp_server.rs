@@ -466,9 +466,13 @@ fn apply_tool() -> Value {
                 "checkout_path": { "type": "string" },
                 "project_id": {
                     "type": ["string", "null"],
-                    "description": "Null until a first setup is confirmed.",
+                    "description": "Null until a first setup is confirmed, and with \
+                        outcome_unknown.",
                 },
-                "setup_version": { "type": "integer" },
+                "setup_version": {
+                    "type": ["integer", "null"],
+                    "description": "Null with outcome_unknown: the request recorded no result.",
+                },
                 "outcome": {
                     "type": "string",
                     "enum": [
@@ -657,4 +661,184 @@ fn inspect_tool() -> Value {
             "openWorldHint": false,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::{answer, Server};
+    use crate::core::error::AppError;
+    use crate::core::host::HostCtx;
+    use crate::core::project_setup::apply_tests::{approved, Fixture};
+    use crate::core::remote_session::CliCommand;
+
+    /// The JSON Schema rules the tools' output schemas use: type, enum,
+    /// required, properties, items and anyOf. Returns the first mismatch.
+    fn check(value: &Value, schema: &Value, at: &str) -> Result<(), String> {
+        if let Some(options) = schema["anyOf"].as_array() {
+            return match options.iter().any(|o| check(value, o, at).is_ok()) {
+                true => Ok(()),
+                false => Err(format!("{at}: {value} matches no anyOf option")),
+            };
+        }
+        let types: Vec<&str> = match &schema["type"] {
+            Value::String(one) => vec![one.as_str()],
+            Value::Array(many) => many.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        let type_of = match value {
+            Value::Null => "null",
+            Value::Bool(_) => "boolean",
+            Value::Number(n) if n.is_i64() || n.is_u64() => "integer",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        };
+        if !types.is_empty() && !types.contains(&type_of) {
+            return Err(format!("{at}: {value} is not of type {types:?}"));
+        }
+        if let Some(allowed) = schema["enum"].as_array() {
+            if !allowed.contains(value) {
+                return Err(format!("{at}: {value} is not one of {allowed:?}"));
+            }
+        }
+        if let Value::Object(fields) = value {
+            for key in schema["required"].as_array().into_iter().flatten() {
+                let key = key.as_str().unwrap_or_default();
+                if !fields.contains_key(key) {
+                    return Err(format!("{at}: {key} is missing"));
+                }
+            }
+            for (key, property) in schema["properties"].as_object().into_iter().flatten() {
+                if let Some(field) = fields.get(key) {
+                    check(field, property, &format!("{at}.{key}"))?;
+                }
+            }
+        }
+        if let (Value::Array(items), Some(schema)) = (value, schema.get("items")) {
+            for (n, item) in items.iter().enumerate() {
+                check(item, schema, &format!("{at}[{n}]"))?;
+            }
+        }
+        Ok(())
+    }
+
+    const KIND: &str = "project_setup_receipt";
+
+    #[test]
+    fn every_tool_result_matches_its_output_schema() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        fixture.save_setup(json!([
+            { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"], "approved": approved(&mcp) },
+        ]));
+        let fresh = fixture.repo._tmp.path().join("work/fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+        let open = || Ok::<HostCtx, _>(fixture.ctx.clone());
+        let cli: &CliCommand = &|_, _| unreachable!("no SSH host is named");
+        let server = Server::new(&open, &open, cli);
+        let tools = answer(
+            &server,
+            &json!({ "jsonrpc": "2.0", "id": 0, "method": "tools/list" }),
+        )
+        .unwrap();
+        let schema = |name: &str| {
+            tools["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap()["outputSchema"]
+                .clone()
+        };
+        let checkout = &fixture.checkout;
+        let unclaim = |operation_id: &str| {
+            let store = &fixture.ctx.store;
+            let mut receipt = store
+                .resource_state_get(KIND, operation_id)
+                .unwrap()
+                .unwrap();
+            receipt["version"] = json!(1);
+            receipt.as_object_mut().unwrap().remove("result");
+            store
+                .resource_state_put(KIND, operation_id, &receipt)
+                .unwrap();
+        };
+        let calls = [
+            (
+                "discover_project_setup",
+                json!({ "checkout_path": checkout }),
+            ),
+            ("discover_project_setup", json!({ "checkout_path": fresh })),
+            (
+                "apply_project_setup",
+                json!({ "checkout_path": fresh, "operation_id": "op-0",
+                "items": [{ "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"] }] }),
+            ),
+            (
+                "apply_project_setup",
+                json!({ "checkout_path": checkout, "operation_id": "op-1",
+                "evidence": true }),
+            ),
+            (
+                "apply_project_setup",
+                json!({ "checkout_path": checkout, "operation_id": "op-1" }),
+            ),
+            (
+                "inspect_project_setup_result",
+                json!({ "checkout_path": checkout,
+                "operation_id": "op-1", "evidence": true }),
+            ),
+            (
+                "inspect_project_setup_result",
+                json!({ "checkout_path": checkout,
+                "operation_id": "op-9" }),
+            ),
+            ("unclaim", json!("op-1")),
+            (
+                "apply_project_setup",
+                json!({ "checkout_path": checkout, "operation_id": "op-1" }),
+            ),
+            (
+                "inspect_project_setup_result",
+                json!({ "checkout_path": checkout,
+                "operation_id": "op-1" }),
+            ),
+            ("settle_with_error", json!("op-1")),
+            (
+                "inspect_project_setup_result",
+                json!({ "checkout_path": checkout,
+                "operation_id": "op-1" }),
+            ),
+        ];
+
+        for (n, (name, arguments)) in calls.into_iter().enumerate() {
+            if name == "unclaim" {
+                unclaim(arguments.as_str().unwrap());
+                continue;
+            }
+            if name == "settle_with_error" {
+                let store = &fixture.ctx.store;
+                let id = arguments.as_str().unwrap();
+                let mut receipt = store.resource_state_get(KIND, id).unwrap().unwrap();
+                receipt["error"] = json!(AppError::invalid_input("taken"));
+                store.resource_state_put(KIND, id, &receipt).unwrap();
+                continue;
+            }
+            let reply = answer(
+                &server,
+                &json!({ "jsonrpc": "2.0", "id": n, "method": "tools/call",
+                         "params": { "name": name, "arguments": arguments } }),
+            )
+            .unwrap();
+            let result = &reply["result"];
+            assert_eq!(result["isError"], false, "call {n}: {reply}");
+            let found = &result["structuredContent"];
+            if let Err(mismatch) = check(found, &schema(name), name) {
+                panic!("call {n}: {mismatch}\n{found}");
+            }
+        }
+    }
 }

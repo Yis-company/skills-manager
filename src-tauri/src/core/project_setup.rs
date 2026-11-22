@@ -20,6 +20,8 @@ mod apply;
 mod confirm;
 mod inspect;
 mod items;
+#[cfg(test)]
+pub(crate) use apply::tests as apply_tests;
 pub use inspect::ReceiptState;
 pub use items::mcp::mcp_value;
 

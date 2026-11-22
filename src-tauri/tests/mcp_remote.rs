@@ -692,7 +692,10 @@ fn a_lost_request_reusing_an_operation_id_never_returns_the_other_requests_resul
     remote.one_of_each();
     let checkout = remote.checkout();
     let first = apply_on_host(&local, remote.cli(), &checkout);
-    assert_eq!(first["structuredContent"]["outcome"], "verified_changed", "{first}");
+    assert_eq!(
+        first["structuredContent"]["outcome"], "verified_changed",
+        "{first}"
+    );
     let starts = Arc::new(AtomicUsize::new(0));
 
     // The same operation_id, for this run's agents only: a different intent.

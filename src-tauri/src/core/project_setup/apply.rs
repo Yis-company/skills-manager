@@ -436,7 +436,7 @@ pub(super) fn summarize(scope: &Value, operation_id: &str, items: &[ItemResult])
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -1902,8 +1902,16 @@ pub(super) mod tests {
 
         let instruction = item(&result, "instruction");
         assert_eq!(result["outcome"], "partial_success", "{result}");
-        assert_eq!(target_status(instruction, "claude_code"), "changed", "{instruction}");
-        assert_eq!(target_status(instruction, "codex"), "failed", "{instruction}");
+        assert_eq!(
+            target_status(instruction, "claude_code"),
+            "changed",
+            "{instruction}"
+        );
+        assert_eq!(
+            target_status(instruction, "codex"),
+            "failed",
+            "{instruction}"
+        );
         assert_eq!(
             std::fs::read_to_string(fixture.path("CLAUDE.md")).unwrap(),
             "Be brief.\n"
