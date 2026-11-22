@@ -292,6 +292,13 @@ pub(super) fn apply<'c>(
         }
     }
     let mut result = summarize(&scope, operation_id, &results);
+    // Agents named for this run were checked, not the saved setup's.
+    if args.agents.is_some() && result["outcome"] == json!(Outcome::VerifiedNoChange) {
+        result["next_action"] = json!(
+            "None: the checkout matches the saved items for the agents named for this run; \
+             other agents were not checked."
+        );
+    }
     if !proposal.decisions.is_empty() {
         result["next_action"] = json!(CONFIRM);
         result["proposal"] = json!(proposal);
@@ -1006,6 +1013,12 @@ pub(crate) mod tests {
         assert!(fixture.path(".b/skills/review").exists());
         assert!(!fixture.path(".a").exists());
         assert_eq!(saved(), before, "the saved setup is unchanged");
+        let again = fixture
+            .apply_with(json!({ "operation_id": "op-2", "agents": ["agent_b"] }))
+            .unwrap();
+        assert_eq!(again["outcome"], "verified_no_change");
+        let next = again["next_action"].as_str().unwrap();
+        assert!(next.contains("agents named for this run"), "{next}");
         let reused = fixture.apply("op-1").unwrap_err();
         assert!(
             reused.message.contains("different request"),
