@@ -544,6 +544,22 @@ fn a_lost_reply_whose_reconnect_fails_is_a_structured_outcome_unknown() {
 }
 
 #[test]
+fn a_lost_request_without_an_operation_id_never_panics() {
+    let local = Local::new();
+    let remote = TestHost::new();
+    remote.one_of_each();
+    let starts = Arc::new(AtomicUsize::new(0));
+
+    let result = local.tool(
+        losing_once(&remote, "before_admission", starts.clone()),
+        "apply_project_setup",
+        json!({ "host": HOST, "checkout_path": remote.checkout() }),
+    );
+
+    assert!(!result.to_string().contains("panicked"), "{result}");
+}
+
+#[test]
 fn a_lost_request_another_claimed_is_outcome_unknown_and_not_resumed() {
     let local = Local::new();
     let remote = TestHost::new();

@@ -63,6 +63,9 @@ impl<'a> Hosts<'a> {
         name: &str,
         request: Map<String, Value>,
     ) -> Result<Value, AppError> {
+        // Checked here first: a request the host would refuse is never sent,
+        // and recovery below can rely on its fields.
+        let reads_only = project_setup::reads_only(&Value::Object(request.clone()))?;
         let host = resolve(local, name)?;
         let runtime = self.runtime()?;
         let send = |session: &RemoteSession, request: &Map<String, Value>| {
@@ -82,7 +85,9 @@ impl<'a> Hosts<'a> {
             // Project setup itself raises no network errors: this is the link.
             Err(error) if error.kind == ErrorKind::Network => {
                 sessions.remove(&host.id);
-                if writes_nothing(&request) {
+                // Discovery, inspection and a proposal write nothing, so only
+                // they are sent again.
+                if reads_only {
                     let session = connect(self.cli, &host)?;
                     let session = &sessions.entry(host.id.clone()).or_insert((host, session)).1;
                     return send(session, &request);
@@ -95,12 +100,14 @@ impl<'a> Hosts<'a> {
                          not apply under a new operation_id until then."
                     )
                 };
-                let operation_id = request["operation_id"].as_str().unwrap_or_default();
+                let operation_id = request.get("operation_id").and_then(Value::as_str);
+                let operation_id = operation_id.unwrap_or_default();
                 // Unknown, not failed: a structured result, never a tool error.
                 let unknown = |host: &Value, checkout: &Value, why: String| {
                     project_setup::outcome_unknown(host, checkout, operation_id, &message(why))
                 };
-                let lost = |why: String| Ok(unknown(&json!(name), &request["checkout_path"], why));
+                let checkout = request.get("checkout_path").cloned().unwrap_or_default();
+                let lost = |why: String| Ok(unknown(&json!(name), &checkout, why));
                 let session = match RemoteSession::spawn(self.cli, &host, Arc::new(NoopEvents)) {
                     Ok(session) => session,
                     Err(e) => return lost(format!("reconnecting failed: {}", e.message)),
@@ -136,13 +143,6 @@ impl<'a> Hosts<'a> {
             answered => answered,
         }
     }
-}
-
-/// Whether `request` only reads: discovery, inspection, or an apply that
-/// builds a first setup's proposal. Only these are sent again after the link
-/// drops.
-fn writes_nothing(request: &Map<String, Value>) -> bool {
-    project_setup::reads_only(&Value::Object(request.clone())).unwrap_or(false)
 }
 
 /// Whether a session started for `started` reaches the host `host` names.
