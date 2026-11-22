@@ -192,6 +192,11 @@ fn discover(ctx: &HostCtx, checkout_path: &str, cursor: Option<&str>) -> Result<
         None => None,
     };
     let status = sync_service::sync_status(&ctx.store);
+    let failed_since = ctx
+        .store
+        .get_setting(crate::core::auto_backup::SETTING_LAST_ERROR)
+        .map_err(AppError::db)?
+        .is_some_and(|error| !error.trim().is_empty());
     Ok(json!({
         "host": status.host,
         "checkout_path": checkout,
@@ -205,8 +210,9 @@ fn discover(ctx: &HostCtx, checkout_path: &str, cursor: Option<&str>) -> Result<
             "reason": status.reason,
             "remote": status.remote,
             "last_sync_at": status.last_sync,
-            // The last-known status is as of the last sync.
-            "checked_at": status.last_sync,
+            // The last-known status is as of the last sync, unless a later
+            // failure set it: that failure's time is not recorded.
+            "checked_at": if failed_since { None } else { status.last_sync },
             "verified": false,
         },
         "conflicts": {
@@ -432,6 +438,34 @@ mod tests {
         // Offered for the caller to tell apart, never chosen for it.
         assert_eq!(found["candidates"][0]["id"], "main");
         assert_eq!(found["candidates"][0]["path"], json!(main));
+    }
+
+    #[test]
+    fn a_sync_failure_after_the_last_sync_has_no_checked_time() {
+        let host = Host::new();
+        let checkout = host.dir("app");
+        let store = &host.ctx.store;
+        store
+            .set_setting("backup_last_sync_at", "1700000000")
+            .unwrap();
+        store
+            .set_setting("backup_last_auto_error", "failed to connect to github.com")
+            .unwrap();
+
+        let found = host.discover(json!({ "checkout_path": checkout })).unwrap();
+
+        assert_eq!(
+            found["sync"]["last_sync_at"], 1700000000,
+            "{}",
+            found["sync"]
+        );
+        assert_eq!(
+            found["sync"]["checked_at"],
+            Value::Null,
+            "{}",
+            found["sync"]
+        );
+        assert_eq!(found["sync"]["verified"], false);
     }
 
     #[test]

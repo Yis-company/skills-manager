@@ -326,7 +326,8 @@ fn discover_tool() -> Value {
                 "sync": {
                     "type": "object",
                     "description": "This host's last recorded Sync state. checked_at is \
-                        the time of that state, null when this host has none. verified is \
+                        the time of that state: null when this host has none, or when a \
+                        later Sync failure set the state, whose time is not recorded. verified is \
                         false: discovery does not contact the Sync remote.",
                     "properties": {
                         "state": { "type": "string" },
