@@ -152,7 +152,18 @@ fn apply_for(
     if applied["status"] != "complete" {
         return Ok(Step::failed("apply_incomplete", false));
     }
-    Ok(if all_in_place(&preview(true)?) {
+    // A merged file holds the merge written, not the Library's text.
+    let merged = |change: &Value| {
+        change["status"] == "unchanged"
+            && changes(&stored, "merge")
+                .any(|m| m["path"] == change["path"] && m["content"] == change["previous"])
+    };
+    let verified = preview(true)?["changes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .all(|change| in_place(change) || merged(change));
+    Ok(if verified {
         Step::of(Status::Changed)
     } else {
         Step::failed("verification_failed", false)

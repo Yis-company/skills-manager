@@ -2112,4 +2112,38 @@ pub(crate) mod tests {
         assert_eq!(gone["reason"], "confirmed_absent");
         assert_eq!(gone["choices"], json!(["restore", "replace", "revise"]));
     }
+
+    #[test]
+    fn a_local_edit_merged_with_a_library_edit_on_other_lines_is_a_verified_change() {
+        let fixture = Fixture::new();
+        let saved = fixture.request(
+            "instructions_request",
+            json!({ "action": "save", "name": "Rules",
+                    "files": { "CLAUDE.md": "alpha\nmiddle\nbeta\n" } }),
+        );
+        let id = saved["item"]["id"].as_str().unwrap();
+        fixture.save_setup(json!([{ "kind": "instruction", "id": id, "agents": ["claude_code"] }]));
+        fixture.apply("op-1").unwrap();
+        std::fs::write(fixture.path("CLAUDE.md"), "local alpha\nmiddle\nbeta\n").unwrap();
+        fixture.request(
+            "instructions_request",
+            json!({ "action": "save", "id": id, "name": "Rules",
+                    "files": { "CLAUDE.md": "alpha\nmiddle\nremote beta\n" },
+                    "expected_revision": saved["item"]["revision"] }),
+        );
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-2", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(
+            item(&result, "instruction")["status"],
+            "changed",
+            "{result}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.path("CLAUDE.md")).unwrap(),
+            "local alpha\nmiddle\nremote beta\n"
+        );
+    }
 }
