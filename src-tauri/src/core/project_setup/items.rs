@@ -237,8 +237,13 @@ impl ItemResult {
 }
 
 /// An item's agents followed by every other agent that would read what it
-/// writes: each sees the item, so each must be approved.
+/// writes: each sees the item, so each must be approved. An item with no
+/// agent it can be set up for writes nothing, so it gains no readers: no
+/// targeting never expands to every agent.
 pub(super) fn with_readers(run: &Run, item: &SetupItem) -> Result<Vec<String>, AppError> {
+    if !item.agents.iter().any(|agent| run.supports(item.kind, agent)) {
+        return Ok(item.agents.clone());
+    }
     let readers = match item.kind {
         ItemKind::Skill => skill_readers(run, item),
         ItemKind::Instruction => instruction_readers(run, item)?,

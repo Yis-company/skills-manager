@@ -1951,4 +1951,21 @@ pub(crate) mod tests {
         assert_eq!(applied["agents"], json!(["codex"]));
         assert_eq!(saved(), before, "the saved setup is unchanged");
     }
+
+    #[test]
+    fn a_first_setup_with_no_agents_never_expands_to_a_shared_files_readers() {
+        let fixture = Fixture::new();
+        let bundle = fixture.instruction(json!({ "AGENTS.md": "Be brief.\n" }));
+        let fresh = fixture.repo._tmp.path().join("work/fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+
+        let proposed = fixture
+            .apply_with(json!({ "checkout_path": fresh, "operation_id": "op-1", "items": [
+                { "kind": "instruction", "id": bundle, "agents": [] },
+            ] }))
+            .unwrap();
+
+        let instruction = decision(&proposed, "instruction");
+        assert_eq!(instruction["proposed"]["agents"], json!([]), "{instruction}");
+    }
 }
