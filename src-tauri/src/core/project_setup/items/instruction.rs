@@ -70,6 +70,26 @@ pub(super) fn instruction_readers(run: &Run, item: &SetupItem) -> Result<Vec<Str
     Ok(readers)
 }
 
+/// The bundle's files that an agent outside the item also reads.
+pub(super) fn instruction_shared_paths(
+    run: &Run,
+    item: &SetupItem,
+) -> Result<Vec<String>, AppError> {
+    let Some(bundle) = run.instruction(&item.id)? else {
+        return Ok(Vec::new());
+    };
+    Ok(bundle["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|file| file["path"].as_str())
+        .filter(|path| {
+            instructions::project_file_readers(path).any(|r| !item.agents.iter().any(|a| a == r))
+        })
+        .map(str::to_owned)
+        .collect())
+}
+
 /// Apply an Instruction bundle for each of its agents. Files it would delete
 /// are deleted only when they are exactly `deletes_approved`.
 pub(super) fn apply_instruction(

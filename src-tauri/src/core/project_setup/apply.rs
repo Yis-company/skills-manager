@@ -1684,6 +1684,10 @@ pub(crate) mod tests {
             readers.as_array().unwrap().contains(&json!("codex")),
             "{readers}"
         );
+        assert_eq!(
+            decision(&result, "instruction")["paths"],
+            json!(["AGENTS.md"])
+        );
         let applied = confirm_with(
             &fixture,
             &fixture.checkout,
@@ -1973,5 +1977,30 @@ pub(crate) mod tests {
             json!([]),
             "{instruction}"
         );
+    }
+
+    #[test]
+    fn a_skill_folder_shared_with_another_agent_is_named_in_its_decision() {
+        let fixture = Fixture::new();
+        let tmp = fixture.repo._tmp.path();
+        let tools = json!([
+            { "key": "agent_a", "display_name": "Agent A", "skills_dir": tmp.join("agents/a/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+            { "key": "agent_c", "display_name": "Agent C", "skills_dir": tmp.join("agents/c/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+        ]);
+        fixture
+            .ctx
+            .store
+            .set_setting("custom_tools", &tools.to_string())
+            .unwrap();
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+
+        let result = fixture.apply("op-1").unwrap();
+
+        let skill = decision(&result, "skill");
+        assert_eq!(skill["proposed"], json!(["agent_a", "agent_c"]), "{skill}");
+        assert_eq!(skill["paths"], json!([".a/skills"]), "{skill}");
     }
 }

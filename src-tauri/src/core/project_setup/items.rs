@@ -22,9 +22,9 @@ pub(super) mod instruction;
 pub(super) mod mcp;
 pub(super) mod skill;
 
-use instruction::{apply_instruction, instruction_readers};
+use instruction::{apply_instruction, instruction_readers, instruction_shared_paths};
 use mcp::{apply_mcps, check_mcp};
-use skill::{apply_skill, skill_readers};
+use skill::{apply_skill, skill_readers, skill_shared_paths};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -260,6 +260,15 @@ pub(super) fn with_readers(run: &Run, item: &SetupItem) -> Result<Vec<String>, A
         }
     }
     Ok(agents)
+}
+
+/// The native paths `item` writes that agents outside it also read.
+pub(super) fn shared_paths(run: &Run, item: &SetupItem) -> Result<Vec<String>, AppError> {
+    Ok(match item.kind {
+        ItemKind::Skill => skill_shared_paths(run, item),
+        ItemKind::Instruction => instruction_shared_paths(run, item)?,
+        ItemKind::Mcp => Vec::new(),
+    })
 }
 
 /// How many `items` have each of `statuses`, by status name.

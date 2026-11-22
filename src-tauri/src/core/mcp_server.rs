@@ -372,6 +372,12 @@ fn apply_tool() -> Value {
                         "agents": { "type": "array", "items": { "type": "string" } },
                         "reason": { "type": "string" },
                         "proposed": {},
+                        "paths": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "With unapproved_agents: the native paths, \
+                                relative to the checkout, that the other agents also read.",
+                        },
                         "choices": {
                             "type": "array",
                             "items": {

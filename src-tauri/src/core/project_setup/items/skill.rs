@@ -62,10 +62,10 @@ fn inside(root: &Path, path: &Path) -> bool {
 
 type SkillGroup = (AgentSkillConfig, Vec<String>);
 
-/// The agent folders a Skill deploys to, and every agent that reads one of
-/// them: each sees the skill, so each must be approved. A copy-mode project
-/// also writes `.agents/skills`.
-fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Vec<String>) {
+/// The agent folders a Skill deploys to, and every agent folder group that
+/// reads one of them: each of its agents sees the skill, so each must be
+/// approved. A copy-mode project also writes `.agents/skills`.
+fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Vec<&'r SkillGroup>) {
     let groups: Vec<&SkillGroup> = run
         .skill_groups
         .iter()
@@ -78,21 +78,36 @@ fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Ve
         return (groups, Vec::new());
     }
     let copy_mode = is_copy_project(&run.project);
-    let readers = run
+    let reading = run
         .skill_groups
         .iter()
         .filter(|(config, _)| {
             groups.iter().any(|(group, _)| group.key == config.key)
                 || (copy_mode && project_deploy::is_vendored_dir(&config.relative_skills_dir))
         })
-        .flat_map(|(_, members)| members.iter().cloned())
         .collect();
-    (groups, readers)
+    (groups, reading)
 }
 
 /// Every agent that would read the folders a Skill deploys to.
 pub(super) fn skill_readers(run: &Run, item: &SetupItem) -> Vec<String> {
-    skill_targets(run, item).1
+    let (_, reading) = skill_targets(run, item);
+    reading
+        .into_iter()
+        .flat_map(|(_, members)| members.iter().cloned())
+        .collect()
+}
+
+/// The folders a Skill deploys to that an agent outside the item reads.
+pub(super) fn skill_shared_paths(run: &Run, item: &SetupItem) -> Vec<String> {
+    let (_, reading) = skill_targets(run, item);
+    let mut paths: Vec<String> = reading
+        .into_iter()
+        .filter(|(_, members)| members.iter().any(|m| !item.agents.contains(m)))
+        .map(|(config, _)| config.relative_skills_dir.clone())
+        .collect();
+    paths.dedup();
+    paths
 }
 
 /// Set a Skill up for each of its agents. Every slot is written and
@@ -112,7 +127,8 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Vec<AgentStep>,
     let root = Path::new(&project.path);
     let copy_mode = is_copy_project(project);
 
-    let (groups, readers) = skill_targets(run, item);
+    let (groups, _) = skill_targets(run, item);
+    let readers = skill_readers(run, item);
     if groups.is_empty() {
         return whole(Step::because(Status::Blocked, "no_supported_agent"));
     }

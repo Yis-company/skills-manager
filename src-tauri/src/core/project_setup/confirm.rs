@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use super::apply::{respond, summarize, Outcome};
 use super::items::instruction::instruction_deletes;
 use super::items::mcp::{approval, effective_values};
-use super::items::{sorted_agents, with_readers, Planned, Run, Status, Step};
+use super::items::{shared_paths, sorted_agents, with_readers, Planned, Run, Status, Step};
 use super::{save_setup, ItemKind, SavedSetup, SetupItem};
 use crate::commands::projects::add_project_core;
 use crate::core::error::AppError;
@@ -44,6 +44,9 @@ pub(super) struct Decision {
     /// agent, the full agent list, or the files an Instruction bundle would
     /// delete.
     proposed: Value,
+    /// With unapproved agents: the native paths shared with them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    paths: Vec<String>,
     choices: Vec<Choice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     choice: Option<Choice>,
@@ -275,6 +278,7 @@ pub(super) fn decide(
 ) -> Result<Option<Decision>, AppError> {
     let found = library_item(run, item)?;
     let approve = || vec![Choice::Approve, Choice::Skip];
+    let mut paths = Vec::new();
     let (proposed, choices) = match (reason, item.kind, &found) {
         (Reason::ConfirmedAbsent, _, None) => (
             Value::Null,
@@ -312,6 +316,7 @@ pub(super) fn decide(
             if agents == item.agents {
                 return Ok(None);
             }
+            paths = shared_paths(run, item)?;
             (json!(agents), approve())
         }
         (Reason::WouldDelete, ItemKind::Instruction, Some(_)) => {
@@ -330,6 +335,7 @@ pub(super) fn decide(
         reason,
         name: found.and_then(|record| record["name"].as_str().map(str::to_owned)),
         proposed,
+        paths,
         choices,
         choice: None,
         replacement: None,
