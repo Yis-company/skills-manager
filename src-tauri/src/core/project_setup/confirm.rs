@@ -47,7 +47,7 @@ pub(super) struct Decision {
     /// agent, the full agent list, or the files an Instruction bundle would
     /// delete.
     proposed: Value,
-    /// With unapproved agents: the native paths shared with them.
+    /// With agents beyond those asked: the native paths shared with them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     paths: Vec<String>,
     choices: Vec<Choice>,
@@ -105,9 +105,16 @@ pub(super) struct Plan {
 /// A first setup's proposal: nothing is written until it is confirmed.
 pub(super) fn propose(scope: &Value, operation_id: &str, proposal: Proposal) -> Value {
     let mut result = summarize(scope, operation_id, &[]);
-    result["agents"] = json!(sorted_agents(
-        proposal.decisions.iter().map(|decision| &decision.agents)
-    ));
+    // Every agent confirming would set items up for, readers included.
+    let agents: Vec<Vec<String>> = proposal
+        .decisions
+        .iter()
+        .map(|decision| {
+            serde_json::from_value(decision.proposed["agents"].clone())
+                .unwrap_or_else(|_| decision.agents.clone())
+        })
+        .collect();
+    result["agents"] = json!(sorted_agents(agents.iter()));
     result["outcome"] = json!(Outcome::ConfirmationNeeded);
     result["next_action"] = json!(CONFIRM);
     result["proposal"] = json!(proposal);
@@ -302,6 +309,7 @@ pub(super) fn decide(
         (_, _, None) => return Ok(None),
         (Reason::FirstSetup, kind, Some(record)) => {
             let agents = with_readers(run, item)?;
+            paths = shared_paths(run, item)?;
             let approved = match kind {
                 ItemKind::Mcp => {
                     let item = SetupItem {

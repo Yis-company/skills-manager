@@ -1480,6 +1480,38 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_first_setup_names_the_shared_folder_that_adds_its_readers() {
+        let fixture = Fixture::new();
+        let tmp = fixture.repo._tmp.path();
+        let tools = json!([
+            { "key": "agent_a", "display_name": "Agent A", "skills_dir": tmp.join("agents/a/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+            { "key": "agent_c", "display_name": "Agent C", "skills_dir": tmp.join("agents/c/skills"),
+              "project_relative_skills_dir": ".a/skills" },
+        ]);
+        fixture
+            .ctx
+            .store
+            .set_setting("custom_tools", &tools.to_string())
+            .unwrap();
+        fixture.skill("s1", "review");
+        let fresh = fixture.repo._tmp.path().join("work/fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+
+        let proposed = fixture
+            .apply_with(
+                json!({ "checkout_path": fresh, "operation_id": "op-1", "items": [
+                { "kind": "skill", "id": "s1", "agents": ["agent_a"] } ] }),
+            )
+            .unwrap();
+
+        let skill = decision(&proposed, "skill");
+        assert_eq!(skill["proposed"]["agents"], json!(["agent_a", "agent_c"]));
+        assert_eq!(skill["paths"], json!([".a/skills"]), "{proposed}");
+        assert_eq!(proposed["agents"], json!(["agent_a", "agent_c"]));
+    }
+
+    #[test]
     fn a_first_setup_proposed_on_one_host_cannot_be_confirmed_on_another() {
         let fixture = Fixture::new();
         let (fresh, _, proposed) = propose_first_setup(&fixture);

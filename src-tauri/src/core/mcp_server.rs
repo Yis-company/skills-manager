@@ -379,7 +379,7 @@ fn apply_tool() -> Value {
                         "paths": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "With unapproved_agents: the native paths, \
+                            "description": "With first_setup or unapproved_agents: the native paths, \
                                 relative to the checkout, that the other agents also read.",
                         },
                         "choices": {
