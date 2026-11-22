@@ -16,7 +16,7 @@ use super::apply::{load_setup, receipt as find_receipt, without_evidence, Outcom
 use super::items::{check_setup, counts, Run, Status};
 use super::{find_project, SetupItem};
 use crate::core::error::{AppError, ErrorKind};
-use crate::core::git_backup_store::effective_device_name;
+use crate::core::git_backup_store::device_name;
 use crate::core::host::HostCtx;
 
 /// What this host recorded for an `operation_id`.
@@ -38,7 +38,7 @@ pub(super) fn inspect(
     evidence: bool,
 ) -> Result<Value, AppError> {
     let (checkout, project) = find_project(ctx, checkout_path)?;
-    let host = effective_device_name(&ctx.store);
+    let host = device_name(&ctx.store);
     let receipt = find_receipt(ctx, operation_id)?;
     if let Some(receipt) = &receipt {
         let intent = &receipt.intent;

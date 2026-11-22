@@ -428,6 +428,25 @@ mod tests {
     }
 
     #[test]
+    fn discovery_and_inspection_never_save_a_default_host_name() {
+        let host = Host::new();
+        let checkout = host.dir("app");
+        let unset = || host.ctx.store.get_setting("backup_device_name").unwrap();
+        assert_eq!(unset(), None);
+
+        host.discover(json!({ "checkout_path": checkout })).unwrap();
+        dispatch(
+            &host.ctx,
+            "project_setup_request",
+            &json!({ "request": { "action": "inspect", "checkout_path": checkout,
+                                  "operation_id": "op-1" } }),
+        )
+        .unwrap();
+
+        assert_eq!(unset(), None);
+    }
+
+    #[test]
     fn an_unregistered_checkout_is_reported_without_creating_records() {
         let host = Host::new();
         let checkout = host.dir("fresh");
