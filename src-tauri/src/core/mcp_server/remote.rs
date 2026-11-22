@@ -87,33 +87,42 @@ impl<'a> Hosts<'a> {
                     let session = &sessions.entry(host.id.clone()).or_insert((host, session)).1;
                     return send(session, &request);
                 }
-                let unknown = |why: String| {
-                    AppError::network(format!(
+                let message = |why: String| {
+                    format!(
                         "Outcome unknown: the connection to {name} was lost during apply, and \
                          {why}. Leave the checkout as it is. Inspect again later: call \
                          inspect_project_setup_result with the same host and operation_id; do \
                          not apply under a new operation_id until then."
-                    ))
+                    )
                 };
-                let session = RemoteSession::spawn(self.cli, &host, Arc::new(NoopEvents))
-                    .map_err(|e| unknown(format!("reconnecting failed: {}", e.message)))?;
+                let operation_id = request["operation_id"].as_str().unwrap_or_default();
+                // Unknown, not failed: a structured result, never a tool error.
+                let unknown = |host: &Value, checkout: &Value, why: String| {
+                    project_setup::outcome_unknown(host, checkout, operation_id, &message(why))
+                };
+                let lost = |why: String| Ok(unknown(&json!(name), &request["checkout_path"], why));
+                let session = match RemoteSession::spawn(self.cli, &host, Arc::new(NoopEvents)) {
+                    Ok(session) => session,
+                    Err(e) => return lost(format!("reconnecting failed: {}", e.message)),
+                };
                 let session = &sessions.entry(host.id.clone()).or_insert((host, session)).1;
                 let mut inspect: Map<String, Value> = ["checkout_path", "operation_id", "evidence"]
                     .into_iter()
                     .filter_map(|key| Some((key.to_string(), request.get(key)?.clone())))
                     .collect();
                 inspect.insert("action".into(), json!("inspect"));
-                let found = send(session, &inspect)
-                    .map_err(|e| unknown(format!("inspecting it failed: {}", e.message)))?;
+                let found = match send(session, &inspect) {
+                    Ok(found) => found,
+                    Err(e) => return lost(format!("inspecting it failed: {}", e.message)),
+                };
                 match serde_json::from_value(found["receipt"].clone()) {
                     // Settled, so asking again answers from the receipt, never
                     // applies, and refuses a receipt of a different request.
                     Ok(ReceiptState::Result | ReceiptState::Error) => send(session, &request),
-                    _ => Ok(project_setup::outcome_unknown(
+                    _ => Ok(unknown(
                         &found["host"],
                         &found["checkout_path"],
-                        request["operation_id"].as_str().unwrap_or_default(),
-                        &unknown("it has not recorded a result".into()).message,
+                        "it has not recorded a result".into(),
                     )),
                 }
             }

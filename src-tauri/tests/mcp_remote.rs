@@ -522,6 +522,28 @@ fn a_request_lost_with_no_receipt_is_outcome_unknown_and_never_replayed() {
 }
 
 #[test]
+fn a_lost_reply_whose_reconnect_fails_is_a_structured_outcome_unknown() {
+    let local = Local::new();
+    let remote = Machine::new();
+    remote.one_of_each();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let losing = losing_once(&remote, "after_admission", starts.clone());
+    let then_unreachable = move |host: &RemoteHostRecord, args: &[&str]| {
+        if starts.load(Ordering::SeqCst) > 0 {
+            starts.fetch_add(1, Ordering::SeqCst);
+            return Command::new("false");
+        }
+        losing(host, args)
+    };
+
+    let result = apply_on_host(&local, then_unreachable, &remote.checkout());
+
+    let next_action = unknown_next_action(&result);
+    assert!(next_action.contains("reconnecting failed"), "{result}");
+    assert_eq!(result["structuredContent"]["operation_id"], "op-1");
+}
+
+#[test]
 fn a_lost_request_another_claimed_is_outcome_unknown_and_not_resumed() {
     let local = Local::new();
     let remote = Machine::new();
