@@ -41,7 +41,7 @@ pub(super) fn inspect(
     let host = effective_device_name(&ctx.store);
     let receipt = find_receipt(ctx, operation_id)?;
     if let Some(receipt) = &receipt {
-        let intent = &receipt["intent"];
+        let intent = &receipt.intent;
         if intent["host"] != host.as_str() || intent["checkout_path"] != json!(checkout) {
             return Err(AppError::invalid_input(
                 "This operation_id belongs to another host or checkout; inspect it there",
@@ -50,21 +50,21 @@ pub(super) fn inspect(
     }
     let receipt_state = match &receipt {
         None => ReceiptState::Missing,
-        Some(receipt) if receipt["result"].is_object() => ReceiptState::Result,
-        Some(receipt) if !receipt["error"].is_null() => ReceiptState::Error,
+        Some(receipt) if receipt.result.as_ref().is_some_and(Value::is_object) => {
+            ReceiptState::Result
+        }
+        Some(receipt) if receipt.error.is_some() => ReceiptState::Error,
         Some(_) => ReceiptState::IntentOnly,
     };
-    let error: Option<AppError> = receipt.as_ref().and_then(|receipt| {
-        (receipt_state == ReceiptState::Error).then(|| {
-            serde_json::from_value(receipt["error"].clone()).unwrap_or_else(|_| {
-                AppError::internal("This operation_id recorded an unreadable error")
-            })
-        })
-    });
-    let targets: Option<Vec<SetupItem>> = receipt
+    let error: Option<AppError> = receipt
         .as_ref()
-        .and_then(|receipt| serde_json::from_value(receipt["targets"].clone()).ok());
-    let mut recorded = receipt.map_or(Value::Null, |receipt| receipt["result"].clone());
+        .and_then(|receipt| receipt.error.clone())
+        .filter(|_| receipt_state == ReceiptState::Error);
+    let targets: Option<Vec<SetupItem>> =
+        receipt.as_ref().and_then(|receipt| receipt.targets.clone());
+    let mut recorded = receipt
+        .and_then(|receipt| receipt.result)
+        .unwrap_or(Value::Null);
     without_evidence(&mut recorded, evidence);
 
     let project_id = project.as_ref().map(|project| project.id.clone());

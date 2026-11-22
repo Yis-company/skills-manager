@@ -30,6 +30,24 @@ const RECEIPT_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// The most expired receipts one apply deletes.
 const RECEIPT_PRUNE_LIMIT: usize = 100;
 
+/// What `project_setup_receipt` records for one `operation_id`: claimed at
+/// version 1 with the request's intent and the items it resolved, then
+/// settled at version 2 with its result or its error.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct Receipt {
+    pub(super) version: u64,
+    pub(super) intent: Value,
+    #[serde(default)]
+    pub(super) targets: Option<Vec<SetupItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) error: Option<AppError>,
+    /// Epoch milliseconds; see [`RECEIPT_RETENTION_MS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) settled_at: Option<i64>,
+}
+
 /// The apply action's arguments.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -207,23 +225,33 @@ pub(super) fn apply<'c>(
         )
         .map_err(AppError::db)?;
     // The items as resolved for this run, so inspection checks the same ones.
-    let claim = json!({ "version": 1, "intent": intent, "targets": items });
+    let claim = Receipt {
+        version: 1,
+        intent: intent.clone(),
+        targets: Some(items.clone()),
+        result: None,
+        error: None,
+        settled_at: None,
+    };
     if !ctx
         .store
-        .resource_state_put_versioned(RECEIPT_KIND, operation_id, 0, &claim)
+        .resource_state_put_versioned(RECEIPT_KIND, operation_id, 0, &json!(claim))
         .map_err(AppError::db)?
     {
         return answer_from_receipt(ctx, operation_id, &intent, evidence);
     }
     // Whether the outcome is on record. Once anything may have been
     // written, an outcome that is not is reported as unknown.
-    let settle = |outcome: (&str, Value)| {
-        let mut receipt = claim.clone();
-        receipt["version"] = json!(2);
-        receipt[outcome.0] = outcome.1;
-        receipt["settled_at"] = json!(chrono::Utc::now().timestamp_millis());
+    let settle = |outcome: Result<&Value, &AppError>| {
+        let receipt = Receipt {
+            version: 2,
+            result: outcome.ok().cloned(),
+            error: outcome.err().cloned(),
+            settled_at: Some(chrono::Utc::now().timestamp_millis()),
+            ..claim.clone()
+        };
         ctx.store
-            .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &receipt)
+            .resource_state_put_versioned(RECEIPT_KIND, operation_id, 1, &json!(receipt))
             .unwrap_or(false)
     };
     let unrecorded = || {
@@ -243,7 +271,7 @@ pub(super) fn apply<'c>(
     if plan.save {
         match save_confirmed(&mut run, &proposal, items.clone()) {
             Ok(version) => proposal.setup_version = version,
-            Err(error) if settle(("error", json!(error))) => return Err(error),
+            Err(error) if settle(Err(&error)) => return Err(error),
             Err(_) => return Ok(unrecorded()),
         }
         scope["project_id"] = json!(run.project.id);
@@ -267,7 +295,7 @@ pub(super) fn apply<'c>(
         result["proposal"] = json!(proposal);
     }
     result["items"] = json!(results);
-    if !settle(("result", result.clone())) {
+    if !settle(Ok(&result)) {
         return Ok(unrecorded());
     }
     Ok(respond(result, false, evidence))
@@ -326,10 +354,13 @@ fn unregistered(ctx: &HostCtx, path: String) -> Result<ProjectRecord, AppError> 
     })
 }
 
-pub(super) fn receipt(ctx: &HostCtx, operation_id: &str) -> Result<Option<Value>, AppError> {
+pub(super) fn receipt(ctx: &HostCtx, operation_id: &str) -> Result<Option<Receipt>, AppError> {
     ctx.store
         .resource_state_get(RECEIPT_KIND, operation_id)
-        .map_err(AppError::db)
+        .map_err(AppError::db)?
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| AppError::internal(format!("This operation_id's receipt is unreadable: {e}")))
 }
 
 fn answer_from_receipt(
@@ -338,21 +369,17 @@ fn answer_from_receipt(
     intent: &Value,
     evidence: bool,
 ) -> Result<Value, AppError> {
-    let receipt = receipt(ctx, operation_id)?.unwrap_or_default();
-    if receipt["intent"] != *intent {
+    let receipt = receipt(ctx, operation_id)?.filter(|receipt| receipt.intent == *intent);
+    let Some(receipt) = receipt else {
         return Err(AppError::invalid_input(
             "This operation_id was used for a different request; use a new one",
         ));
+    };
+    if let Some(error) = receipt.error {
+        return Err(error);
     }
-    if !receipt["error"].is_null() {
-        return Err(
-            serde_json::from_value(receipt["error"].clone()).unwrap_or_else(|_| {
-                AppError::internal("This operation_id recorded an unreadable error")
-            }),
-        );
-    }
-    if receipt["result"].is_object() {
-        return Ok(respond(receipt["result"].clone(), true, evidence));
+    if let Some(result) = receipt.result.filter(Value::is_object) {
+        return Ok(respond(result, true, evidence));
     }
     let unknown = outcome_unknown(
         &intent["host"],
