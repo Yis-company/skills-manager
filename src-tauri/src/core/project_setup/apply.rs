@@ -2321,28 +2321,47 @@ pub(crate) mod tests {
         let fixture = Fixture::new();
         let mcp = fixture.mcp("docs");
         let tmp = fixture.repo._tmp.path();
-        let fresh = tmp.join("work/fresh");
-        std::fs::create_dir_all(&fresh).unwrap();
-        let fresh = fresh.canonicalize().unwrap();
-        let shared = tmp.join("shared/claude");
-        std::fs::create_dir_all(&shared).unwrap();
-        std::os::unix::fs::symlink(&shared, fresh.join(".claude")).unwrap();
-        let proposed = fixture
-            .apply_with(json!({ "checkout_path": fresh, "operation_id": "op-1",
-                "items": [{ "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"] }] }))
-            .unwrap();
+        // The agent folder itself, its skills folder, or a dangling skills link.
+        for (n, link, target_exists) in [
+            (1, ".claude", true),
+            (2, ".claude/skills", true),
+            (3, ".claude/skills", false),
+        ] {
+            let fresh = tmp.join(format!("work/fresh{n}"));
+            std::fs::create_dir_all(fresh.join(".claude")).unwrap();
+            if link == ".claude" {
+                std::fs::remove_dir(fresh.join(".claude")).unwrap();
+            }
+            let fresh = fresh.canonicalize().unwrap();
+            let shared = tmp.join(format!("shared/claude{n}"));
+            if target_exists {
+                std::fs::create_dir_all(&shared).unwrap();
+            }
+            std::os::unix::fs::symlink(&shared, fresh.join(link)).unwrap();
+            let proposed = fixture
+                .apply_with(
+                    json!({ "checkout_path": fresh, "operation_id": format!("op-{n}a"),
+                    "items": [{ "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"] }] }),
+                )
+                .unwrap();
 
-        let error =
-            confirm_with(&fixture, &fresh, "op-2", confirm(&proposed, "approve")).unwrap_err();
+            let error = confirm_with(
+                &fixture,
+                &fresh,
+                &format!("op-{n}b"),
+                confirm(&proposed, "approve"),
+            )
+            .unwrap_err();
 
-        assert!(
-            error.message.contains("outside the checkout"),
-            "{}",
-            error.message
-        );
-        assert_eq!(std::fs::read_dir(&shared).unwrap().count(), 0);
-        assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
-        assert!(!fresh.join(".mcp.json").exists());
+            assert!(
+                error.message.contains("outside the checkout"),
+                "{link}: {}",
+                error.message
+            );
+            assert!(!shared.exists() || std::fs::read_dir(&shared).unwrap().count() == 0);
+            assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
+            assert!(!fresh.join(".mcp.json").exists());
+        }
     }
 
     #[test]

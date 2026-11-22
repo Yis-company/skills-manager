@@ -64,18 +64,18 @@ fn same_content(found: &Path, wanted: &Path) -> bool {
 /// that is a link elsewhere, such as an agent folder shared between
 /// checkouts, would take the write outside it.
 pub(in crate::core::project_setup) fn inside(root: &Path, path: &Path) -> bool {
-    if path.components().any(|c| c == Component::ParentDir) {
+    path.parent()
+        .is_some_and(|folder| folder_inside(root, folder))
+}
+
+/// Whether `folder` itself, followed through every link on the way (one not
+/// created yet included), resolves inside the checkout at `root`.
+pub(in crate::core::project_setup) fn folder_inside(root: &Path, folder: &Path) -> bool {
+    if folder.components().any(|c| c == Component::ParentDir) {
         return false;
     }
-    let Ok(root) = root.canonicalize() else {
-        return false;
-    };
-    // The nearest folder that exists: those below it are created as folders.
-    path.parent()
-        .into_iter()
-        .flat_map(Path::ancestors)
-        .find_map(|dir| dir.canonicalize().ok())
-        .is_some_and(|dir| dir.starts_with(&root))
+    root.canonicalize()
+        .is_ok_and(|root| resolved(folder).starts_with(root))
 }
 
 type SkillGroup = (AgentSkillConfig, Vec<String>);
