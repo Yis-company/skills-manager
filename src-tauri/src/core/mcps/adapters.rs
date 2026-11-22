@@ -762,23 +762,39 @@ pub fn register_self(ctx: &HostCtx, client: Client, command: &Path) -> Result<Va
 }
 
 /// Replace `cfg`'s file with `patched` only while it still holds `original`:
-/// its client may have saved a setting since it was read.
+/// its client may have saved a setting since it was read. The check runs
+/// just before the rename. A client save that lands in the instant between
+/// them cannot be seen without a lock the clients do not take; one that
+/// lands after the rename replaces ours, and the read back reports it.
 fn replace_if_unchanged(
     cfg: &ConfigTarget,
     original: Option<&str>,
     patched: &str,
 ) -> Result<(), AppError> {
-    if read_snapshot(cfg)?.as_deref() != original {
-        let path = cfg.path.to_string_lossy().into_owned();
-        return Err(AppError::target_conflict(
-            format!("{path} changed while registering; nothing was written, register again"),
+    let path = cfg.path.to_string_lossy().into_owned();
+    let conflict = |message: &str| {
+        AppError::target_conflict(
+            format!("{path} changed while registering; {message}, register again"),
             vec![TargetConflictDetail {
-                path,
+                path: path.clone(),
                 reason: "changed while registering".into(),
             }],
-        ));
+        )
+    };
+    let unchanged = || {
+        read_snapshot(cfg)
+            .map(|now| now.as_deref() == original)
+            .map_err(|e| anyhow::anyhow!(e.message))
+    };
+    if !resource_store::atomic_write_if(&cfg.path, patched.as_bytes(), unchanged)
+        .map_err(AppError::io)?
+    {
+        return Err(conflict("nothing was written"));
     }
-    resource_store::atomic_write(&cfg.path, patched.as_bytes()).map_err(AppError::io)
+    if read_snapshot(cfg)?.as_deref() != Some(patched) {
+        return Err(conflict("its save replaced the registration"));
+    }
+    Ok(())
 }
 
 fn verify_scoped_patch(

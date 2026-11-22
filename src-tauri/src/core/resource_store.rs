@@ -125,6 +125,18 @@ pub fn read_limited(path: &Path) -> Result<String> {
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    atomic_write_if(path, bytes, || Ok(true)).map(|_| ())
+}
+
+/// [`atomic_write`], but `still` is asked last, after the new content is on
+/// disk and just before it replaces `path`: when it says no, nothing is
+/// replaced and this returns false. Keeps the gap in which another writer's
+/// save to `path` can be lost as short as a rename allows.
+pub fn atomic_write_if(
+    path: &Path,
+    bytes: &[u8],
+    still: impl FnOnce() -> Result<bool>,
+) -> Result<bool> {
     if bytes.len() as u64 > MAX_FILE_BYTES {
         bail!("File exceeds the 1 MiB editing limit");
     }
@@ -141,8 +153,11 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     temp.write_all(bytes)?;
     temp.as_file().sync_all()?;
     reject_symlinks(path)?;
+    if !still()? {
+        return Ok(false);
+    }
     temp.persist(path).map_err(|e| e.error)?;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -158,6 +173,19 @@ mod tests {
             safe_relative("docs/testing.md").unwrap(),
             PathBuf::from("docs/testing.md")
         );
+    }
+
+    #[test]
+    fn a_refused_conditional_write_leaves_the_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().canonicalize().unwrap().join("config.json");
+        atomic_write(&path, b"client").unwrap();
+
+        let written = atomic_write_if(&path, b"ours", || Ok(false)).unwrap();
+
+        assert!(!written);
+        assert_eq!(read_limited(&path).unwrap(), "client");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]
