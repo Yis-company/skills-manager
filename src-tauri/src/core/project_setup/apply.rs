@@ -871,6 +871,39 @@ pub(crate) mod tests {
         std::fs::create_dir_all(tmp.join("agents/b")).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_agent_folder_linked_to_another_agents_folder_needs_that_agent_approved() {
+        let fixture = Fixture::new();
+        with_agent_b(&fixture);
+        std::fs::create_dir_all(fixture.path(".a")).unwrap();
+        std::os::unix::fs::symlink(fixture.path(".a"), fixture.path(".b")).unwrap();
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(
+            item(&result, "skill")["reason"],
+            "unapproved_agents",
+            "{result}"
+        );
+        assert_eq!(
+            result["proposal"]["decisions"][0]["proposed"],
+            json!(["agent_a", "agent_b"])
+        );
+        assert!(!fixture.path(".a/skills").exists(), "nothing was added");
+
+        // Approved for both, the one shared folder gets the Skill once.
+        let applied = fixture
+            .apply_with(json!({ "operation_id": "op-2", "confirm": confirm(&result, "approve") }))
+            .unwrap();
+        assert_eq!(applied["outcome"], "verified_changed", "{applied}");
+        assert!(fixture.path(".a/skills/review").exists());
+    }
+
     #[test]
     fn agents_named_in_a_request_apply_to_that_run_only() {
         let fixture = Fixture::new();

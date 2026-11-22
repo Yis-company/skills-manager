@@ -63,11 +63,25 @@ pub(in crate::core::project_setup) fn inside(root: &Path, path: &Path) -> bool {
         .is_some_and(|dir| dir.starts_with(&root))
 }
 
+/// Where `path` leads: its nearest existing folder resolved through links,
+/// with the parts below it that do not exist yet.
+fn resolved(path: &Path) -> PathBuf {
+    for dir in path.ancestors() {
+        if let Ok(real) = dir.canonicalize() {
+            return path
+                .strip_prefix(dir)
+                .map_or_else(|_| path.to_path_buf(), |rest| real.join(rest));
+        }
+    }
+    path.to_path_buf()
+}
+
 type SkillGroup = (AgentSkillConfig, Vec<String>);
 
 /// The agent folders a Skill is added to, and every agent folder group that
 /// reads one of them: each of its agents sees the skill, so each must be
-/// approved. A copy-mode project also writes `.agents/skills`.
+/// approved, also through a folder linked to it. A copy-mode project also
+/// writes `.agents/skills`.
 fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Vec<&'r SkillGroup>) {
     let groups: Vec<&SkillGroup> = run
         .skill_groups
@@ -81,11 +95,17 @@ fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Ve
         return (groups, Vec::new());
     }
     let copy_mode = is_copy_project(&run.project);
+    let root = Path::new(&run.project.path);
+    let written: Vec<PathBuf> = groups
+        .iter()
+        .map(|(config, _)| resolved(&root.join(&config.relative_skills_dir)))
+        .collect();
     let reading = run
         .skill_groups
         .iter()
         .filter(|(config, _)| {
             groups.iter().any(|(group, _)| group.key == config.key)
+                || written.contains(&resolved(&root.join(&config.relative_skills_dir)))
                 || (copy_mode && project_deploy::is_vendored_dir(&config.relative_skills_dir))
         })
         .collect();
@@ -165,7 +185,10 @@ pub(super) fn apply_skill(run: &Run, item: &SetupItem) -> Result<Vec<AgentStep>,
         }
         let expected = if copy_mode { &vendored.0 } else { &source };
         let path = folder.join(&dir_name);
-        match slots.iter_mut().find(|(existing, ..)| *existing == path) {
+        match slots
+            .iter_mut()
+            .find(|(existing, ..)| resolved(existing) == resolved(&path))
+        {
             Some((.., agents)) => agents.extend(members.iter().cloned()),
             None => slots.push((path, expected.clone(), members.clone())),
         }
