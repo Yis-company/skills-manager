@@ -15,6 +15,13 @@ pub struct SkillStore {
     secret_key: [u8; 32],
 }
 
+/// Its settled-time condition matches `resource_state_settled_at`, so it
+/// reads only the documents it deletes.
+const DELETE_SETTLED_BEFORE: &str = "DELETE FROM resource_state WHERE rowid IN (
+    SELECT rowid FROM resource_state
+    WHERE kind = ?1 AND json_extract(value, '$.settled_at') < ?2 LIMIT ?3
+)";
+
 fn resource_state_exists(conn: &Connection) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resource_state')",
@@ -253,13 +260,7 @@ impl SkillStore {
         if !resource_state_exists(&conn)? {
             return Ok(0);
         }
-        Ok(conn.execute(
-            "DELETE FROM resource_state WHERE rowid IN (
-                 SELECT rowid FROM resource_state
-                 WHERE kind = ?1 AND json_extract(value, '$.settled_at') < ?2 LIMIT ?3
-             )",
-            params![kind, before, limit as i64],
-        )?)
+        Ok(conn.execute(DELETE_SETTLED_BEFORE, params![kind, before, limit as i64])?)
     }
 
     pub fn resource_state_delete(&self, kind: &str, id: &str) -> Result<()> {
@@ -2191,5 +2192,36 @@ mod project_agent_tests {
         store.delete_project("p1").unwrap();
         assert!(overrides_of("p1").is_empty());
         assert_eq!(overrides_of("p2").len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod resource_state_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn pruning_settled_documents_reads_only_those_it_deletes() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        let conn = store.conn.lock().unwrap();
+        let plan: Vec<String> = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {DELETE_SETTLED_BEFORE}"))
+            .unwrap()
+            .query_map(params!["receipt", 0, 100], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+
+        // A range search on the settled time, never a scan of every document.
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("resource_state_settled_at")),
+            "{plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|step| step.starts_with("SCAN")),
+            "{plan:?}"
+        );
     }
 }

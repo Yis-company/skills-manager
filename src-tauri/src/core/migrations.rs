@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version. Bump this when adding a new migration.
-pub(crate) const LATEST_VERSION: u32 = 12;
+pub(crate) const LATEST_VERSION: u32 = 13;
 
 /// Run all pending migrations on the database.
 ///
@@ -66,6 +66,13 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
                 value TEXT NOT NULL,
                 PRIMARY KEY (kind, id)
             );",
+            )
+            .map_err(Into::into),
+        // Pruning settled documents reads only those it deletes.
+        12 => conn
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS resource_state_settled_at
+                 ON resource_state (kind, json_extract(value, '$.settled_at'));",
             )
             .map_err(Into::into),
         _ => bail!("unknown migration version: {from_version}"),
