@@ -775,7 +775,7 @@ mod tests {
                 .resource_state_put(KIND, operation_id, &receipt)
                 .unwrap();
         };
-        let calls = [
+        let mut calls = vec![
             (
                 "discover_project_setup",
                 json!({ "checkout_path": checkout }),
@@ -815,25 +815,46 @@ mod tests {
                 json!({ "checkout_path": checkout,
                 "operation_id": "op-1" }),
             ),
-            ("settle_with_error", json!("op-1")),
-            (
-                "inspect_project_setup_result",
-                json!({ "checkout_path": checkout,
-                "operation_id": "op-1" }),
-            ),
         ];
+        // A recorded error: a first setup whose agent folder leads outside
+        // its checkout is refused after its operation_id is claimed.
+        #[cfg(unix)]
+        {
+            let tmp = fixture.repo._tmp.path();
+            let linked = tmp.join("work/linked");
+            std::fs::create_dir_all(&linked).unwrap();
+            std::fs::create_dir_all(tmp.join("shared/claude")).unwrap();
+            std::os::unix::fs::symlink(tmp.join("shared/claude"), linked.join(".claude")).unwrap();
+            let call = |name: &str, arguments: Value| {
+                answer(
+                    &server,
+                    &json!({ "jsonrpc": "2.0", "id": 0, "method": "tools/call",
+                             "params": { "name": name, "arguments": arguments } }),
+                )
+                .unwrap()["result"]
+                    .clone()
+            };
+            let apply = |arguments| call("apply_project_setup", arguments);
+            let proposed = apply(json!({ "checkout_path": linked, "operation_id": "op-l1",
+                "items": [{ "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"] }] }));
+            let mut proposal = proposed["structuredContent"]["proposal"].clone();
+            proposal["decisions"][0]["choice"] = json!("approve");
+            let refused = apply(
+                json!({ "checkout_path": linked, "operation_id": "op-l2", "confirm": proposal }),
+            );
+            assert_eq!(refused["isError"], true, "{refused}");
+            let inspect = json!({ "checkout_path": linked, "operation_id": "op-l2" });
+            let inspected = call("inspect_project_setup_result", inspect.clone());
+            assert_eq!(
+                inspected["structuredContent"]["receipt"], "error",
+                "{inspected}"
+            );
+            calls.push(("inspect_project_setup_result", inspect));
+        }
 
         for (n, (name, arguments)) in calls.into_iter().enumerate() {
             if name == "unclaim" {
                 unclaim(arguments.as_str().unwrap());
-                continue;
-            }
-            if name == "settle_with_error" {
-                let store = &fixture.ctx.store;
-                let id = arguments.as_str().unwrap();
-                let mut receipt = store.resource_state_get(KIND, id).unwrap().unwrap();
-                receipt["error"] = json!(AppError::invalid_input("taken"));
-                store.resource_state_put(KIND, id, &receipt).unwrap();
                 continue;
             }
             let reply = answer(
