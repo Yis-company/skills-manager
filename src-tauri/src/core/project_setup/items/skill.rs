@@ -31,9 +31,12 @@ fn slot(path: &Path, expected: &Path) -> Slot {
                 .is_ok_and(|expected| expected == target)
         })
     } else {
+        // Content that cannot be hashed is unverified, never the same.
         meta.is_dir()
-            && content_hash::hash_directory(path).ok()
-                == content_hash::hash_directory(expected).ok()
+            && matches!(
+                (content_hash::hash_directory(path), content_hash::hash_directory(expected)),
+                (Ok(found), Ok(wanted)) if found == wanted
+            )
     };
     if same {
         Slot::Same
