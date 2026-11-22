@@ -27,6 +27,9 @@ impl TestHost {
         Self { _tmp: tmp, root }
     }
 
+    /// Windows finds the home folder without reading HOME, so Claude Code
+    /// registration cannot be kept inside the test there.
+    #[cfg(unix)]
     fn claude_config(&self) -> PathBuf {
         self.root.join("home/.claude.json")
     }
@@ -97,6 +100,7 @@ fn codex_registration_keeps_other_settings_and_a_rerun_changes_nothing() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn claude_registration_creates_the_user_config_and_a_rerun_changes_nothing() {
     let test_host = TestHost::new();
@@ -119,6 +123,7 @@ fn claude_registration_creates_the_user_config_and_a_rerun_changes_nothing() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn an_existing_registration_written_by_claude_mcp_add_counts_as_unchanged() {
     let test_host = TestHost::new();
@@ -137,6 +142,7 @@ fn an_existing_registration_written_by_claude_mcp_add_counts_as_unchanged() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_different_registration_under_the_same_name_is_reported_and_left_alone() {
     let test_host = TestHost::new();
