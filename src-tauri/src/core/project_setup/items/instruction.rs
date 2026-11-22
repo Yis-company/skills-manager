@@ -156,18 +156,7 @@ fn apply_for(
     if applied["status"] != "complete" {
         return Ok(Step::failed("apply_incomplete", false));
     }
-    // A merged file holds the merge written, not the Library's text.
-    let merged = |change: &Value| {
-        change["status"] == "unchanged"
-            && changes(&stored, "merge")
-                .any(|m| m["path"] == change["path"] && m["content"] == change["previous"])
-    };
-    let verified = preview(true)?["changes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .all(|change| in_place(change) || merged(change));
-    Ok(if verified {
+    Ok(if all_in_place(&preview(true)?) {
         Step::of(Status::Changed)
     } else {
         Step::failed("verification_failed", false)
@@ -197,10 +186,12 @@ fn review(preview: &Value, agent: &str, deletes_approved: &[String]) -> Option<S
     all_in_place(preview).then(|| Step::of(Status::Unchanged))
 }
 
-/// Whether a change's file is on disk as the Library has it, or absent when
-/// the Library dropped it.
+/// Whether a change's file is on disk as the Library has it, as the last
+/// apply wrote it (a merge), or absent when the Library dropped it.
 fn in_place(change: &Value) -> bool {
-    change["status"] == "unchanged" && change["previous"] == change["incoming"]
+    change["status"] == "unchanged"
+        && (change["previous"] == change["incoming"]
+            || (change["previous"].is_string() && change["previous"] == change["deployed"]))
 }
 
 fn all_in_place(preview: &Value) -> bool {

@@ -2239,7 +2239,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_local_edit_merged_with_a_library_edit_on_other_lines_is_a_verified_change() {
+    fn a_merge_of_a_local_edit_and_a_library_edit_verifies_and_then_stays_in_place() {
         let fixture = Fixture::new();
         let saved = fixture.request(
             "instructions_request",
@@ -2269,6 +2269,31 @@ pub(crate) mod tests {
         assert_eq!(
             std::fs::read_to_string(fixture.path("CLAUDE.md")).unwrap(),
             "local alpha\nmiddle\nremote beta\n"
+        );
+
+        // The merge written is in place: no change, not an edit here.
+        let later = fixture
+            .apply_with(json!({ "operation_id": "op-3", "evidence": true }))
+            .unwrap();
+        assert_eq!(
+            item(&later, "instruction")["status"],
+            "unchanged",
+            "{later}"
+        );
+
+        // An edit made after the merge is still an edit here.
+        std::fs::write(
+            fixture.path("CLAUDE.md"),
+            "local alpha\nedited\nremote beta\n",
+        )
+        .unwrap();
+        let edited = fixture
+            .apply_with(json!({ "operation_id": "op-4", "evidence": true }))
+            .unwrap();
+        assert_eq!(
+            item(&edited, "instruction")["reason"],
+            "edited_here",
+            "{edited}"
         );
     }
 

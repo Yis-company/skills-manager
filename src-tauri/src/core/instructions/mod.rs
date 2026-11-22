@@ -118,6 +118,9 @@ struct Change {
     baseline: Option<String>,
     #[serde(default)]
     incoming: Option<String>,
+    /// What the last apply wrote to the file, a merge included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deployed: Option<String>,
 }
 
 pub fn dispatch(ctx: &HostCtx, request: Value) -> Result<Value, AppError> {
@@ -1370,11 +1373,11 @@ fn preview(ctx: &HostCtx, target: Target, id: &str, dry_run: bool) -> Result<Val
         } else {
             None
         };
-        let baseline = deployment
+        let record = deployment
             .as_ref()
             .and_then(|d| d["files"].as_array())
-            .and_then(|fs| fs.iter().find(|f| f["path"] == p.as_str()))
-            .and_then(|f| f["baseline"].as_str());
+            .and_then(|fs| fs.iter().find(|f| f["path"] == p.as_str()));
+        let baseline = record.and_then(|f| f["baseline"].as_str());
         let conflict = match (old.as_deref(), baseline) {
             (None, Some(base)) if content != base => {
                 Some("file was removed locally while the library changed".to_string())
@@ -1417,6 +1420,9 @@ fn preview(ctx: &HostCtx, target: Target, id: &str, dry_run: bool) -> Result<Val
             previous: old,
             baseline: baseline.map(str::to_owned),
             incoming: Some(content.clone()),
+            deployed: record
+                .and_then(|f| f["deployed"].as_str())
+                .map(str::to_owned),
         });
     }
     if let Some(files) = deployment.as_ref().and_then(|d| d["files"].as_array()) {
@@ -1461,6 +1467,7 @@ fn preview(ctx: &HostCtx, target: Target, id: &str, dry_run: bool) -> Result<Val
                 previous: local,
                 baseline: baseline.map(ToOwned::to_owned),
                 incoming: None,
+                deployed: previous["deployed"].as_str().map(ToOwned::to_owned),
             });
         }
     }
