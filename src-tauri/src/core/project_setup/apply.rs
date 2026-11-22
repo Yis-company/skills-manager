@@ -2003,4 +2003,35 @@ pub(crate) mod tests {
         assert_eq!(skill["proposed"], json!(["agent_a", "agent_c"]), "{skill}");
         assert_eq!(skill["paths"], json!([".a/skills"]), "{skill}");
     }
+
+    #[test]
+    fn an_mcp_connection_the_library_cannot_read_is_missing_and_kept() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        fixture.save_setup(json!([
+            { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"], "approved": approved(&mcp) },
+        ]));
+        let saved = fixture
+            .ctx
+            .store
+            .resource_state_get("project_setup", "p1")
+            .unwrap();
+        let definitions = crate::core::resource_store::root().join("mcps");
+        let file = definitions.join(format!("{}.json", mcp["id"].as_str().unwrap()));
+        std::fs::write(&file, "not json").unwrap();
+
+        let result = fixture
+            .apply_with(json!({ "operation_id": "op-1", "evidence": true }))
+            .unwrap();
+
+        assert_eq!(item(&result, "mcp")["status"], "missing", "{result}");
+        assert_eq!(item(&result, "mcp")["reason"], "unavailable");
+        assert!(result.get("proposal").is_none(), "{result}");
+        let after = fixture
+            .ctx
+            .store
+            .resource_state_get("project_setup", "p1")
+            .unwrap();
+        assert_eq!(after, saved, "the selection is kept");
+    }
 }

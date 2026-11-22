@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::{Reason, Run, Status, Step};
+use super::{missing, Reason, Run, Status, Step};
 use crate::core::error::{AppError, ErrorKind};
 use crate::core::host::HostCtx;
 use crate::core::mcps;
@@ -108,7 +108,8 @@ pub(super) fn check_mcp(run: &Run, item: &SetupItem) -> Result<Vec<String>, Step
     let definition = match run.mcp_definition(&item.id) {
         Ok(Some(definition)) => definition,
         Ok(None) => return Err(Step::asks(Status::Missing, Reason::ConfirmedAbsent)),
-        Err(error) => return Err(Step::error(error)),
+        // Unreadable now is not gone: a blocker that keeps the selection.
+        Err(error) => return Err(missing(error)),
     };
     let agents: Vec<String> = item
         .agents
