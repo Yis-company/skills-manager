@@ -205,7 +205,8 @@ fn discover(ctx: &HostCtx, checkout_path: &str, cursor: Option<&str>) -> Result<
             "reason": status.reason,
             "remote": status.remote,
             "last_sync_at": status.last_sync,
-            "checked_at": chrono::Utc::now().timestamp_millis(),
+            // The last-known status is as of the last sync.
+            "checked_at": status.last_sync,
             "verified": false,
         },
         "conflicts": {

@@ -2261,4 +2261,17 @@ pub(crate) mod tests {
         assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
         assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
     }
+
+    #[test]
+    fn discovery_reports_no_sync_check_time_when_this_host_never_synced() {
+        let fixture = Fixture::new();
+
+        let found = fixture.request(
+            "project_setup_request",
+            json!({ "action": "discover", "checkout_path": fixture.checkout }),
+        );
+
+        assert_eq!(found["sync"]["checked_at"], Value::Null, "{found}");
+        assert_eq!(found["sync"]["verified"], false);
+    }
 }

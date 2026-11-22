@@ -311,14 +311,15 @@ fn discover_tool() -> Value {
                 },
                 "sync": {
                     "type": "object",
-                    "description": "This host's last recorded Sync state. verified is \
+                    "description": "This host's last recorded Sync state. checked_at is \
+                        the time of that state, null when this host has none. verified is \
                         false: discovery does not contact the Sync remote.",
                     "properties": {
                         "state": { "type": "string" },
                         "reason": { "type": ["string", "null"] },
                         "remote": { "type": ["string", "null"] },
                         "last_sync_at": { "type": ["integer", "null"] },
-                        "checked_at": { "type": "integer" },
+                        "checked_at": { "type": ["integer", "null"] },
                         "verified": { "type": "boolean" },
                     },
                     "required": ["state", "reason", "remote", "last_sync_at", "checked_at", "verified"],
@@ -548,7 +549,8 @@ fn apply_tool() -> Value {
         },
         "annotations": {
             "readOnlyHint": false,
-            "destructiveHint": false,
+            // An approved would_delete decision deletes Instruction files.
+            "destructiveHint": true,
             "idempotentHint": true,
             "openWorldHint": false,
         },
@@ -913,5 +915,27 @@ mod tests {
         assert_eq!(refused["isError"], true, "{refused}");
         let text = refused["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("stale"), "{text}");
+    }
+
+    #[test]
+    fn apply_is_annotated_as_destructive_because_it_may_delete_files() {
+        let fixture = Fixture::new();
+        let open = || Ok::<HostCtx, _>(fixture.ctx.clone());
+        let cli: &CliCommand = &|_, _| unreachable!("no SSH host is named");
+        let server = Server::new(&open, &open, cli);
+
+        let tools = answer(
+            &server,
+            &json!({ "jsonrpc": "2.0", "id": 0, "method": "tools/list" }),
+        )
+        .unwrap();
+
+        let apply = tools["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "apply_project_setup")
+            .unwrap();
+        assert_eq!(apply["annotations"]["destructiveHint"], true);
     }
 }
