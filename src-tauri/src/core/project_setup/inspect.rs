@@ -60,6 +60,10 @@ pub(super) fn inspect(
         .as_ref()
         .and_then(|receipt| receipt.error.clone())
         .filter(|_| receipt_state == ReceiptState::Error);
+    // Agents named for one run were checked, not the saved setup's.
+    let named = receipt
+        .as_ref()
+        .is_some_and(|receipt| receipt.intent.get("agents").is_some());
     let targets: Option<Vec<SetupItem>> =
         receipt.as_ref().and_then(|receipt| receipt.targets.clone());
     let mut recorded = receipt
@@ -103,25 +107,32 @@ pub(super) fn inspect(
             error.message
         )
     });
+    let matched = if named {
+        "None: the checkout matches the saved items for the agents named for that run; \
+         other agents were not checked."
+    } else {
+        "None: the checkout matches its saved setup."
+    };
+    let unknown_matched =
+        format!("{matched} This operation's own effect is unknown, and no write was repeated.");
+    let not_applied = format!(
+        "Apply under a new operation_id{} to set up the items not applied: apply checks \
+         each destination before writing and never overwrites edits.",
+        if named { ", with the same agents," } else { "" }
+    );
     let next_action = match (receipt_state, holds, recovery_possible) {
         (ReceiptState::Error, _, _) => failed.as_deref().unwrap_or_default(),
         (ReceiptState::Result, _, _) if destination.is_null() => {
             "Discover this checkout: it has no saved Project setup."
         }
-        (ReceiptState::Result, true, _) => "None: the checkout matches its saved setup.",
-        (_, true, _) => {
-            "None: the checkout matches its saved setup. This operation's own effect is \
-             unknown, and no write was repeated."
-        }
+        (ReceiptState::Result, true, _) => matched,
+        (_, true, _) => &unknown_matched,
         (ReceiptState::Missing | ReceiptState::IntentOnly, false, _) => {
             "Outcome unknown: a request may still hold this operation_id, or its result was \
              lost. Leave the checkout as it is. Inspect again later with the same \
              operation_id."
         }
-        (_, false, true) => {
-            "Apply under a new operation_id to set up the items not applied: apply checks \
-             each destination before writing and never overwrites edits."
-        }
+        (_, false, true) => &not_applied,
         (_, false, false) => {
             "Inspect again with evidence: true to list the items that need a decision, \
              retry or recovery."
@@ -193,6 +204,24 @@ mod tests {
             .store
             .resource_state_get("project_setup_receipt", operation_id)
             .unwrap()
+    }
+
+    #[test]
+    fn a_run_for_named_agents_never_reports_the_saved_setup_as_matching() {
+        let fixture = Fixture::new();
+        with_agent_b(&fixture);
+        fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        fixture
+            .apply_with(json!({ "operation_id": "op-1", "agents": ["agent_b"] }))
+            .unwrap();
+
+        let inspected = inspect(&fixture, json!({ "operation_id": "op-1" })).unwrap();
+
+        assert_eq!(inspected["destination"]["state"], "matches");
+        let next = inspected["next_action"].as_str().unwrap();
+        assert!(!next.contains("saved setup"), "{next}");
+        assert!(next.contains("agents named for that run"), "{next}");
     }
 
     #[test]
