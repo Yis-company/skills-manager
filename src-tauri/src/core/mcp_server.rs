@@ -153,9 +153,21 @@ fn skip_line(reader: &mut impl BufRead) -> io::Result<()> {
 }
 
 /// The reply to one message, or `None` for a notification or a response.
+/// Anything else is an invalid request.
 fn answer(server: &Server, message: &Value) -> Option<Value> {
-    let id = message.get("id")?.clone();
-    let method = message.get("method")?.as_str().unwrap_or_default();
+    let invalid = |id: Option<&Value>| {
+        let id = id.cloned().unwrap_or(Value::Null);
+        Some(failure(id, INVALID_REQUEST, "Invalid Request".into()))
+    };
+    let Some(fields) = message.as_object() else {
+        return invalid(None);
+    };
+    let method = match fields.get("method") {
+        Some(Value::String(method)) => method.as_str(),
+        None if fields.contains_key("result") || fields.contains_key("error") => return None,
+        _ => return invalid(fields.get("id")),
+    };
+    let id = fields.get("id")?.clone();
     let params = &message["params"];
     let result = match method {
         "initialize" => Ok(initialize(params)),
@@ -489,12 +501,14 @@ fn apply_tool() -> Value {
                     "enum": [
                         "verified_changed", "verified_no_change", "partial_success",
                         "needs_review", "retryable_failure", "outcome_unknown",
-                        "confirmation_needed",
+                        "confirmation_needed", "nothing_set_up",
                     ],
                     "description": "partial_success: some items changed, others need a \
                         decision, retry or recovery. needs_review: no change was verified \
                         and an item needs a decision or recovery. retryable_failure: no change \
-                        was verified and every unsettled item failed in a way a new apply may fix.",
+                        was verified and every unsettled item failed in a way a new apply may fix. \
+                        nothing_set_up: a first setup with no item approved; nothing was \
+                        registered, saved or applied.",
                 },
                 "agents": { "type": "array", "items": { "type": "string" } },
                 "counts": {
@@ -900,6 +914,30 @@ mod tests {
         assert_eq!(found[0]["error"]["code"], -32600, "{found:?}");
         assert_eq!(found[0]["id"], Value::Null);
         assert_eq!(found[1]["id"], 1);
+    }
+
+    #[test]
+    fn a_message_that_is_not_a_request_or_response_gets_an_invalid_request_error() {
+        let fixture = Fixture::new();
+        let open = || Ok::<HostCtx, _>(fixture.ctx.clone());
+        let cli: &CliCommand = &|_, _| unreachable!("no SSH host is named");
+        let server = Server::new(&open, &open, cli);
+        let input = [
+            json!({ "jsonrpc": "2.0", "id": 1 }),
+            json!(7),
+            json!({ "jsonrpc": "2.0", "id": 2, "method": 3 }),
+            json!({ "jsonrpc": "2.0", "id": 9, "result": {} }),
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        ]
+        .iter()
+        .map(|message| format!("{message}\n"))
+        .collect::<String>();
+
+        let found = replies(&server, &input);
+
+        let ids: Vec<&Value> = found.iter().map(|reply| &reply["id"]).collect();
+        assert_eq!(ids, [&json!(1), &Value::Null, &json!(2)], "{found:?}");
+        assert!(found.iter().all(|reply| reply["error"]["code"] == -32600));
     }
 
     #[test]
