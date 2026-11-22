@@ -340,13 +340,18 @@ fn discover_tool() -> Value {
                 },
                 "conflicts": {
                     "type": "object",
+                    "description": "Sync's items that need review, at most 50 of each kind.",
                     "properties": {
                         "skills": { "type": "array" },
                         "resources": { "type": "array" },
                         "same_name_presets": { "type": "array" },
                         "edited_here": { "type": "array" },
+                        "total": {
+                            "type": "integer",
+                            "description": "Every item that needs review, listed or not.",
+                        },
                     },
-                    "required": ["skills", "resources", "same_name_presets", "edited_here"],
+                    "required": ["skills", "resources", "same_name_presets", "edited_here", "total"],
                 },
             },
             "required": [

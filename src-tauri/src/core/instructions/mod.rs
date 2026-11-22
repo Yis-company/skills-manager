@@ -1844,22 +1844,26 @@ fn undeploy(ctx: &HostCtx, id: &str) -> Result<Value, AppError> {
 }
 /// Whether an interrupted transaction waits for `recover`. Read-only: it
 /// never recovers.
+/// Asked of the database, so no journal is loaded to answer it.
 pub fn recovery_pending(ctx: &HostCtx) -> Result<bool, AppError> {
-    Ok(db(ctx.store.resource_state_list("instructions_journal"))?
-        .iter()
-        .any(interrupted))
+    db(ctx
+        .store
+        .resource_state_any_status("instructions_journal", &INTERRUPTED))
 }
 
+/// The statuses of a journal whose transaction was interrupted.
+const INTERRUPTED: [&str; 5] = [
+    "applying",
+    "building",
+    "swapping",
+    "removing",
+    "recovery_incomplete",
+];
+
 fn interrupted(journal: &Value) -> bool {
-    [
-        "applying",
-        "building",
-        "swapping",
-        "removing",
-        "recovery_incomplete",
-    ]
-    .iter()
-    .any(|status| journal["status"] == *status)
+    INTERRUPTED
+        .iter()
+        .any(|status| journal["status"] == *status)
 }
 
 fn recover(ctx: &HostCtx) -> Result<Value, AppError> {

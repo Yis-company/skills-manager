@@ -210,12 +210,19 @@ fn discover(ctx: &HostCtx, checkout_path: &str, cursor: Option<&str>) -> Result<
             "verified": false,
         },
         "conflicts": {
-            "skills": status.conflicts,
-            "resources": status.resource_conflicts,
-            "same_name_presets": status.same_name_presets,
-            "edited_here": status.edited_here,
+            "skills": first_page(&status.conflicts),
+            "resources": first_page(&status.resource_conflicts),
+            "same_name_presets": first_page(&status.same_name_presets),
+            "edited_here": first_page(&status.edited_here),
+            "total": status.conflicts.len() + status.resource_conflicts.len()
+                + status.same_name_presets.len() + status.edited_here.len(),
         },
     }))
+}
+
+/// At most a page of `list`: the rest are resolved in the app.
+fn first_page<T: serde::Serialize>(list: &[T]) -> Value {
+    json!(&list[..list.len().min(PAGE_SIZE)])
 }
 
 /// Registered projects with their canonical paths. Both sides canonical and
@@ -425,6 +432,13 @@ mod tests {
         // Offered for the caller to tell apart, never chosen for it.
         assert_eq!(found["candidates"][0]["id"], "main");
         assert_eq!(found["candidates"][0]["path"], json!(main));
+    }
+
+    #[test]
+    fn conflicts_are_listed_a_page_at_most() {
+        let many: Vec<u32> = (0..51).collect();
+        assert_eq!(super::first_page(&many).as_array().unwrap().len(), 50);
+        assert_eq!(super::first_page(&many[..3]), json!([0, 1, 2]));
     }
 
     #[test]
