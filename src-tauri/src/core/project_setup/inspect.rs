@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use super::apply::{load_setup, receipt as find_receipt, without_evidence, Outcome};
 use super::items::{check_setup, counts, Run, Status};
 use super::{find_project, SetupItem};
-use crate::core::error::AppError;
+use crate::core::error::{AppError, ErrorKind};
 use crate::core::git_backup_store::effective_device_name;
 use crate::core::host::HostCtx;
 
@@ -27,6 +27,8 @@ pub enum ReceiptState {
     /// Claimed, with no result recorded yet.
     IntentOnly,
     Result,
+    /// Settled with an error before any item was applied.
+    Error,
 }
 
 pub(super) fn inspect(
@@ -49,8 +51,16 @@ pub(super) fn inspect(
     let receipt_state = match &receipt {
         None => ReceiptState::Missing,
         Some(receipt) if receipt["result"].is_object() => ReceiptState::Result,
+        Some(receipt) if !receipt["error"].is_null() => ReceiptState::Error,
         Some(_) => ReceiptState::IntentOnly,
     };
+    let error: Option<AppError> = receipt.as_ref().and_then(|receipt| {
+        (receipt_state == ReceiptState::Error).then(|| {
+            serde_json::from_value(receipt["error"].clone()).unwrap_or_else(|_| {
+                AppError::internal("This operation_id recorded an unreadable error")
+            })
+        })
+    });
     let targets: Option<Vec<SetupItem>> = receipt
         .as_ref()
         .and_then(|receipt| serde_json::from_value(receipt["targets"].clone()).ok());
@@ -86,7 +96,15 @@ pub(super) fn inspect(
         }
     };
 
+    let failed = error.as_ref().map(|error| {
+        format!(
+            "This operation recorded an error and applied no items: {} Resolve it, then apply \
+             under a new operation_id.",
+            error.message
+        )
+    });
     let next_action = match (receipt_state, holds, recovery_possible) {
+        (ReceiptState::Error, _, _) => failed.as_deref().unwrap_or_default(),
         (ReceiptState::Result, _, _) if destination.is_null() => {
             "Discover this checkout: it has no saved Project setup."
         }
@@ -109,11 +127,20 @@ pub(super) fn inspect(
              retry or recovery."
         }
     };
-    let outcome = match receipt_state {
-        ReceiptState::Result => recorded["outcome"].clone(),
+    let outcome = match (receipt_state, &error) {
+        (ReceiptState::Result, _) => recorded["outcome"].clone(),
+        (ReceiptState::Error, Some(error))
+            if matches!(
+                error.kind,
+                ErrorKind::Database | ErrorKind::Io | ErrorKind::Network
+            ) =>
+        {
+            json!(Outcome::RetryableFailure)
+        }
+        (ReceiptState::Error, _) => json!(Outcome::NeedsReview),
         _ => json!(Outcome::Unknown),
     };
-    Ok(json!({
+    let mut inspected = json!({
         "operation_id": operation_id,
         "host": host,
         "checkout_path": checkout,
@@ -124,7 +151,11 @@ pub(super) fn inspect(
         "destination": destination,
         "recovery_possible": recovery_possible,
         "next_action": next_action,
-    }))
+    });
+    if let Some(error) = error {
+        inspected["error"] = json!(error);
+    }
+    Ok(inspected)
 }
 
 #[cfg(test)]
@@ -356,5 +387,29 @@ mod tests {
                 error.message
             );
         }
+    }
+
+    #[test]
+    fn a_recorded_error_is_a_settled_outcome_with_its_kind() {
+        let fixture = Fixture::new();
+        one_of_each(&fixture);
+        fixture.apply("op-1").unwrap();
+        let mut settled = receipt(&fixture, "op-1").unwrap();
+        settled.as_object_mut().unwrap().remove("result");
+        settled["error"] = json!(AppError::target_conflict("taken", Vec::new()));
+        fixture
+            .ctx
+            .store
+            .resource_state_put("project_setup_receipt", "op-1", &settled)
+            .unwrap();
+
+        let inspected = inspect(&fixture, json!({ "operation_id": "op-1" })).unwrap();
+
+        assert_eq!(inspected["receipt"], "error", "{inspected}");
+        assert_eq!(inspected["outcome"], "needs_review");
+        assert_eq!(inspected["error"]["kind"], "target_conflict");
+        assert_eq!(inspected["error"]["message"], "taken");
+        let next = inspected["next_action"].as_str().unwrap();
+        assert!(next.contains("new operation_id"), "{next}");
     }
 }

@@ -598,8 +598,18 @@ fn inspect_tool() -> Value {
                 },
                 "receipt": {
                     "type": "string",
-                    "enum": ["result", "intent_only", "missing"],
+                    "enum": ["result", "error", "intent_only", "missing"],
                     "description": "What this host recorded for the operation_id.",
+                },
+                "error": {
+                    "type": "object",
+                    "description": "With receipt error: the error the operation recorded \
+                        before it applied any item.",
+                    "properties": {
+                        "kind": { "type": "string" },
+                        "message": { "type": "string" },
+                    },
+                    "required": ["kind", "message"],
                 },
                 "recorded": {
                     "type": ["object", "null"],
