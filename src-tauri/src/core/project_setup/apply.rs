@@ -778,6 +778,28 @@ pub(crate) mod tests {
         assert_eq!(result["outcome"], "verified_no_change");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_copy_is_never_counted_as_no_change() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = Fixture::new();
+        let library = fixture.skill("s1", "review");
+        fixture.save_setup(json!([{ "kind": "skill", "id": "s1", "agents": ["agent_a"] }]));
+        let copy = fixture.path(".a/skills/review");
+        std::fs::create_dir_all(&copy).unwrap();
+        std::fs::write(copy.join("SKILL.md"), "edited here").unwrap();
+        let locked = std::fs::Permissions::from_mode(0o000);
+        std::fs::set_permissions(copy.join("SKILL.md"), locked.clone()).unwrap();
+        std::fs::set_permissions(library.join("SKILL.md"), locked).unwrap();
+        if std::fs::read(copy.join("SKILL.md")).is_ok() {
+            return; // Running as root: nothing is unreadable.
+        }
+
+        let result = fixture.apply("op-1").unwrap();
+
+        assert_ne!(result["outcome"], "verified_no_change", "{result}");
+    }
+
     #[test]
     fn a_renamed_skill_still_resolves_but_a_new_skill_reusing_its_name_does_not() {
         let fixture = Fixture::new();

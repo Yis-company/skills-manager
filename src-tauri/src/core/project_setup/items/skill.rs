@@ -31,18 +31,33 @@ fn slot(path: &Path, expected: &Path) -> Slot {
                 .is_ok_and(|expected| expected == target)
         })
     } else {
-        // Content that cannot be hashed is unverified, never the same.
-        meta.is_dir()
-            && matches!(
-                (content_hash::hash_directory(path), content_hash::hash_directory(expected)),
-                (Ok(found), Ok(wanted)) if found == wanted
-            )
+        meta.is_dir() && same_content(path, expected)
     };
     if same {
         Slot::Same
     } else {
         Slot::Different
     }
+}
+
+/// Whether two folders hold the same files, bytes and executable bits.
+/// Anything that cannot be listed or read is unverified, never the same.
+fn same_content(found: &Path, wanted: &Path) -> bool {
+    let (Ok(found), Ok(wanted)) = (
+        content_hash::list_content_files_strict(found),
+        content_hash::list_content_files_strict(wanted),
+    ) else {
+        return false;
+    };
+    found.len() == wanted.len()
+        && found.iter().zip(&wanted).all(|(a, b)| {
+            a.relative_path == b.relative_path
+                && a.exec_bits == b.exec_bits
+                && matches!(
+                    (std::fs::read(&a.path), std::fs::read(&b.path)),
+                    (Ok(x), Ok(y)) if x == y
+                )
+        })
 }
 
 /// Whether `path`'s folder resolves inside the checkout at `root`. A folder
