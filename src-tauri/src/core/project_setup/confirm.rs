@@ -89,7 +89,8 @@ pub(super) enum Choice {
 }
 pub(super) const CONFIRM: &str =
     "Show the proposal's decisions to the user. To go ahead, call again with \
-    a new operation_id and confirm: the proposal, with a choice on each decision.";
+    a new operation_id, the same agents if any, and confirm: the proposal, with a choice on \
+    each decision.";
 
 /// The items one request runs.
 pub(super) struct Plan {

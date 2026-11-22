@@ -137,8 +137,24 @@ pub(super) fn apply<'c>(
         "setup_version": proposal.setup_version,
     });
     if let Some(agents) = &args.agents {
-        check_named_agents(&run, agents, args.items.is_some() || args.confirm.is_some())?;
+        check_named_agents(&run, agents, args.items.is_some())?;
     }
+    // Agents named for one run stand in for each saved item's agents, in
+    // its decisions too; confirming them never saves.
+    let saved = saved.map(|setup| match &args.agents {
+        Some(agents) => SavedSetup {
+            items: setup
+                .items
+                .into_iter()
+                .map(|item| SetupItem {
+                    agents: agents.clone(),
+                    ..item
+                })
+                .collect(),
+            ..setup
+        },
+        None => setup,
+    });
     let plan = match (saved, args.items, &args.confirm) {
         (None, Some(items), None) => {
             proposal.decisions = items
@@ -155,20 +171,15 @@ pub(super) fn apply<'c>(
             "items propose a first setup only; this request has a saved setup or a confirmation",
         )),
         (None, None, None) => return Err(no_saved_setup()),
-        (saved, None, Some(confirm)) => confirmed(&run, &proposal, saved, confirm)?,
+        (saved, None, Some(confirm)) => {
+            let plan = confirmed(&run, &proposal, saved, confirm)?;
+            Plan {
+                save: plan.save && args.agents.is_none(),
+                ..plan
+            }
+        }
         (Some(saved), None, None) => Plan {
-            items: saved
-                .items
-                .into_iter()
-                .map(|item| match &args.agents {
-                    Some(agents) => SetupItem {
-                        agents: agents.clone(),
-                        ..item
-                    },
-                    None => item,
-                })
-                .map(Planned::new)
-                .collect(),
+            items: saved.items.into_iter().map(Planned::new).collect(),
             save: false,
         },
     };
@@ -220,13 +231,7 @@ pub(super) fn apply<'c>(
     let mut result = summarize(&scope, operation_id, &results);
     proposal.project_id = Some(run.project.id.clone());
     proposal.register = false;
-    // Decisions are about the saved setup; agents named for one run are not.
-    let decided = if args.agents.is_some() {
-        &[][..]
-    } else {
-        &items[..]
-    };
-    proposal.decisions = decided
+    proposal.decisions = items
         .iter()
         .zip(&results)
         .filter_map(|(item, result)| decide(&run, item, result.asks?).ok().flatten())
@@ -245,8 +250,7 @@ pub(super) fn apply<'c>(
 fn check_named_agents(run: &Run, agents: &[String], proposing: bool) -> Result<(), AppError> {
     if proposing {
         return Err(AppError::invalid_input(
-            "agents applies a saved setup for this run only; name agents in items or the \
-             proposal instead",
+            "agents applies a saved setup for this run only; name agents in items instead",
         ));
     }
     if agents.is_empty() {
@@ -1910,5 +1914,41 @@ pub(crate) mod tests {
             std::fs::read_to_string(fixture.path("CLAUDE.md")).unwrap(),
             "Be brief.\n"
         );
+    }
+
+    #[test]
+    fn a_run_for_a_newly_named_agent_proposes_its_approval_for_that_run_only() {
+        let fixture = Fixture::new();
+        let mcp = fixture.mcp("docs");
+        fixture.save_setup(json!([
+            { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"],
+              "approved": { "claude_code": approved(&mcp)["claude_code"] } },
+        ]));
+        let saved = || {
+            fixture
+                .ctx
+                .store
+                .resource_state_get("project_setup", "p1")
+                .unwrap()
+        };
+        let before = saved();
+
+        let asked = fixture
+            .apply_with(json!({ "operation_id": "op-1", "agents": ["codex"] }))
+            .unwrap();
+        assert_eq!(asked["outcome"], "needs_review", "{asked}");
+        assert_eq!(
+            decision(&asked, "mcp")["reason"],
+            "approval_needed",
+            "{asked}"
+        );
+        let applied = fixture
+            .apply_with(json!({ "operation_id": "op-2", "agents": ["codex"],
+                                "confirm": confirm(&asked, "approve") }))
+            .unwrap();
+
+        assert_eq!(applied["outcome"], "verified_changed", "{applied}");
+        assert_eq!(applied["agents"], json!(["codex"]));
+        assert_eq!(saved(), before, "the saved setup is unchanged");
     }
 }

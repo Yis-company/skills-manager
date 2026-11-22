@@ -446,8 +446,9 @@ fn apply_tool() -> Value {
                     "minItems": 1,
                     "maxItems": project_setup::MAX_AGENTS,
                     "description": "Agents for this run only, in place of each saved item's \
-                        agents; the saved setup is unchanged. Omit to use the saved agents. \
-                        Not with items or confirm.",
+                        agents; the saved setup is unchanged, also when a proposal for this run \
+                        is confirmed with the same agents. Omit to use the saved agents. Not \
+                        with items.",
                 },
                 "confirm": {
                     "type": "object",
