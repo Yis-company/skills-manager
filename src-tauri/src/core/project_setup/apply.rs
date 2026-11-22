@@ -140,6 +140,7 @@ pub(super) fn apply<'c>(
         None => unregistered(ctx, checkout.to_string_lossy().into_owned())?,
     };
     let mut proposal = Proposal {
+        host: host.clone(),
         checkout_path: checkout.clone(),
         project_id: (!record.id.is_empty()).then(|| record.id.clone()),
         register: record.id.is_empty(),
@@ -1421,6 +1422,24 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(later["outcome"], "verified_no_change", "{later}");
         assert!(later.get("proposal").is_none());
+    }
+
+    #[test]
+    fn a_first_setup_proposed_on_one_host_cannot_be_confirmed_on_another() {
+        let fixture = Fixture::new();
+        let (fresh, _, proposed) = propose_first_setup(&fixture);
+        fixture
+            .ctx
+            .store
+            .set_setting("backup_device_name", "other-host")
+            .unwrap();
+
+        let error =
+            confirm_with(&fixture, &fresh, "op-2", confirm(&proposed, "approve")).unwrap_err();
+
+        assert!(error.message.contains("stale"), "{}", error.message);
+        assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
+        assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
     }
 
     #[test]

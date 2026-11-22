@@ -359,6 +359,7 @@ fn apply_tool() -> Value {
         "description": "The decisions this request needs, grouped. Show them to \
             the user; send the proposal back as confirm to go ahead.",
         "properties": {
+            "host": { "type": "string" },
             "checkout_path": { "type": "string" },
             "project_id": { "type": ["string", "null"] },
             "register": { "type": "boolean" },
@@ -394,7 +395,7 @@ fn apply_tool() -> Value {
             },
         },
         "required": [
-            "checkout_path", "project_id", "register", "deploy_mode",
+            "host", "checkout_path", "project_id", "register", "deploy_mode",
             "setup_version", "decisions",
         ],
     });

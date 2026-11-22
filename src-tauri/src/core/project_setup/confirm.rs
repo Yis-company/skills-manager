@@ -23,6 +23,8 @@ use crate::core::error::AppError;
 /// current state is refused as stale.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Proposal {
+    /// The host it was proposed on: confirming it on another host is stale.
+    pub(super) host: String,
     pub(super) checkout_path: PathBuf,
     pub(super) project_id: Option<String>,
     /// Whether confirming registers the checkout, with `deploy_mode`.
@@ -164,12 +166,14 @@ pub(super) fn confirmed(
         )
     };
     if (
+        &confirm.host,
         &confirm.checkout_path,
         &confirm.project_id,
         confirm.register,
         &confirm.deploy_mode,
         confirm.setup_version,
     ) != (
+        &now.host,
         &now.checkout_path,
         &now.project_id,
         now.register,
