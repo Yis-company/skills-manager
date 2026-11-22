@@ -151,6 +151,8 @@ type AgentStep = (Option<String>, Step);
 /// Check each planned item against its destination and, when `run` writes,
 /// apply and verify it.
 pub(super) fn check_items(run: &Run, plan: &[Planned]) -> Vec<ItemResult> {
+    // On failure, each Skill's own lookup reports the error.
+    let _ = run.load_skills(plan.iter().map(|p| (p.item.kind, p.item.id.as_str())));
     // Each item's steps, one per agent where it varies by agent. MCP
     // connections are queued and applied in batches per agent config.
     let mut steps: Vec<Vec<AgentStep>> = Vec::with_capacity(plan.len());
@@ -361,6 +363,37 @@ impl<'a> Run<'a> {
                 .any(|(key, _)| *key == agent),
             ItemKind::Mcp => self.mcp_agents.iter().any(|key| key == agent),
         }
+    }
+
+    /// Look up every Skill `items` name and this run has not looked up yet,
+    /// in one query.
+    pub(super) fn load_skills<'i>(
+        &self,
+        items: impl IntoIterator<Item = (ItemKind, &'i str)>,
+    ) -> Result<(), AppError> {
+        let mut known = self.skills.borrow_mut();
+        let mut wanted: Vec<&str> = items
+            .into_iter()
+            .filter(|(kind, id)| *kind == ItemKind::Skill && !known.contains_key(*id))
+            .map(|(_, id)| id)
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        let found = self
+            .ctx
+            .store
+            .get_skills_by_ids(&wanted)
+            .map_err(AppError::db)?;
+        known.extend(wanted.into_iter().map(|id| (id.to_owned(), None)));
+        known.extend(
+            found
+                .into_iter()
+                .map(|skill| (skill.id.clone(), Some(skill))),
+        );
+        Ok(())
     }
 
     /// The Library's Skill with this ID.

@@ -410,6 +410,20 @@ impl SkillStore {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// The Skills with these IDs, in one query; an ID with none is left out.
+    pub fn get_skills_by_ids(&self, ids: &[&str]) -> Result<Vec<SkillRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, description, source_type, source_ref, source_ref_resolved, source_subpath,
+                    source_branch, source_revision, remote_revision, central_path, content_hash, enabled,
+                    created_at, updated_at, status, update_status, last_checked_at, last_check_error
+             FROM skills WHERE id IN (SELECT value FROM json_each(?1))",
+        )?;
+        let ids = serde_json::to_string(ids)?;
+        let rows = stmt.query_map(params![ids], map_skill_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn get_skill_by_id(&self, id: &str) -> Result<Option<SkillRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -2223,5 +2237,21 @@ mod resource_state_tests {
             !plan.iter().any(|step| step.starts_with("SCAN")),
             "{plan:?}"
         );
+    }
+
+    #[test]
+    fn skills_are_looked_up_by_id_in_one_call() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        for id in ["a", "b", "c"] {
+            let skill = crate::core::test_support::sample_skill(id, id, &tmp.path().join(id));
+            store.insert_skill(&skill).unwrap();
+        }
+
+        let found = store.get_skills_by_ids(&["c", "a", "gone"]).unwrap();
+
+        let mut ids: Vec<&str> = found.iter().map(|skill| skill.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["a", "c"]);
     }
 }

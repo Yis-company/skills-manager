@@ -169,6 +169,7 @@ pub(super) fn confirmed(
     ) {
         return Err(stale());
     }
+    run.load_skills(confirm.decisions.iter().map(|d| (d.kind, d.id.as_str())))?;
     let first = saved.is_none();
     let original: Vec<SetupItem> = saved.map(|setup| setup.items).unwrap_or_default();
     let mut planned: Vec<Planned> = original.iter().cloned().map(Planned::new).collect();

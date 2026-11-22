@@ -157,6 +157,7 @@ pub(super) fn apply<'c>(
     });
     let plan = match (saved, args.items, &args.confirm) {
         (None, Some(items), None) => {
+            run.load_skills(items.iter().map(|item| (item.kind, item.id.as_str())))?;
             proposal.decisions = items
                 .iter()
                 .map(|item| {
