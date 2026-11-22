@@ -137,7 +137,7 @@ pub(super) fn apply<'c>(
         "setup_version": proposal.setup_version,
     });
     if let Some(agents) = &args.agents {
-        check_named_agents(&run, agents, args.items.is_some())?;
+        check_named_agents(&run, agents, saved.is_some() && args.items.is_none())?;
     }
     // Agents named for one run stand in for each saved item's agents, in
     // its decisions too; confirming them never saves.
@@ -248,8 +248,8 @@ pub(super) fn apply<'c>(
 
 /// Agents named for one run: at least one, each able to have some kind of
 /// item set up here, and only with a saved setup.
-fn check_named_agents(run: &Run, agents: &[String], proposing: bool) -> Result<(), AppError> {
-    if proposing {
+fn check_named_agents(run: &Run, agents: &[String], has_setup: bool) -> Result<(), AppError> {
+    if !has_setup {
         return Err(AppError::invalid_input(
             "agents applies a saved setup for this run only; name agents in items instead",
         ));
@@ -2034,5 +2034,26 @@ pub(crate) mod tests {
             .resource_state_get("project_setup", "p1")
             .unwrap();
         assert_eq!(after, saved, "the selection is kept");
+    }
+
+    #[test]
+    fn agents_for_one_run_are_refused_without_a_saved_setup() {
+        let fixture = Fixture::new();
+        let (fresh, _, proposed) = propose_first_setup(&fixture);
+        let refused = fixture.apply_with(json!({ "checkout_path": fresh, "operation_id": "op-2",
+            "confirm": confirm(&proposed, "approve"), "agents": ["agent_a"] }));
+        assert_eq!(refused.unwrap_err().kind, ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
+
+        // A registered checkout with no saved setup.
+        let mcp = fixture.mcp("lint");
+        let proposed = fixture
+            .apply_with(json!({ "operation_id": "op-3",
+                "items": [{ "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"] }] }))
+            .unwrap();
+        let refused = fixture.apply_with(json!({ "operation_id": "op-4",
+            "confirm": confirm(&proposed, "approve"), "agents": ["claude_code"] }));
+        assert_eq!(refused.unwrap_err().kind, ErrorKind::InvalidInput);
+        assert!(!fixture.path(".mcp.json").exists());
     }
 }
