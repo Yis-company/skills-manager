@@ -273,7 +273,8 @@ pub(super) fn confirmed(
         .zip(keep)
         .filter_map(|(planned, keep)| keep.then_some(planned))
         .collect();
-    let save = first
+    // A first setup with nothing approved registers and saves nothing.
+    let save = (first && !items.is_empty())
         || items.len() != original.len()
         || items
             .iter()

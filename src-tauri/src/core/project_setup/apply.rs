@@ -155,6 +155,7 @@ pub(super) fn apply<'c>(
         },
         None => setup,
     });
+    let first = saved.is_none();
     let plan = match (saved, args.items, &args.confirm) {
         (None, Some(items), None) => {
             run.load_skills(items.iter().map(|item| (item.kind, item.id.as_str())))?;
@@ -184,6 +185,14 @@ pub(super) fn apply<'c>(
             save: false,
         },
     };
+    if first && plan.items.is_empty() {
+        let mut result = summarize(&scope, operation_id, &[]);
+        result["next_action"] = json!(
+            "Nothing was set up: no item was approved, so nothing was registered, saved or \
+             applied. To set this checkout up, apply again with items for a new proposal."
+        );
+        return Ok(respond(result, false, evidence));
+    }
     let items: Vec<SetupItem> = plan.items.iter().map(|p| p.item.clone()).collect();
 
     // Checked, and something to apply: only now open the library for writing.
@@ -2232,5 +2241,24 @@ pub(crate) mod tests {
             .map(|item| &item["name"])
             .collect();
         assert_eq!(names, [&json!("docs")], "{found}");
+    }
+
+    #[test]
+    fn a_first_setup_with_every_decision_skipped_sets_nothing_up() {
+        let fixture = Fixture::new();
+        let (fresh, _, proposed) = propose_first_setup(&fixture);
+
+        let result = confirm_with(&fixture, &fresh, "op-2", confirm(&proposed, "skip")).unwrap();
+
+        assert!(
+            result["next_action"]
+                .as_str()
+                .unwrap()
+                .contains("Nothing was set up"),
+            "{result}"
+        );
+        assert_eq!(result["project_id"], Value::Null);
+        assert_eq!(fixture.ctx.store.get_all_projects().unwrap().len(), 1);
+        assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
     }
 }
