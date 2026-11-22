@@ -36,8 +36,9 @@ pub const MAX_AGENTS: usize = 64;
 /// The `resource_state` kind that holds each project's saved setup.
 const SETUP_KIND: &str = "project_setup";
 
-/// A project's saved setup: what to deploy, and to which agents. Written
-/// only through [`save_setup`], so each write bumps `version`.
+/// A project's saved setup: the selected Library items and the agents each
+/// targets. Written only through [`save_setup`], so each write bumps
+/// `version`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedSetup {
     pub version: u64,

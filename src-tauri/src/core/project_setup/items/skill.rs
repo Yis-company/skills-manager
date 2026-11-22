@@ -62,7 +62,7 @@ fn inside(root: &Path, path: &Path) -> bool {
 
 type SkillGroup = (AgentSkillConfig, Vec<String>);
 
-/// The agent folders a Skill deploys to, and every agent folder group that
+/// The agent folders a Skill is added to, and every agent folder group that
 /// reads one of them: each of its agents sees the skill, so each must be
 /// approved. A copy-mode project also writes `.agents/skills`.
 fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Vec<&'r SkillGroup>) {
@@ -89,7 +89,7 @@ fn skill_targets<'r>(run: &'r Run, item: &SetupItem) -> (Vec<&'r SkillGroup>, Ve
     (groups, reading)
 }
 
-/// Every agent that would read the folders a Skill deploys to.
+/// Every agent that would read the folders a Skill is added to.
 pub(super) fn skill_readers(run: &Run, item: &SetupItem) -> Vec<String> {
     let (_, reading) = skill_targets(run, item);
     reading
@@ -98,7 +98,7 @@ pub(super) fn skill_readers(run: &Run, item: &SetupItem) -> Vec<String> {
         .collect()
 }
 
-/// The folders a Skill deploys to that an agent outside the item reads.
+/// The folders a Skill is added to that an agent outside the item reads.
 pub(super) fn skill_shared_paths(run: &Run, item: &SetupItem) -> Vec<String> {
     let (_, reading) = skill_targets(run, item);
     let mut paths: Vec<String> = reading
