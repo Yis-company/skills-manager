@@ -252,6 +252,49 @@ fn call_tool(server: &Server, params: &Value) -> Result<Value, (i64, String)> {
     })
 }
 
+/// The schema of one item's result, with the statuses it can have.
+fn item_result(statuses: &[&str]) -> Value {
+    let status = json!({ "type": "string", "enum": statuses });
+    json!({
+        "type": "object",
+        "properties": {
+            "kind": { "type": "string", "enum": ["skill", "instruction", "mcp"] },
+            "id": { "type": "string" },
+            "agents": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "The agents this item was set up or checked for.",
+            },
+            "unsupported": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "The item's agents it cannot be set up for here.",
+            },
+            "status": status,
+            "reason": { "type": "string" },
+            "retryable": {
+                "type": "boolean",
+                "description": "For a failed item: whether applying again \
+                    may succeed with nothing else done first.",
+            },
+            "targets": {
+                "type": "array",
+                "description": "Each agent's own result, when the agents' results differ.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "agent": { "type": "string" },
+                        "status": status,
+                        "reason": { "type": "string" },
+                    },
+                    "required": ["agent", "status"],
+                },
+            },
+        },
+        "required": ["kind", "id", "agents", "status"],
+    })
+}
+
 fn discover_tool() -> Value {
     let nullable_object = json!({ "type": ["object", "null"] });
     let project = json!({
@@ -535,34 +578,9 @@ fn apply_tool() -> Value {
                 "items": {
                     "type": "array",
                     "description": "Only with evidence: true.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "kind": kind,
-                            "id": { "type": "string" },
-                            "agents": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "description": "The agents this item was set up or checked for.",
-                            },
-                            "unsupported": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "description": "The item's agents it cannot be set up for here.",
-                            },
-                            "status": {
-                                "type": "string",
-                                "enum": ["changed", "unchanged", "needs_review", "blocked", "missing", "failed"],
-                            },
-                            "reason": { "type": "string" },
-                            "retryable": {
-                                "type": "boolean",
-                                "description": "For a failed item: whether applying again \
-                                    may succeed with nothing else done first.",
-                            },
-                        },
-                        "required": ["kind", "id", "agents", "status"],
-                    },
+                    "items": item_result(&[
+                        "changed", "unchanged", "needs_review", "blocked", "missing", "failed",
+                    ]),
                 },
             },
             "required": [
@@ -669,6 +687,10 @@ fn inspect_tool() -> Value {
                         "items": {
                             "type": "array",
                             "description": "Only with evidence: true.",
+                            "items": item_result(&[
+                                "unchanged", "not_applied", "needs_review", "blocked",
+                                "missing", "failed",
+                            ]),
                         },
                     },
                     "required": ["setup_version", "state", "counts"],
