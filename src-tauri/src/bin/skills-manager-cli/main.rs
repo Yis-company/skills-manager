@@ -197,7 +197,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 McpClient::Codex => mcps::Client::Codex,
                 McpClient::Claude => mcps::Client::ClaudeCode,
             };
-            let command = std::env::current_exe()?.canonicalize()?;
+            // The stable launcher, so an update needs no new registration.
+            let command = app_lib::core::remote_install::stable_cli_path(
+                &std::env::current_exe()?.canonicalize()?,
+            );
             let ctx = HostCtx::headless(store);
             let report = mcps::register_self(&ctx, client, &command)?;
             print_json(&report, cli.json);

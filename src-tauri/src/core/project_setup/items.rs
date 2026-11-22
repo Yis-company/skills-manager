@@ -241,7 +241,11 @@ impl ItemResult {
 /// agent it can be set up for writes nothing, so it gains no readers: no
 /// targeting never expands to every agent.
 pub(super) fn with_readers(run: &Run, item: &SetupItem) -> Result<Vec<String>, AppError> {
-    if !item.agents.iter().any(|agent| run.supports(item.kind, agent)) {
+    if !item
+        .agents
+        .iter()
+        .any(|agent| run.supports(item.kind, agent))
+    {
         return Ok(item.agents.clone());
     }
     let readers = match item.kind {

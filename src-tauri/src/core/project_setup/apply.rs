@@ -1960,12 +1960,18 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&fresh).unwrap();
 
         let proposed = fixture
-            .apply_with(json!({ "checkout_path": fresh, "operation_id": "op-1", "items": [
+            .apply_with(
+                json!({ "checkout_path": fresh, "operation_id": "op-1", "items": [
                 { "kind": "instruction", "id": bundle, "agents": [] },
-            ] }))
+            ] }),
+            )
             .unwrap();
 
         let instruction = decision(&proposed, "instruction");
-        assert_eq!(instruction["proposed"]["agents"], json!([]), "{instruction}");
+        assert_eq!(
+            instruction["proposed"]["agents"],
+            json!([]),
+            "{instruction}"
+        );
     }
 }
