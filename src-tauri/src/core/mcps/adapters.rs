@@ -79,7 +79,7 @@ fn resolve(ctx: &HostCtx, target: &Target) -> Result<ConfigTarget, AppError> {
     let home = canonical_directory(&home)?;
     let (path, format, entry_path) = match (target.agent_key.as_str(), project_path.as_ref()) {
         ("claude_code", Some(root)) => (root.join(".mcp.json"), Format::Json, vec!["mcpServers"]),
-        ("claude_code", None) => (home.join(".claude.json"), Format::Json, vec!["mcpServers"]),
+        ("claude_code", None) => (claude_config(&home), Format::Json, vec!["mcpServers"]),
         ("codex", Some(root)) => (
             root.join(".codex/config.toml"),
             Format::Toml,
@@ -128,6 +128,12 @@ fn resolve(ctx: &HostCtx, target: &Target) -> Result<ConfigTarget, AppError> {
         entry_path,
         agent: target.agent_key.clone(),
     })
+}
+/// Claude Code keeps its user config in CLAUDE_CONFIG_DIR when that is set.
+fn claude_config(home: &Path) -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map_or_else(|| home.to_path_buf(), PathBuf::from)
+        .join(".claude.json")
 }
 fn codex_home() -> PathBuf {
     std::env::var_os("CODEX_HOME")

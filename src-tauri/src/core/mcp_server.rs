@@ -734,7 +734,8 @@ mod tests {
     use crate::core::remote_session::CliCommand;
 
     /// The JSON Schema rules the tools' output schemas use: type, enum,
-    /// required, properties, items and anyOf. Returns the first mismatch.
+    /// required, properties, items and anyOf. An object whose schema lists
+    /// properties may hold no others. Returns the first mismatch.
     fn check(value: &Value, schema: &Value, at: &str) -> Result<(), String> {
         if let Some(options) = schema["anyOf"].as_array() {
             return match options.iter().any(|o| check(value, o, at).is_ok()) {
@@ -771,8 +772,11 @@ mod tests {
                     return Err(format!("{at}: {key} is missing"));
                 }
             }
-            for (key, property) in schema["properties"].as_object().into_iter().flatten() {
-                if let Some(field) = fields.get(key) {
+            if let Some(properties) = schema["properties"].as_object() {
+                for (key, field) in fields {
+                    let property = properties
+                        .get(key)
+                        .ok_or_else(|| format!("{at}: {key} is not in the schema"))?;
                     check(field, property, &format!("{at}.{key}"))?;
                 }
             }
@@ -791,9 +795,20 @@ mod tests {
     fn every_tool_result_matches_its_output_schema() {
         let fixture = Fixture::new();
         let mcp = fixture.mcp("docs");
+        // Changed for Codex, but a hand-made entry needs review for Claude
+        // Code, so its result lists each agent's own result.
+        let lint = fixture.mcp("lint");
         fixture.save_setup(json!([
             { "kind": "mcp", "id": mcp["id"], "agents": ["claude_code"], "approved": approved(&mcp) },
+            { "kind": "mcp", "id": lint["id"], "agents": ["claude_code", "codex"],
+              "approved": approved(&lint) },
         ]));
+        std::fs::write(
+            fixture.path(".mcp.json"),
+            json!({ "mcpServers": { "lint": { "type": "stdio", "command": "my-lint" } } })
+                .to_string(),
+        )
+        .unwrap();
         let fresh = fixture.repo._tmp.path().join("work/fresh");
         std::fs::create_dir_all(&fresh).unwrap();
         let open = || Ok::<HostCtx, _>(fixture.ctx.clone());
@@ -813,6 +828,12 @@ mod tests {
                 .unwrap()["outputSchema"]
                 .clone()
         };
+        // Without an items schema, check would pass any per-item result.
+        let apply_items = &schema("apply_project_setup")["properties"]["items"];
+        let inspect_items = &schema("inspect_project_setup_result")["properties"]["destination"]
+            ["properties"]["items"];
+        assert!(apply_items["items"].is_object(), "{apply_items}");
+        assert!(inspect_items["items"].is_object(), "{inspect_items}");
         let checkout = &fixture.checkout;
         let unclaim = |operation_id: &str| {
             let store = &fixture.ctx.store;
@@ -908,6 +929,7 @@ mod tests {
                 unclaim(arguments.as_str().unwrap());
                 continue;
             }
+            let per_agent = arguments["operation_id"] == "op-1" && arguments["evidence"] == true;
             let reply = answer(
                 &server,
                 &json!({ "jsonrpc": "2.0", "id": n, "method": "tools/call",
@@ -917,6 +939,17 @@ mod tests {
             let result = &reply["result"];
             assert_eq!(result["isError"], false, "call {n}: {reply}");
             let found = &result["structuredContent"];
+            if per_agent {
+                let items = match name {
+                    "apply_project_setup" => &found["items"],
+                    _ => &found["destination"]["items"],
+                };
+                let mut listed = items.as_array().into_iter().flatten();
+                assert!(
+                    listed.any(|item| item["targets"].is_array()),
+                    "call {n}: no per-agent targets\n{found}"
+                );
+            }
             if let Err(mismatch) = check(found, &schema(name), name) {
                 panic!("call {n}: {mismatch}\n{found}");
             }
