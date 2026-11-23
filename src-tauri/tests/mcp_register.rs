@@ -1,7 +1,7 @@
 //! `skills-manager-cli mcp register`: writes the user-scope registration that
 //! lets Codex and Claude Code start `skills-manager-cli mcp`. Each test gets
-//! its own temp base dir, HOME and CODEX_HOME, so nothing here reads or writes
-//! this host's agent configuration.
+//! its own temp base dir, HOME, CODEX_HOME and CLAUDE_CONFIG_DIR, so nothing
+//! here reads or writes this host's agent configuration.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -24,41 +24,77 @@ impl TestHost {
         let root = tmp.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("home")).unwrap();
         std::fs::create_dir_all(root.join("codex")).unwrap();
+        std::fs::create_dir_all(root.join("claude")).unwrap();
         Self { _tmp: tmp, root }
     }
 
-    /// Windows finds the home folder without reading HOME, so Claude Code
-    /// registration cannot be kept inside the test there.
-    #[cfg(unix)]
+    /// Set through CLAUDE_CONFIG_DIR: Windows finds the home folder without
+    /// reading HOME.
     fn claude_config(&self) -> PathBuf {
-        self.root.join("home/.claude.json")
+        self.root.join("claude/.claude.json")
     }
 
     fn codex_config(&self) -> PathBuf {
         self.root.join("codex/config.toml")
     }
 
-    fn register(&self, client: &str) -> Output {
+    fn cli(&self, args: &[&str]) -> Output {
         Command::new(CLI)
             .arg("--base-dir")
             .arg(self.root.join("base"))
-            .args(["--json", "mcp", "register", "--client", client])
+            .arg("--json")
+            .args(args)
             .env("HOME", self.root.join("home"))
             .env("CODEX_HOME", self.root.join("codex"))
+            .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env_remove("XDG_CONFIG_HOME")
             .env_remove("XDG_DATA_HOME")
             .output()
             .unwrap()
     }
+
+    fn register(&self, client: &str) -> Output {
+        self.cli(&["mcp", "register", "--client", client])
+    }
+
+    /// Proves, before anything is written, that Claude Code's user config
+    /// resolves to the fixture: the read-only inspect uses the same lookup
+    /// as registration and must list a server only the fixture has.
+    fn assert_claude_config_is_the_fixture(&self) {
+        let config = self.claude_config();
+        let original = std::fs::read(&config).ok();
+        let mut probe: Value = original
+            .as_deref()
+            .map_or(json!({}), |bytes| serde_json::from_slice(bytes).unwrap());
+        probe["mcpServers"][PROBE] = json!({"command": "probe"});
+        std::fs::write(&config, probe.to_string()).unwrap();
+        let inspected = report(&self.cli(&["mcps", "inspect", "--agent", "claude_code"]));
+        let listed = inspected["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == PROBE);
+        assert!(listed, "inspect read another config: {inspected}");
+        match original {
+            Some(bytes) => std::fs::write(&config, bytes).unwrap(),
+            None => std::fs::remove_file(&config).unwrap(),
+        }
+    }
 }
+
+const PROBE: &str = "fixture-probe-7f3a";
 
 fn report(output: &Output) -> Value {
     assert!(
         output.status.success(),
-        "register failed: {}",
+        "command failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn config_path(test_host: &TestHost) -> String {
+    test_host.claude_config().to_string_lossy().into_owned()
 }
 
 fn cli_path() -> String {
@@ -100,13 +136,14 @@ fn codex_registration_keeps_other_settings_and_a_rerun_changes_nothing() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn claude_registration_creates_the_user_config_and_a_rerun_changes_nothing() {
     let test_host = TestHost::new();
+    test_host.assert_claude_config_is_the_fixture();
 
     let first = report(&test_host.register("claude"));
     assert_eq!(first["status"], "added");
+    assert_eq!(first["configPath"], config_path(&test_host));
     assert!(first["nextStep"].as_str().unwrap().contains("Claude Code"));
     let written = std::fs::read_to_string(test_host.claude_config()).unwrap();
     let parsed: Value = serde_json::from_str(&written).unwrap();
@@ -123,7 +160,6 @@ fn claude_registration_creates_the_user_config_and_a_rerun_changes_nothing() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_existing_registration_written_by_claude_mcp_add_counts_as_unchanged() {
     let test_host = TestHost::new();
@@ -134,15 +170,17 @@ fn an_existing_registration_written_by_claude_mcp_add_counts_as_unchanged() {
     })
     .to_string();
     std::fs::write(test_host.claude_config(), &original).unwrap();
+    test_host.assert_claude_config_is_the_fixture();
 
-    assert_eq!(report(&test_host.register("claude"))["status"], "unchanged");
+    let found = report(&test_host.register("claude"));
+    assert_eq!(found["status"], "unchanged");
+    assert_eq!(found["configPath"], config_path(&test_host));
     assert_eq!(
         std::fs::read_to_string(test_host.claude_config()).unwrap(),
         original
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_different_registration_under_the_same_name_is_reported_and_left_alone() {
     let test_host = TestHost::new();
@@ -152,11 +190,16 @@ fn a_different_registration_under_the_same_name_is_reported_and_left_alone() {
     })
     .to_string();
     std::fs::write(test_host.claude_config(), &original).unwrap();
+    test_host.assert_claude_config_is_the_fixture();
 
     let output = test_host.register("claude");
     assert!(!output.status.success());
     let error: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(error["code"], "TARGET_CONFLICT");
+    assert_eq!(
+        error["details"]["conflicts"][0]["path"],
+        config_path(&test_host)
+    );
     assert_eq!(
         std::fs::read_to_string(test_host.claude_config()).unwrap(),
         original
